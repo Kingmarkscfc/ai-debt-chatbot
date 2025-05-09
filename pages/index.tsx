@@ -56,7 +56,7 @@ export default function Home() {
   );
 }
 
-const styles = {
+const styles = { [key: string]: React.CSSProperties } = {
   container: {
     maxWidth: "600px",
     margin: "40px auto",
