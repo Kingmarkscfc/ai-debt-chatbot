@@ -7,7 +7,8 @@ export default function Home() {
   const handleSend = async () => {
     if (!input.trim()) return;
 
-    const userMessage = { sender: "user", text: input };
+    const userMessage: { sender: "user" | "bot"; text: string } = { sender: "user", text: input };
+
     setMessages((prev) => [...prev, userMessage]);
 
     try {
