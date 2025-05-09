@@ -64,7 +64,7 @@ const styles = {
     fontFamily: "Arial, sans-serif",
   },
   header: {
-    textAlign: "center",
+    textAlign: "center" as const,
     marginBottom: "20px",
   },
   chatbox: {
