@@ -42,7 +42,7 @@ export default function Home() {
       borderRadius: "8px",
       padding: "10px",
       height: "400px",
-      overflowY: "scroll" as const,
+      overflowY: "auto" as React.CSSProperties["overflowY"]
       marginBottom: "10px",
       backgroundColor: "#f9f9f9",
     },
