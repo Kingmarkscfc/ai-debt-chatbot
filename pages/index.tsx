@@ -72,7 +72,7 @@ const styles = { [key: string]: React.CSSProperties } = {
     borderRadius: "8px",
     padding: "10px",
     height: "400px",
-    overflowY: "auto",
+    overflowY: "scroll" as const,
     marginBottom: "10px",
     backgroundColor: "#f9f9f9",
   },
