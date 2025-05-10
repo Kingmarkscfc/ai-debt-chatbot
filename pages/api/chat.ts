@@ -18,8 +18,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       model: "gpt-3.5-turbo",
       messages: [{ role: "user", content: message }],
     });
-
-    const reply = chat.choices[0]?.message?.content ?? "⚠️ No response from model.";
+    console.log("🧠 OpenAI raw response:", JSON.stringify(chat, null, 2));
+    const reply = chat?.choices?.[0]?.message?.content ?? "⚠️ No response or format issue.";
     res.status(200).json({ reply });
   } catch (error: any) {
     console.error("OpenAI API error:", error);
