@@ -4,28 +4,41 @@ export default function Home() {
   const [messages, setMessages] = useState<{ sender: "user" | "bot"; text: string }[]>([]);
   const [input, setInput] = useState("");
 
-  const handleSend = async () => {
-    if (!input.trim()) return;
+const handleSubmit = async () => {
+  if (!input.trim()) return;
 
-    const userMessage: { sender: "user" | "bot"; text: string } = { sender: "user", text: input };
-
-    setMessages((prev) => [...prev, userMessage]);
-
-    try {
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: input }),
-      });
-
-      const data = await response.json();
-      setMessages((prev) => [...prev, { sender: "bot", text: data.reply }]);
-    } catch (err) {
-      setMessages((prev) => [...prev, { sender: "bot", text: "⚠️ Error connecting to chatbot." }]);
-    }
-
-    setInput("");
+  const userMessage: { sender: "user" | "bot"; text: string } = {
+    sender: "user",
+    text: input,
   };
+
+  setMessages((prev: { sender: "user" | "bot"; text: string }[]) => [
+    ...prev,
+    userMessage,
+  ]);
+
+  try {
+    const response = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: input }),
+    });
+
+    const data = await response.json();
+
+    const botMessage: { sender: "user" | "bot"; text: string } = {
+      sender: "bot",
+      text: data.reply || "⚠️ Error: Empty reply from server.",
+    };
+
+    setMessages((prev) => [...prev, botMessage]);
+  } catch (err) {
+    setMessages((prev) => [
+      ...prev,
+      { sender: "bot", text: "⚠️ Error connecting to chatbot." },
+    ]);
+  }
+};
 
   const styles: { [key: string]: React.CSSProperties } = {
     container: {
@@ -43,7 +56,7 @@ export default function Home() {
       borderRadius: "8px",
       padding: "10px",
       height: "400px",
-      overflowY: "auto" as React.CSSProperties["overflowY"]
+      overflowY: "auto" as React.CSSProperties["overflowY"],
       marginBottom: "10px",
       backgroundColor: "#f9f9f9",
     },
@@ -106,7 +119,7 @@ export default function Home() {
           onChange={(e) => setInput(e.target.value)}
           placeholder="Type your message..."
         />
-        <button style={styles.button} onClick={handleSend}>
+        <button style={styles.button} onClick={handleSubmit}>
           Send
         </button>
       </div>
