@@ -32,7 +32,7 @@ const HUMOR_TRIGGERS = [
 ];
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const userMessage = req.body.message || '';
+  const userMessage = typeof req.body.message === 'string' ? req.body.message.trim() : '';
   const hostHeader = req.headers.host || '';
   const companyKey = Object.keys(companyConfig).find(key => hostHeader.includes(key)) || "default";
   const config = companyConfig[companyKey];
