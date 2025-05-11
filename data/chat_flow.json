@@ -1,0 +1,60 @@
+{
+  "intro": {
+    "id": "intro",
+    "message": "Good {time_of_day}, my name is Mark. I'm a specially trained AI Debt Advisor. How are you today?",
+    "next": "get_name"
+  },
+  "get_name": {
+    "id": "get_name",
+    "message": "Great! I look forward to helping you clear off your debts. Can you let me know who I'm speaking to?",
+    "next": "situation"
+  },
+  "situation": {
+    "id": "situation",
+    "message": "Please explain your situation so I can guide you in the right way.",
+    "next": "fact_find_1"
+  },
+  "fact_find_1": {
+    "id": "fact_find_1",
+    "message": "What prompted you to seek help with your debts today?",
+    "next": "fact_find_2"
+  },
+  "fact_find_2": {
+    "id": "fact_find_2",
+    "message": "What would you say is your main concern with the debts?",
+    "next": "fact_find_3"
+  },
+  "fact_find_3": {
+    "id": "fact_find_3",
+    "message": "And what outcome are you hoping to achieve today?",
+    "next": "fact_find_4"
+  },
+  "fact_find_4": {
+    "id": "fact_find_4",
+    "message": "Have you tried any debt solutions in the past?",
+    "next": "fact_find_5"
+  },
+  "fact_find_5": {
+    "id": "fact_find_5",
+    "message": "Are you expecting any changes to your situation in the next 12 months?",
+    "next": "regulatory"
+  },
+  "regulatory": {
+    "id": "regulatory",
+    "message": "There is no obligation for you to act on the advice today. You can find free debt help at moneyhelper.org.uk. You can also view our privacy policy on our website.",
+    "next": "vulnerability_check"
+  },
+  "vulnerability_check": {
+    "id": "vulnerability_check",
+    "message": "Do you suffer with any health conditions I should be aware of?",
+    "next": {
+      "yes": "vulnerability_detail",
+      "no": "fact_find_p2"
+    }
+  },
+  "humor_fallbacks": [
+    "That's a plot twist I didn\u2019t see coming\u2026 but let\u2019s get back to sorting your finances!",
+    "I\u2019m flattered you think I can do that, but let\u2019s stick to helping you become debt-free, yeah?",
+    "If the aliens return your payslip, feel free to upload it here!"
+  ]
+}
