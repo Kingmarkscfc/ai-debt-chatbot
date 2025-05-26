@@ -1,23 +1,6 @@
-
 import type { NextApiRequest, NextApiResponse } from 'next';
 import OpenAI from 'openai';
 import chatFlow from '../../data/chat_flow.json';
-
-// Example company-specific config (in production this would come from Supabase or a DB)
-const companyConfig = {
-  default: {
-    name: "Debt Advisor",
-    regNumber: "FCA #123456",
-    trustpilot: "https://trustpilot.com/review/defaultcompany.com",
-    portalUrl: "https://portal.defaultcompany.com"
-  },
-  "debthelpco.uk": {
-    name: "Debt Help Co",
-    regNumber: "FCA #7891011",
-    trustpilot: "https://trustpilot.com/review/debthelpco.uk",
-    portalUrl: "https://portal.debthelpco.uk"
-  }
-};
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -33,9 +16,6 @@ const HUMOR_TRIGGERS = [
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const userMessage = typeof req.body.message === 'string' ? req.body.message.trim() : '';
-  const hostHeader = req.headers.host || '';
-  const companyKey = Object.keys(companyConfig).find(key => hostHeader.includes(key)) || "default";
-  const config = companyConfig[companyKey];
   const lowerCaseMessage = userMessage.toLowerCase();
 
   if (!userMessage) {
@@ -56,24 +36,30 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     : process.env.ADVANCED_MODEL || 'gpt-4o';
 
   const systemPrompt = `
-You are ${config.name}, a professional yet friendly UK-based AI assistant trained to help users resolve personal debt using IVA/DMP solutions.
-Regulated by: ${config.regNumber}.
+Good afternoon, my name’s Mark. I’m going to start by asking what prompted you to seek help with your debts today?
 
-Always follow this logic:
-1. Greet and ask about debt eligibility (>£6,000, 2+ unsecured creditors).
-2. If YES → steer toward an IVA, but always confirm suitability.
-3. If NO or not suitable → suggest a DMP.
-4. Only mention DRO/Bankruptcy if user brings it up or has very low disposable income.
-5. Encourage, explain, and keep it friendly throughout.
-6. When ready, collect name, debts, income, expenses, and prompt document upload via: ${config.portalUrl}.
+(Please follow this strict flow.)
 
-Also:
-- Mention MoneyHelper once at the start.
-- Add humor if user banters (e.g. "aliens stole my payslip").
-- Close with encouragement.
-- Reviews: ${config.trustpilot}
+1. Ask what prompted them to seek debt help.
+2. Then: “What would you say is your main concern with the debts?”
+3. Then: “Are any debts joint or are you a guarantor for someone else?”
+4. Then explore solutions in this order:
+   - Self-help
+   - Loan consolidation
+   - DRO (if eligible)
+   - Bankruptcy
+   - DMP
+   - IVA (final option only after all others)
 
-Sound like a caring human advisor — not an AI. Keep responses natural, supportive, and professional.
+Rules:
+- Explain pros & cons of each option.
+- Don’t mention IVA until it's last.
+- Mention MoneyHelper only once at the start.
+- Insert humor only when user goes off-topic.
+- Collect name, income, debts, and move user to upload docs via the CRM when ready.
+- Always praise progress and sound human.
+
+Do not freelance. Stick to the flow.
 `.trim();
 
   try {
@@ -93,3 +79,4 @@ Sound like a caring human advisor — not an AI. Keep responses natural, support
     return res.status(500).json({ error: 'Failed to get response from OpenAI' });
   }
 }
+
