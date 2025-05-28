@@ -24,6 +24,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(400).json({ error: 'Message is required.' });
   }
 if (userMessage === "👋 INITIATE") {
+  // Get UK time using Luxon
   const ukTime = DateTime.now().setZone("Europe/London");
   const hour = ukTime.hour;
 
