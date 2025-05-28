@@ -27,6 +27,7 @@ if (userMessage === "👋 INITIATE") {
   // Get UK time using Luxon
   const ukTime = DateTime.now().setZone("Europe/London");
   const hour = ukTime.hour;
+  console.log("🔍 UK Hour (Luxon):", hour);
 
   let greeting = "Good afternoon";
   if (hour < 12) greeting = "Good morning";
