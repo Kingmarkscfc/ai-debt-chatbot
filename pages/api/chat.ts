@@ -22,8 +22,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(400).json({ error: 'Message is required.' });
   }
 if (userMessage === "👋 INITIATE") {
+  // Get UK time (GMT or BST)
+  const now = new Date();
+  const ukTime = new Date(now.toLocaleString("en-GB", { timeZone: "Europe/London" }));
+  const hour = ukTime.getHours();
+
+  let greeting = "Good afternoon";
+  if (hour < 12) greeting = "Good morning";
+  else if (hour >= 17) greeting = "Good evening";
+
   return res.status(200).json({
-    reply: "Good afternoon! My name’s Mark. What prompted you to seek help with your debts today?",
+    reply: `${greeting}! My name’s Mark. What prompted you to seek help with your debts today?`,
   });
 }
   // Humor fallback logic
