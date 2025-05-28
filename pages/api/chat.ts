@@ -22,9 +22,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(400).json({ error: 'Message is required.' });
   }
 if (userMessage === "👋 INITIATE") {
+  // Get current time in UK (GMT/BST)
   const now = new Date();
   const ukTime = new Date(now.toLocaleString("en-GB", { timeZone: "Europe/London" }));
   const hour = ukTime.getHours();
+
+  console.log("UK Hour:", hour); // 🪵 Debugging time!
 
   let greeting = "Good afternoon";
   if (hour < 12) greeting = "Good morning";
