@@ -21,7 +21,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (!userMessage) {
     return res.status(400).json({ error: 'Message is required.' });
   }
-
+if (userMessage === "👋 INITIATE") {
+  return res.status(200).json({
+    reply: "Good afternoon! My name’s Mark. What prompted you to seek help with your debts today?",
+  });
+}
   // Humor fallback logic
   if (HUMOR_TRIGGERS.some(trigger => lowerCaseMessage.includes(trigger))) {
     const cheekyReply = chatFlow.humor_fallbacks[
