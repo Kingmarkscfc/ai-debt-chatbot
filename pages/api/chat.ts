@@ -1,6 +1,8 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import OpenAI from 'openai';
 import chatFlow from '../../data/chat_flow.json';
+import { DateTime } from 'luxon';
+
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -22,11 +24,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(400).json({ error: 'Message is required.' });
   }
 if (userMessage === "👋 INITIATE") {
-  const now = new Date();
-  const ukTime = new Date(now.toLocaleString("en-GB", { timeZone: "Europe/London" }));
-  const hour = ukTime.getHours();
-
-  console.log("UK Hour:", hour); // 🔍 TEMP: Check server is reading UK time
+  // Get UK time using Luxon
+  const ukTime = DateTime.now().setZone("Europe/London");
+  const hour = ukTime.hour;
 
   let greeting = "Good afternoon";
   if (hour < 12) greeting = "Good morning";
