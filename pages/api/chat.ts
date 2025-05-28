@@ -22,7 +22,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(400).json({ error: 'Message is required.' });
   }
 if (userMessage === "👋 INITIATE") {
-  // Get UK time (GMT or BST)
   const now = new Date();
   const ukTime = new Date(now.toLocaleString("en-GB", { timeZone: "Europe/London" }));
   const hour = ukTime.getHours();
