@@ -1,44 +1,71 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 export default function Home() {
   const [messages, setMessages] = useState<{ sender: "user" | "bot"; text: string }[]>([]);
   const [input, setInput] = useState("");
 
-const handleSubmit = async () => {
-  if (!input.trim()) return;
+  // 👋 Auto-start the chat on page load
+  useEffect(() => {
+    const startMessage = async () => {
+      try {
+        const response = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: "👋 INITIATE" }),
+        });
 
-  const userMessage: { sender: "user" | "bot"; text: string } = {
-    sender: "user",
-    text: input,
-  };
+        const data = await response.json();
 
-  setMessages((prev: { sender: "user" | "bot"; text: string }[]) => [
-    ...prev,
-    userMessage,
-  ]);
+        const botMessage = {
+          sender: "bot" as const,
+          text: data.reply || "⚠️ Error: Empty reply from server.",
+        };
 
-  try {
-    const response = await fetch("/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: input }),
-    });
-
-    const data = await response.json();
-
-    const botMessage: { sender: "user" | "bot"; text: string } = {
-      sender: "bot",
-      text: data.reply || "⚠️ Error: Empty reply from server.",
+        setMessages([botMessage]);
+      } catch (err) {
+        setMessages([
+          { sender: "bot", text: "⚠️ Error connecting to chatbot." },
+        ]);
+      }
     };
 
-    setMessages((prev) => [...prev, botMessage]);
-  } catch (err) {
-    setMessages((prev) => [
-      ...prev,
-      { sender: "bot", text: "⚠️ Error connecting to chatbot." },
-    ]);
-  }
-};
+    startMessage();
+  }, []);
+
+  const handleSubmit = async () => {
+    if (!input.trim()) return;
+
+    const userMessage = {
+      sender: "user" as const,
+      text: input,
+    };
+
+    setMessages((prev) => [...prev, userMessage]);
+
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: input }),
+      });
+
+      const data = await response.json();
+
+      const botMessage = {
+        sender: "bot" as const,
+        text: data.reply || "⚠️ Error: Empty reply from server.",
+      };
+
+      setMessages((prev) => [...prev, botMessage]);
+    } catch (err) {
+      setMessages((prev) => [
+        ...prev,
+        { sender: "bot", text: "⚠️ Error connecting to chatbot." },
+      ]);
+    }
+
+    setInput("");
+  };
 
   const styles: { [key: string]: React.CSSProperties } = {
     container: {
@@ -48,7 +75,7 @@ const handleSubmit = async () => {
       fontFamily: "Arial, sans-serif",
     },
     header: {
-      textAlign: "center" as const,
+      textAlign: "center",
       marginBottom: "20px",
     },
     chatbox: {
@@ -56,9 +83,11 @@ const handleSubmit = async () => {
       borderRadius: "8px",
       padding: "10px",
       height: "400px",
-      overflowY: "auto" as React.CSSProperties["overflowY"],
+      overflowY: "auto",
       marginBottom: "10px",
       backgroundColor: "#f9f9f9",
+      display: "flex",
+      flexDirection: "column" as const,
     },
     bubble: {
       padding: "10px",
@@ -114,17 +143,17 @@ const handleSubmit = async () => {
       </div>
       <div style={styles.inputRow}>
         <input
-  style={styles.input}
-  value={input}
-  onChange={(e) => setInput(e.target.value)}
-  onKeyDown={(e) => {
-    if (e.key === 'Enter') handleSubmit();
-  }}
-  placeholder="Type your message..."
-/>
-<button style={styles.button} onClick={handleSubmit}>
-  Send
-</button>
+          style={styles.input}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") handleSubmit();
+          }}
+          placeholder="Type your message..."
+        />
+        <button style={styles.button} onClick={handleSubmit}>
+          Send
+        </button>
       </div>
     </div>
   );
