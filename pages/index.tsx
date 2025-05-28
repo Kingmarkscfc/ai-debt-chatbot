@@ -114,14 +114,17 @@ const handleSubmit = async () => {
       </div>
       <div style={styles.inputRow}>
         <input
-          style={styles.input}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Type your message..."
-        />
-        <button style={styles.button} onClick={handleSubmit}>
-          Send
-        </button>
+  style={styles.input}
+  value={input}
+  onChange={(e) => setInput(e.target.value)}
+  onKeyDown={(e) => {
+    if (e.key === 'Enter') handleSubmit();
+  }}
+  placeholder="Type your message..."
+/>
+<button style={styles.button} onClick={handleSubmit}>
+  Send
+</button>
       </div>
     </div>
   );
