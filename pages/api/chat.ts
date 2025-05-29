@@ -1,8 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import OpenAI from 'openai';
 import chatFlow from '../../data/chat_flow.json';
-import { DateTime } from 'luxon';
-
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -23,22 +21,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (!userMessage) {
     return res.status(400).json({ error: 'Message is required.' });
   }
-if (userMessage === "👋 INITIATE") {
-  // Get UK time using Luxon
-  const ukTime = DateTime.now().setZone("Europe/London");
-  const hour = ukTime.hour;
 
-  let greeting = "Good afternoon";
-  if (hour < 12) greeting = "Good morning";
-  else if (hour >= 17) greeting = "Good evening";
+  // 👋 Auto-greet logic
+  if (userMessage === "👋 INITIATE") {
+    return res.status(200).json({
+      reply: "Hello! My name’s Mark. What prompted you to seek help with your debts today?",
+    });
+  }
 
-  console.log("🕒 Greeting chosen:", greeting);
-
-  return res.status(200).json({
-    reply: `${greeting}! My name’s Mark. What prompted you to seek help with your debts today?`,
-  });
-}
-  // Humor fallback logic
+  // 💬 Humor triggers
   if (HUMOR_TRIGGERS.some(trigger => lowerCaseMessage.includes(trigger))) {
     const cheekyReply = chatFlow.humor_fallbacks[
       Math.floor(Math.random() * chatFlow.humor_fallbacks.length)
@@ -46,22 +37,19 @@ if (userMessage === "👋 INITIATE") {
     return res.status(200).json({ reply: cheekyReply });
   }
 
-  const taskType = lowerCaseMessage.length < 40 ? 'simple' : 'advanced';
-  const selectedModel = taskType === 'simple'
-    ? process.env.SIMPLE_MODEL || 'gpt-3.5-turbo'
-    : process.env.ADVANCED_MODEL || 'gpt-4o';
+  // 🤖 Choose model
+  const selectedModel =
+    userMessage.length < 40
+      ? process.env.SIMPLE_MODEL || 'gpt-3.5-turbo'
+      : process.env.ADVANCED_MODEL || 'gpt-4o';
 
-const systemPrompt = `
-Good afternoon, my name’s Mark. Please follow this exact script, step-by-step. For each step, internally mark it as “✅ complete” once answered, then continue to the next. Never return to completed steps.
+  const systemPrompt = `
+You are a friendly, knowledgeable debt advisor bot named Mark. Follow this script in strict order:
 
-STEP 1 ✅ Ask: “What prompted you to seek help with your debts today?”
-→ Mark complete as soon as the user provides *any reason or emotional explanation.*
-
-STEP 2 ✅ Ask: “What would you say is your main concern with the debts?” (e.g., bailiffs, interest, court)
-
-STEP 3 ✅ Ask: “Are any debts joint or are you a guarantor for someone else?”
-
-STEP 4 ✅ Explore all solutions in strict order:
+1. Ask: “What prompted you to seek help with your debts today?”
+2. Then ask: “What would you say is your main concern with the debts?” (e.g. bailiffs, interest, court)
+3. Then: “Are any debts joint or are you a guarantor for someone else?”
+4. Then go through these options in this **exact** order:
    a. Self-help
    b. Loan consolidation
    c. DRO
@@ -70,17 +58,14 @@ STEP 4 ✅ Explore all solutions in strict order:
    f. IVA (only after all others)
 
 Rules:
-- Never repeat a question already answered unless user explicitly requests it.
-- Treat emotional, short, or vague answers as valid.
-- Use friendly, human tone.
-- Insert humor only if user goes off-topic.
-- Mention MoneyHelper only once.
-- IVA must always come last.
-- End by collecting name, income, debts, and guide to CRM portal for document upload.
-
-⚠️ Do not break script order. This is a regulated flow.
+- Do **not** repeat a step once answered.
+- Do **not** go off-script or offer unscripted advice.
+- Use friendly tone. Add humor **only** if user goes off-topic.
+- Explain each debt solution clearly before moving to the next.
+- Only mention IVA **after** all others are fully explained.
+- Mention MoneyHelper **only once**.
+- After all options, help them prepare documents and upload via CRM.
 `.trim();
-
 
   try {
     const chat = await openai.chat.completions.create({
@@ -99,4 +84,3 @@ Rules:
     return res.status(500).json({ error: 'Failed to get response from OpenAI' });
   }
 }
-
