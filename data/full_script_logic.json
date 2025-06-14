@@ -1,0 +1,64 @@
+{
+  "steps": [
+    {
+      "id": "start",
+      "prompt": "Hello! My name\u2019s Mark. What prompted you to seek help with your debts today?",
+      "next": "main_concern"
+    },
+    {
+      "id": "main_concern",
+      "prompt": "Thank you for telling me that. What would you say is your main concern with the debts? For example, is it bailiffs, interest, or court action?",
+      "next": "joint_guarantor"
+    },
+    {
+      "id": "joint_guarantor",
+      "prompt": "Are any of your debts in joint names with anybody else, or is anyone a guarantor for your debts\u2014or are you a guarantor for someone else?",
+      "next": "self_help"
+    },
+    {
+      "id": "self_help",
+      "prompt": "Let\u2019s go through the options to deal with your debts. The first is a self-help approach. This involves speaking to creditors yourself to arrange payments or freeze interest.",
+      "next": "loan_consolidation"
+    },
+    {
+      "id": "loan_consolidation",
+      "prompt": "Next is loan consolidation. This means taking out a single loan to repay multiple debts. It\u2019s only suitable for people with a good credit score and affordability.",
+      "next": "dro"
+    },
+    {
+      "id": "dro",
+      "prompt": "Now we\u2019ll look at a Debt Relief Order (DRO). This is a formal debt solution for people with low income, low assets, and debts under a certain limit.",
+      "next": "bankruptcy"
+    },
+    {
+      "id": "bankruptcy",
+      "prompt": "Let\u2019s look at Bankruptcy. It clears most debts after 12 months but has serious consequences. Your assets may be sold and it stays on your credit file for 6 years.",
+      "next": "dmp"
+    },
+    {
+      "id": "dmp",
+      "prompt": "Another option is a Debt Management Plan (DMP). This is an informal plan where you pay back what you owe over time. Interest can sometimes be frozen, but not always.",
+      "next": "iva"
+    },
+    {
+      "id": "iva",
+      "prompt": "Finally, there\u2019s an Individual Voluntary Arrangement (IVA). This is a legally binding solution where you pay back what you can afford for 5\u20136 years, and the rest is written off.",
+      "next": "document_upload"
+    },
+    {
+      "id": "document_upload",
+      "prompt": "Based on what we\u2019ve discussed, I can help you prepare documents for the next step. We\u2019ll need proof of income, debts, and ID. Are you ready to upload those now?",
+      "next": "end"
+    },
+    {
+      "id": "end",
+      "prompt": "Thanks for going through the options. You can upload your documents securely via your online portal. I\u2019m here if you need help at any time!",
+      "next": null
+    }
+  ],
+  "humor_fallbacks": [
+    "That\u2019s a plot twist I didn\u2019t see coming! \ud83d\ude04 But let\u2019s stick to helping you become debt-free, yeah?",
+    "Haha, you\u2019re keeping me on my toes! Now, back to your debts\u2026",
+    "I'm flattered you think I can do that, but let\u2019s focus on your finances for now \ud83d\ude09"
+  ]
+}
