@@ -5,32 +5,23 @@ export default function Home() {
   const [input, setInput] = useState("");
 
   // 👋 Auto-start the chat on page load
-  useEffect(() => {
-    const startMessage = async () => {
-      try {
-        const response = await fetch("/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: "👋 INITIATE" }),
-        });
+useEffect(() => {
+  const startMessage = async () => {
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "👋 INITIATE" }),
+      });
+      const data = await response.json();
+      setMessages([{ sender: "bot", text: data.reply }]);
+    } catch {
+      setMessages([{ sender: "bot", text: "⚠️ Error connecting to chatbot." }]);
+    }
+  };
+  startMessage();
+}, []);
 
-        const data = await response.json();
-
-        const botMessage = {
-          sender: "bot" as const,
-          text: data.reply || "⚠️ Error: Empty reply from server.",
-        };
-
-        setMessages([botMessage]);
-      } catch (err) {
-        setMessages([
-          { sender: "bot", text: "⚠️ Error connecting to chatbot." },
-        ]);
-      }
-    };
-
-    startMessage();
-  }, []);
 
   const handleSubmit = async () => {
     if (!input.trim()) return;

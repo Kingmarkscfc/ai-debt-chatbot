@@ -45,10 +45,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       : process.env.ADVANCED_MODEL || 'gpt-4o';
 
   try {
-    const contextMessages = [
-      { role: 'system', content: 'You are a friendly, knowledgeable debt advisor bot named Mark. Follow the predefined full script logic exactly, step-by-step. Never skip or repeat a question unless instructed.' },
-      { role: 'user', content: userMessage }
-    ];
+const contextMessages = [
+  { role: 'system', content: 'You are a friendly, knowledgeable debt advisor bot named Mark. Follow the flow strictly.' },
+  ...history.map((step, i) =>
+    i % 2 === 0
+      ? { role: 'user', content: step }
+      : { role: 'function', name: 'script_step', content: step } // ✅ PATCHED HERE
+  ),
+  { role: 'user', content: userMessage }
+];
 
     const response = await openai.chat.completions.create({
       model: selectedModel,
