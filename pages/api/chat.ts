@@ -55,7 +55,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       ...history.map((step, i): ChatCompletionMessageParam =>
         i % 2 === 0
           ? { role: 'user', content: step }
-          : { role: 'function', name: 'script_step', content: step }
+          : { role: "function" as const, name: 'script_step', content: step }
+
       ),
       { role: 'user', content: userMessage }
     ];
