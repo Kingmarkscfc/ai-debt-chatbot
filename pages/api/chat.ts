@@ -16,12 +16,13 @@ const HUMOR_TRIGGERS = [
 ];
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const userMessage = typeof req.body.message === 'string' ? req.body.message.trim() : '';
-  const lowerCaseMessage = userMessage.toLowerCase();
+  const { history = [], userMessage }: { history: string[]; userMessage: string } = req.body;
 
   if (!userMessage) {
     return res.status(400).json({ error: 'Message is required.' });
   }
+
+  const lowerCaseMessage = userMessage.toLowerCase();
 
   // 👋 INITIATE greeting
   if (userMessage === "👋 INITIATE") {
@@ -45,15 +46,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       : process.env.ADVANCED_MODEL || 'gpt-4o';
 
   try {
-const contextMessages = [
-  { role: 'system', content: 'You are a friendly, knowledgeable debt advisor bot named Mark. Follow the flow strictly.' },
-  ...history.map((step, i) =>
-    i % 2 === 0
-      ? { role: 'user', content: step }
-      : { role: 'function', name: 'script_step', content: step } // ✅ FIXED: name added
-  ),
-  { role: 'user', content: userMessage }
-];
+    const contextMessages = [
+      { role: 'system', content: 'You are a friendly, knowledgeable debt advisor bot named Mark. Follow the flow strictly.' },
+      ...history.map((step, i) =>
+        i % 2 === 0
+          ? { role: 'user', content: step }
+          : { role: 'function', name: 'script_step', content: step }
+      ),
+      { role: 'user', content: userMessage }
+    ];
+
     const response = await openai.chat.completions.create({
       model: selectedModel,
       messages: contextMessages
