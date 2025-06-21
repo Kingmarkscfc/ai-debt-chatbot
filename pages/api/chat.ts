@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import OpenAI from 'openai';
+import { ChatCompletionMessageParam } from 'openai/resources';
 import fullScriptLogic from '../../data/full_script_logic.json';
 import chatFlow from '../../data/chat_flow.json';
 
@@ -46,9 +47,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       : process.env.ADVANCED_MODEL || 'gpt-4o';
 
   try {
-    const contextMessages = [
-      { role: 'system', content: 'You are a friendly, knowledgeable debt advisor bot named Mark. Follow the flow strictly.' },
-      ...history.map((step, i) =>
+    const contextMessages: ChatCompletionMessageParam[] = [
+      {
+        role: 'system',
+        content: 'You are a friendly, knowledgeable debt advisor bot named Mark. Follow the flow strictly.'
+      },
+      ...history.map((step, i): ChatCompletionMessageParam =>
         i % 2 === 0
           ? { role: 'user', content: step }
           : { role: 'function', name: 'script_step', content: step }
