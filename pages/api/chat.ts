@@ -50,11 +50,10 @@ const contextMessages = [
   ...history.map((step, i) =>
     i % 2 === 0
       ? { role: 'user', content: step }
-      : { role: 'function', name: 'script_step', content: step } // ✅ PATCHED HERE
+      : { role: 'function', name: 'script_step', content: step } // ✅ FIXED: name added
   ),
   { role: 'user', content: userMessage }
 ];
-
     const response = await openai.chat.completions.create({
       model: selectedModel,
       messages: contextMessages
