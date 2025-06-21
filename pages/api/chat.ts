@@ -19,20 +19,20 @@ const HUMOR_TRIGGERS = [
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const { history = [], userMessage }: { history: string[]; userMessage: string } = req.body;
 
-  if (!userMessage) {
+  if (!userMessage || typeof userMessage !== 'string') {
     return res.status(400).json({ error: 'Message is required.' });
   }
 
   const lowerCaseMessage = userMessage.toLowerCase();
 
-  // 👋 INITIATE greeting
+  // INITIATE greeting
   if (userMessage === "👋 INITIATE") {
     return res.status(200).json({
       reply: "Hello! My name’s Mark. What prompted you to seek help with your debts today?",
     });
   }
 
-  // 💬 Humor triggers
+  // Humor fallback
   if (HUMOR_TRIGGERS.some(trigger => lowerCaseMessage.includes(trigger))) {
     const cheekyReply = chatFlow.humor_fallbacks[
       Math.floor(Math.random() * chatFlow.humor_fallbacks.length)
@@ -40,33 +40,30 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(200).json({ reply: cheekyReply });
   }
 
-  // 🤖 Choose model
+  // Choose model
   const selectedModel =
     userMessage.length < 40
       ? process.env.SIMPLE_MODEL || 'gpt-3.5-turbo'
       : process.env.ADVANCED_MODEL || 'gpt-4o';
 
+  // Construct context messages
+  const contextMessages: ChatCompletionMessageParam[] = [
+    { role: 'system', content: 'You are a friendly, knowledgeable debt advisor bot named Mark. Follow the flow strictly.' },
+    ...history.map((step, i): ChatCompletionMessageParam =>
+      i % 2 === 0
+        ? { role: 'user', content: step }
+        : { role: 'assistant', content: step } // ❗ Use 'assistant' not 'function' unless using functions API
+    ),
+    { role: 'user', content: userMessage }
+  ];
+
   try {
-    const contextMessages: ChatCompletionMessageParam[] = [
-      {
-        role: 'system',
-        content: 'You are a friendly, knowledgeable debt advisor bot named Mark. Follow the flow strictly.'
-      },
-      ...history.map((step, i): ChatCompletionMessageParam =>
-        i % 2 === 0
-          ? { role: 'user', content: step }
-          : { role: "function" as const, name: 'script_step', content: step }
-
-      ),
-      { role: 'user', content: userMessage }
-    ];
-
     const response = await openai.chat.completions.create({
       model: selectedModel,
-      messages: contextMessages
+      messages: contextMessages,
     });
 
-    const reply = response?.choices?.[0]?.message?.content ?? '⚠️ Something went wrong.';
+    const reply = response.choices?.[0]?.message?.content ?? '⚠️ No response from OpenAI.';
     return res.status(200).json({ reply });
   } catch (error: any) {
     console.error('❌ OpenAI API Error:', error);
