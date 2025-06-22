@@ -1,165 +1,119 @@
 import { useEffect, useRef, useState } from "react";
+import Head from "next/head";
+import Image from "next/image";
 
-export default function Home() {
-  const [messages, setMessages] = useState<{ sender: "user" | "bot"; text: string }[]>([]);
+const Chat = () => {
+  const [messages, setMessages] = useState<{ sender: string; text: string }[]>([]);
   const [input, setInput] = useState("");
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const sessionId = useRef(`session-${Date.now()}`).current;
+  const [isBotTyping, setIsBotTyping] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [isDarkMode, setIsDarkMode] = useState(true);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
-  // Auto-start the chat on page load
   useEffect(() => {
-    const startMessage = async () => {
-      try {
-        const response = await fetch("/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            sessionId,
-            message: "👋 INITIATE",
-            history: [],
-          }),
-        });
-        const data = await response.json();
-        setMessages([{ sender: "bot", text: data.reply }]);
-      } catch {
-        setMessages([{ sender: "bot", text: "⚠️ Error connecting to chatbot." }]);
-      }
-    };
-    startMessage();
-  }, []);
-
-  // Auto-scroll to bottom after message update
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    scrollToBottom();
   }, [messages]);
 
-  const handleSubmit = async () => {
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  const handleSend = async () => {
     if (!input.trim()) return;
 
-    const userMessage = {
-      sender: "user" as const,
-      text: input,
-    };
-
+    const userMessage = { sender: "user", text: input.trim() };
     setMessages((prev) => [...prev, userMessage]);
+    setIsBotTyping(true);
 
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionId,
-          message: input,
-        }),
+        body: JSON.stringify({ message: input.trim(), sessionId }),
       });
 
       const data = await response.json();
 
-      const botMessage = {
-        sender: "bot" as const,
-        text: data.reply || "⚠️ Error: Empty reply from server.",
-      };
-
-      setMessages((prev) => [...prev, botMessage]);
-    } catch {
-      setMessages((prev) => [
-        ...prev,
-        { sender: "bot", text: "⚠️ Error connecting to chatbot." },
-      ]);
+      if (!sessionId) setSessionId(data.sessionId);
+      setMessages((prev) => [...prev, { sender: "bot", text: data.reply }]);
+    } catch (err) {
+      console.error("Chat error:", err);
+      setMessages((prev) => [...prev, { sender: "bot", text: "⚠️ Error: Unable to connect." }]);
+    } finally {
+      setIsBotTyping(false);
+      setInput("");
     }
-
-    setInput("");
   };
 
-  const styles: { [key: string]: React.CSSProperties } = {
-    container: {
-      maxWidth: "600px",
-      margin: "0 auto",
-      padding: "20px",
-      fontFamily: "Arial, sans-serif",
-    },
-    header: {
-      textAlign: "center",
-      marginBottom: "20px",
-    },
-    chatbox: {
-      border: "1px solid #ccc",
-      borderRadius: "8px",
-      padding: "10px",
-      height: "400px",
-      overflowY: "auto",
-      marginBottom: "10px",
-      backgroundColor: "#f9f9f9",
-      display: "flex",
-      flexDirection: "column" as const,
-    },
-    bubble: {
-      padding: "10px",
-      borderRadius: "10px",
-      marginBottom: "10px",
-      maxWidth: "80%",
-    },
-    userBubble: {
-      backgroundColor: "#d4f0ff",
-      alignSelf: "flex-end",
-      textAlign: "right" as const,
-    },
-    botBubble: {
-      backgroundColor: "#f0f0f0",
-      alignSelf: "flex-start",
-      textAlign: "left" as const,
-    },
-    inputRow: {
-      display: "flex",
-      gap: "10px",
-    },
-    input: {
-      flex: 1,
-      padding: "10px",
-      borderRadius: "5px",
-      border: "1px solid #ccc",
-    },
-    button: {
-      padding: "10px 20px",
-      borderRadius: "5px",
-      border: "none",
-      backgroundColor: "#0070f3",
-      color: "#fff",
-      cursor: "pointer",
-    },
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
   };
 
   return (
-    <div style={styles.container}>
-      <h1 style={styles.header}>💬 AI Debt Advisor</h1>
-      <div style={styles.chatbox}>
-        {messages.map((msg, i) => (
-          <div
-            key={i}
-            style={{
-              ...styles.bubble,
-              ...(msg.sender === "user" ? styles.userBubble : styles.botBubble),
-            }}
+    <div className={isDarkMode ? "bg-gray-900 text-white min-h-screen" : "bg-gray-100 text-black min-h-screen"}>
+      <Head>
+        <title>Debt Advisor Chat</title>
+      </Head>
+
+      <div className="max-w-3xl mx-auto px-4 py-6">
+        <div className="flex justify-between items-center mb-4">
+          <h1 className="text-2xl font-bold">Debt Advisor</h1>
+          <button
+            className="px-4 py-2 border rounded text-sm"
+            onClick={() => setIsDarkMode(!isDarkMode)}
           >
-            {msg.text}
-          </div>
-        ))}
-        <div ref={bottomRef} />
-      </div>
-      <div style={styles.inputRow}>
-        <input
-          style={styles.input}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") handleSubmit();
-          }}
-          placeholder="Type your message..."
-        />
-        <button style={styles.button} onClick={handleSubmit}>
-          Send
-        </button>
+            Toggle {isDarkMode ? "Light" : "Dark"} Mode
+          </button>
+        </div>
+
+        <div className="border rounded-lg p-4 space-y-4 bg-white dark:bg-gray-800 h-[65vh] overflow-y-auto">
+          {messages.map((msg, index) => (
+            <div
+              key={index}
+              className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}
+            >
+              <div
+                className={`max-w-xs md:max-w-md px-4 py-2 rounded-2xl shadow-sm whitespace-pre-line
+                ${msg.sender === "user" ?
+                  "bg-blue-600 text-white rounded-br-none" :
+                  "bg-gray-200 text-black dark:bg-gray-700 dark:text-white rounded-bl-none"}`}
+              >
+                {msg.text}
+              </div>
+            </div>
+          ))}
+          {isBotTyping && (
+            <div className="flex justify-start">
+              <div className="bg-gray-200 dark:bg-gray-700 text-black dark:text-white px-4 py-2 rounded-2xl shadow-sm">
+                Typing...
+              </div>
+            </div>
+          )}
+          <div ref={messagesEndRef} />
+        </div>
+
+        <div className="mt-4 flex items-center space-x-2">
+          <input
+            type="text"
+            className="flex-1 p-2 border rounded focus:outline-none dark:bg-gray-800 dark:text-white"
+            placeholder="Type your message..."
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+          />
+          <button
+            className="bg-blue-600 text-white px-4 py-2 rounded"
+            onClick={handleSend}
+          >
+            Send
+          </button>
+        </div>
       </div>
     </div>
   );
-}
+};
+
+export default Chat;
