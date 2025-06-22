@@ -3,10 +3,10 @@ import { useEffect, useRef, useState } from "react";
 export default function Home() {
   const [messages, setMessages] = useState<{ sender: "user" | "bot"; text: string }[]>([]);
   const [input, setInput] = useState("");
+  const [darkMode, setDarkMode] = useState(false);
   const [language, setLanguage] = useState("English");
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // 👋 Auto-start with INITIATE and language message
   useEffect(() => {
     const startMessage = async () => {
       try {
@@ -16,10 +16,7 @@ export default function Home() {
           body: JSON.stringify({ message: "👋 INITIATE" }),
         });
         const data = await response.json();
-        setMessages([
-          { sender: "bot", text: data.reply },
-          { sender: "bot", text: "🌍 You can change languages anytime using the dropdown above." },
-        ]);
+        setMessages([{ sender: "bot", text: data.reply }]);
       } catch {
         setMessages([{ sender: "bot", text: "⚠️ Error connecting to chatbot." }]);
       }
@@ -27,34 +24,15 @@ export default function Home() {
     startMessage();
   }, []);
 
-  // 🔽 Scroll to bottom on update
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const handleLanguageChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const selected = e.target.value;
-    setLanguage(selected);
-    const systemMessage = `Language: ${selected}`;
-    setMessages((prev) => [...prev, { sender: "user", text: systemMessage }]);
-
-    try {
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: systemMessage }),
-      });
-      const data = await response.json();
-      setMessages((prev) => [...prev, { sender: "bot", text: data.reply }]);
-    } catch {
-      setMessages((prev) => [...prev, { sender: "bot", text: "⚠️ Error updating language." }]);
-    }
-  };
-
   const handleSubmit = async () => {
     if (!input.trim()) return;
 
-    setMessages((prev) => [...prev, { sender: "user", text: input }]);
+    const userMessage = { sender: "user" as const, text: input };
+    setMessages((prev) => [...prev, userMessage]);
 
     try {
       const response = await fetch("/api/chat", {
@@ -64,11 +42,7 @@ export default function Home() {
       });
 
       const data = await response.json();
-      const botMessage = {
-        sender: "bot" as const,
-        text: data.reply || "⚠️ Error: Empty reply from server.",
-      };
-
+      const botMessage = { sender: "bot" as const, text: data.reply || "⚠️ Error: Empty reply from server." };
       setMessages((prev) => [...prev, botMessage]);
     } catch {
       setMessages((prev) => [...prev, { sender: "bot", text: "⚠️ Error connecting to chatbot." }]);
@@ -83,21 +57,29 @@ export default function Home() {
       margin: "0 auto",
       padding: "20px",
       fontFamily: "Arial, sans-serif",
+      backgroundColor: darkMode ? "#1e1e1e" : "#fff",
+      color: darkMode ? "#f0f0f0" : "#000",
+      minHeight: "100vh"
     },
-    headerRow: {
+    header: {
+      textAlign: "center",
+      marginBottom: "20px",
+    },
+    controls: {
       display: "flex",
       justifyContent: "space-between",
-      alignItems: "center",
       marginBottom: "10px",
     },
-    title: {
-      fontSize: "20px",
-      fontWeight: "bold",
-    },
     select: {
-      padding: "6px",
+      padding: "8px",
       borderRadius: "5px",
-      border: "1px solid #ccc",
+    },
+    toggle: {
+      padding: "8px 12px",
+      borderRadius: "5px",
+      backgroundColor: darkMode ? "#444" : "#ccc",
+      color: darkMode ? "#fff" : "#000",
+      cursor: "pointer",
     },
     chatbox: {
       border: "1px solid #ccc",
@@ -105,16 +87,32 @@ export default function Home() {
       padding: "10px",
       height: "400px",
       overflowY: "auto",
-      backgroundColor: "#f9f9f9",
+      marginBottom: "10px",
+      backgroundColor: darkMode ? "#2e2e2e" : "#f9f9f9",
       display: "flex",
       flexDirection: "column" as const,
-      marginBottom: "10px",
+    },
+    messageRow: {
+      display: "flex",
+      alignItems: "flex-end",
+      gap: "10px",
+    },
+    avatar: {
+      width: "32px",
+      height: "32px",
+      borderRadius: "50%",
+      backgroundColor: "#0070f3",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      color: "#fff",
+      fontWeight: "bold",
     },
     bubble: {
-      padding: "10px",
-      borderRadius: "10px",
-      marginBottom: "10px",
+      padding: "12px",
+      borderRadius: "12px",
       maxWidth: "80%",
+      boxShadow: "0 2px 6px rgba(0,0,0,0.1)",
     },
     userBubble: {
       backgroundColor: "#d4f0ff",
@@ -122,7 +120,7 @@ export default function Home() {
       textAlign: "right" as const,
     },
     botBubble: {
-      backgroundColor: "#f0f0f0",
+      backgroundColor: "#e0e0e0",
       alignSelf: "flex-start",
       textAlign: "left" as const,
     },
@@ -148,35 +146,39 @@ export default function Home() {
 
   return (
     <div style={styles.container}>
-      <div style={styles.headerRow}>
-        <span style={styles.title}>💬 AI Debt Advisor</span>
-        <select style={styles.select} value={language} onChange={handleLanguageChange}>
-          <option value="English">🌐 English</option>
-          <option value="Spanish">🇪🇸 Spanish</option>
-          <option value="Polish">🇵🇱 Polish</option>
-          <option value="French">🇫🇷 French</option>
-          <option value="German">🇩🇪 German</option>
-          <option value="Portuguese">🇵🇹 Portuguese</option>
-          <option value="Italian">🇮🇹 Italian</option>
-          <option value="Romanian">🇷🇴 Romanian</option>
+      <h1 style={styles.header}>💬 AI Debt Advisor</h1>
+      <div style={styles.controls}>
+        <select value={language} onChange={(e) => setLanguage(e.target.value)} style={styles.select}>
+          <option>English</option>
+          <option>Spanish</option>
+          <option>French</option>
+          <option>German</option>
+          <option>Polish</option>
+          <option>Romanian</option>
+          <option>Portuguese</option>
+          <option>Italian</option>
         </select>
+        <button style={styles.toggle} onClick={() => setDarkMode(!darkMode)}>
+          {darkMode ? "🌞 Light Mode" : "🌙 Dark Mode"}
+        </button>
       </div>
-
       <div style={styles.chatbox}>
         {messages.map((msg, i) => (
-          <div
-            key={i}
-            style={{
-              ...styles.bubble,
-              ...(msg.sender === "user" ? styles.userBubble : styles.botBubble),
-            }}
-          >
-            {msg.text}
+          <div key={i} style={{ ...styles.messageRow, justifyContent: msg.sender === "user" ? "flex-end" : "flex-start" }}>
+            {msg.sender === "bot" && <div style={styles.avatar}>🤖</div>}
+            <div
+              style={{
+                ...styles.bubble,
+                ...(msg.sender === "user" ? styles.userBubble : styles.botBubble),
+              }}
+            >
+              {msg.text}
+            </div>
+            {msg.sender === "user" && <div style={styles.avatar}>🧑</div>}
           </div>
         ))}
         <div ref={bottomRef} />
       </div>
-
       <div style={styles.inputRow}>
         <input
           style={styles.input}
