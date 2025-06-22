@@ -1,151 +1,154 @@
 import { useEffect, useRef, useState } from "react";
 
-const LANGUAGES = [
-  "English",
-  "Spanish",
-  "Polish",
-  "French",
-  "German",
-  "Portuguese",
-  "Italian",
-  "Romanian",
-];
-
 export default function Home() {
   const [messages, setMessages] = useState<{ sender: "user" | "bot"; text: string }[]>([]);
   const [input, setInput] = useState("");
-  const [language, setLanguage] = useState<string | null>(null);
-  const chatEndRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll on message update
   useEffect(() => {
-    if (chatEndRef.current) {
-      chatEndRef.current.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [messages]);
-
-  // On first load, try to resume session
-  useEffect(() => {
-    const storedMessages = localStorage.getItem("chatMessages");
-    const storedLang = localStorage.getItem("chatLang");
-
-    if (storedMessages) {
-      setMessages(JSON.parse(storedMessages));
-    }
-
-    if (storedLang) {
-      setLanguage(storedLang);
-    }
+    const startMessage = async () => {
+      try {
+        const response = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: "👋 INITIATE" }),
+        });
+        const data = await response.json();
+        setMessages([{ sender: "bot", text: data.reply }]);
+      } catch {
+        setMessages([{ sender: "bot", text: "⚠️ Error connecting to chatbot." }]);
+      }
+    };
+    startMessage();
   }, []);
 
-  // Save chat to localStorage
   useEffect(() => {
-    localStorage.setItem("chatMessages", JSON.stringify(messages));
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const sendMessage = async (text: string) => {
-    const userMsg = { sender: "user" as const, text };
-    setMessages((prev) => [...prev, userMsg]);
+  const handleSubmit = async () => {
+    if (!input.trim()) return;
+
+    const userMessage = { sender: "user" as const, text: input };
+    setMessages((prev) => [...prev, userMessage]);
 
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userMessage: text, sessionId: "user-123", history: messages.map(m => m.text) }),
+        body: JSON.stringify({ message: input }),
       });
-
       const data = await response.json();
-      const botMsg = { sender: "bot" as const, text: data.reply || "⚠️ No response from server." };
-      setMessages((prev) => [...prev, botMsg]);
+      const botMessage = { sender: "bot" as const, text: data.reply || "⚠️ Empty reply." };
+      setMessages((prev) => [...prev, botMessage]);
     } catch {
-      setMessages((prev) => [...prev, { sender: "bot", text: "⚠️ Error connecting to chatbot." }]);
+      setMessages((prev) => [...prev, { sender: "bot", text: "⚠️ Connection error." }]);
     }
 
     setInput("");
   };
 
-  const handleLanguageSelect = (lang: string) => {
-    setLanguage(lang);
-    localStorage.setItem("chatLang", lang);
-    sendMessage("👋 INITIATE");
-  };
-
-  const handleSubmit = () => {
-    if (!input.trim()) return;
-    sendMessage(input.trim());
-  };
-
   const styles: { [key: string]: React.CSSProperties } = {
-    container: { maxWidth: "600px", margin: "0 auto", padding: "20px", fontFamily: "Arial, sans-serif" },
-    header: { textAlign: "center", marginBottom: "20px" },
+    container: {
+      maxWidth: "600px",
+      margin: "0 auto",
+      padding: "20px",
+      fontFamily: "'Segoe UI', sans-serif",
+    },
+    header: {
+      textAlign: "center",
+      marginBottom: "20px",
+      fontSize: "1.8rem",
+    },
     chatbox: {
-      border: "1px solid #ccc", borderRadius: "8px", padding: "10px",
-      height: "400px", overflowY: "auto", marginBottom: "10px",
-      backgroundColor: "#f9f9f9", display: "flex", flexDirection: "column",
+      border: "1px solid #ddd",
+      borderRadius: "12px",
+      padding: "15px",
+      height: "450px",
+      overflowY: "auto",
+      backgroundColor: "#fdfdfd",
+      display: "flex",
+      flexDirection: "column" as const,
+      boxShadow: "0 4px 8px rgba(0,0,0,0.05)",
+    },
+    messageRow: {
+      display: "flex",
+      alignItems: "flex-start",
+      gap: "10px",
+      marginBottom: "12px",
+    },
+    avatar: {
+      width: "36px",
+      height: "36px",
+      borderRadius: "50%",
+      fontSize: "20px",
+      textAlign: "center",
+      lineHeight: "36px",
     },
     bubble: {
-      padding: "10px", borderRadius: "10px", marginBottom: "10px", maxWidth: "80%",
+      padding: "10px 14px",
+      borderRadius: "14px",
+      maxWidth: "75%",
+      fontSize: "1rem",
+      lineHeight: "1.4",
     },
-    userBubble: { backgroundColor: "#d4f0ff", alignSelf: "flex-end", textAlign: "right" },
-    botBubble: { backgroundColor: "#f0f0f0", alignSelf: "flex-start", textAlign: "left" },
-    inputRow: { display: "flex", gap: "10px" },
-    input: { flex: 1, padding: "10px", borderRadius: "5px", border: "1px solid #ccc" },
-    button: { padding: "10px 20px", borderRadius: "5px", border: "none", backgroundColor: "#0070f3", color: "#fff", cursor: "pointer" },
-    langBtn: {
-      margin: "5px", padding: "8px 16px", borderRadius: "5px", border: "1px solid #ccc",
-      cursor: "pointer", backgroundColor: "#fff"
+    userBubble: {
+      backgroundColor: "#d4f0ff",
+      alignSelf: "flex-end",
+    },
+    botBubble: {
+      backgroundColor: "#e6e6e6",
+      alignSelf: "flex-start",
+    },
+    inputRow: {
+      display: "flex",
+      marginTop: "12px",
+      gap: "10px",
+    },
+    input: {
+      flex: 1,
+      padding: "10px",
+      borderRadius: "6px",
+      border: "1px solid #ccc",
+      fontSize: "1rem",
+    },
+    button: {
+      padding: "10px 20px",
+      borderRadius: "6px",
+      border: "none",
+      backgroundColor: "#0070f3",
+      color: "#fff",
+      fontSize: "1rem",
+      cursor: "pointer",
     },
   };
 
   return (
     <div style={styles.container}>
       <h1 style={styles.header}>💬 AI Debt Advisor</h1>
-
-      {!language ? (
-        <>
-          <p>
-            Hello, my name’s Mark 👋 I’m here to help you explore your debt options.
-            <br />
-            To begin, please choose your preferred language:
-          </p>
-          <div>
-            {LANGUAGES.map((lang) => (
-              <button key={lang} style={styles.langBtn} onClick={() => handleLanguageSelect(lang)}>
-                {lang}
-              </button>
-            ))}
+      <div style={styles.chatbox}>
+        {messages.map((msg, i) => (
+          <div key={i} style={styles.messageRow}>
+            <div style={{ ...styles.avatar, backgroundColor: msg.sender === "bot" ? "#ccc" : "#0070f3", color: msg.sender === "bot" ? "#000" : "#fff" }}>
+              {msg.sender === "bot" ? "🤖" : "🧑"}
+            </div>
+            <div style={{ ...styles.bubble, ...(msg.sender === "bot" ? styles.botBubble : styles.userBubble) }}>
+              {msg.text}
+            </div>
           </div>
-        </>
-      ) : (
-        <>
-          <div style={styles.chatbox}>
-            {messages.map((msg, i) => (
-              <div
-                key={i}
-                style={{
-                  ...styles.bubble,
-                  ...(msg.sender === "user" ? styles.userBubble : styles.botBubble),
-                }}
-              >
-                {msg.text}
-              </div>
-            ))}
-            <div ref={chatEndRef} />
-          </div>
-          <div style={styles.inputRow}>
-            <input
-              style={styles.input}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
-              placeholder="Type your message..."
-            />
-            <button style={styles.button} onClick={handleSubmit}>
-              Send
-            </button>
-          </div>
-        </>
-      )}
+        ))}
+        <div ref={bottomRef} />
+      </div>
+      <div style={styles.inputRow}>
+        <input
+          style={styles.input}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") handleSubmit(); }}
+          placeholder="Type your message..."
+        />
+        <button style={styles.button} onClick={handleSubmit}>Send</button>
+      </div>
     </div>
   );
 }
