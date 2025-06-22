@@ -1,93 +1,97 @@
-// ✅ HYBRID chat.ts – FullScriptLogic control + GPT-3.5/4o model switching + humor + fallback
-
-import type { NextApiRequest, NextApiResponse } from 'next';
-import OpenAI from 'openai';
-import { ChatCompletionMessageParam } from 'openai/resources';
-import fullScriptLogic from '../../data/full_script_logic.json';
-import { createClient } from '@supabase/supabase-js';
+import OpenAI from "openai";
+import { createClient } from "@supabase/supabase-js";
+import { v4 as uuidv4 } from "uuid";
+import fullScriptLogic from "../../data/full_script_logic.json";
+import type { NextApiRequest, NextApiResponse } from "next";
+import { ChatCompletionMessageParam } from "openai/resources";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
 const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
+  process.env.SUPABASE_URL || "",
+  process.env.SUPABASE_ANON_KEY || ""
 );
 
-const HUMOR_TRIGGERS = [
-  'aliens', 'payslip', 'plot twist', 'joke', 'what are you wearing',
-  'are you stupid', 'talk dirty', 'you sound hot', 'prove you\'re real',
-  'do you have a soul', 'banter', 'nonsense', 'you sound fit', 'idiot',
-  'are you even qualified', 'you\'re a robot', 'flirt', 'you single',
-  'how much do you earn', 'are you real'
-];
-
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const { sessionId, userMessage = '', history = [] } = req.body;
+  if (req.method !== "POST") return res.status(405).end();
 
-  if (!userMessage || typeof userMessage !== 'string') {
-    return res.status(400).json({ error: 'Message is required.' });
+  if (!req.body || typeof req.body.message !== "string") {
+    console.error("400 Error: Invalid request body", req.body);
+    return res.status(400).json({ reply: "Invalid request format." });
   }
 
-  const lowerCaseMessage = userMessage.toLowerCase();
+  const userMessage = req.body.message.trim();
+  const sessionId = req.body.sessionId || uuidv4();
 
-  // INITIATE trigger
-  if (userMessage === '👋 INITIATE') {
-    await supabase.from('chat_sessions').upsert({ session_id: sessionId, history: [] }, { onConflict: 'session_id' });
-    return res.status(200).json({ reply: fullScriptLogic[0].prompt, step: 0 });
-  }
+  let { data: historyData } = await supabase
+    .from("chat_history")
+    .select("messages")
+    .eq("session_id", sessionId)
+    .single();
 
-  // Humor fallback
-  if (HUMOR_TRIGGERS.some(trigger => lowerCaseMessage.includes(trigger))) {
-    const jokes = [
-      "That’s a plot twist I didn’t see coming… but let’s get back to sorting your finances!",
-      "I’m flattered you think I can do that, but let’s stick to helping you become debt-free, yeah?",
-      "If the aliens return your payslip, just upload it when you can. Let’s keep going in the meantime."
-    ];
-    const joke = jokes[Math.floor(Math.random() * jokes.length)];
-    return res.status(200).json({ reply: joke });
-  }
+  let history: ChatCompletionMessageParam[] = [];
 
-  // Determine next script step
-  const currentStepIndex = Math.floor(history.length / 2);
-  const currentScriptStep = fullScriptLogic.steps[currentStepIndex] || fullScriptLogic.steps[fullScriptLogic.steps.length - 1];
-  const basePrompt = currentScriptStep?.prompt || 'Let’s keep going with your debt help...';
-  const branchIfYes = null;
-  const branchIfNo = null;
+  if (userMessage === "👋 INITIATE") {
+    const openingLine = fullScriptLogic.steps[0]?.prompt ||
+      "Hello, my name is Mark. What language would you like to use today so I can best help you with your debts?";
+    history = [{ role: "assistant", content: openingLine }];
 
-  // Add logic instructions if branching exists
-  const scriptInstruction = `${basePrompt}\n\n(Stay on script. ${
-    branchIfYes !== null ? 'If YES, go to step ' + branchIfYes + '.' : ''
-  } ${
-    branchIfNo !== null ? 'If NO, go to step ' + branchIfNo + '.' : ''
-  })`;
-
-  const contextMessages: ChatCompletionMessageParam[] = [
-    { role: 'system', content: 'You are a friendly, structured debt advisor named Mark. You must follow the script flow precisely, asking only what is provided.' },
-    ...history.map((msg: string, i: number) => ({
-      role: i % 2 === 0 ? 'user' : 'assistant',
-      content: msg
-    })),
-    { role: 'user', content: userMessage },
-    { role: 'assistant', content: scriptInstruction }
-  ];
-
-  const selectedModel = userMessage.length < 40 ? 'gpt-3.5-turbo' : 'gpt-4o';
-
-  try {
-    const response = await openai.chat.completions.create({
-      model: selectedModel,
-      messages: contextMessages
+    await supabase.from("chat_history").upsert({
+      session_id: sessionId,
+      messages: history,
     });
 
-    const reply = response.choices?.[0]?.message?.content ?? basePrompt;
-    const updatedHistory = [...history, userMessage, reply];
-
-    await supabase.from('chat_sessions')
-      .upsert({ session_id: sessionId, history: updatedHistory }, { onConflict: 'session_id' });
-
-    return res.status(200).json({ reply, history: updatedHistory });
-  } catch (error: any) {
-    console.error('❌ OpenAI API Error:', error);
-    return res.status(500).json({ error: 'Failed to get response from OpenAI' });
+    return res.status(200).json({ reply: openingLine, sessionId });
   }
+
+  if (historyData?.messages) {
+    history = historyData.messages;
+  }
+
+  history.push({ role: "user", content: userMessage });
+
+  // Determine script progression
+  const currentStepIndex = Math.floor(history.length / 2);
+  const scriptSteps = fullScriptLogic.steps;
+  const currentStep = scriptSteps[currentStepIndex] || scriptSteps[scriptSteps.length - 1];
+  const basePrompt = currentStep.prompt || "Let’s keep going with your debt help...";
+
+  // Off-topic detection (naive for now)
+  const keywords = ["debt", "creditor", "bailiff", "income", "bankruptcy", "IVA", "DMP", "DRO"];
+  const isOnTopic = keywords.some((k) => userMessage.toLowerCase().includes(k));
+
+  let humorLine = "";
+  if (!isOnTopic) {
+    const fallbacks = fullScriptLogic.humor_fallbacks || [];
+    if (fallbacks.length > 0) {
+      const random = Math.floor(Math.random() * fallbacks.length);
+      humorLine = fallbacks[random];
+      history.push({ role: "assistant", content: humorLine });
+    }
+  }
+
+  const systemPrompt =
+    "You are a professional and friendly AI debt advisor named Mark. Follow the IVA script step-by-step. If the user goes off-topic, use a friendly humorous fallback, then return to the correct script step. Do not skip or repeat steps. Avoid free-form responses.";
+
+  const completion = await openai.chat.completions.create({
+    model: history.length > 12 ? "gpt-4o" : "gpt-3.5-turbo",
+    messages: [
+      { role: "system", content: systemPrompt },
+      ...history,
+      { role: "assistant", content: basePrompt },
+    ],
+    temperature: 0.7,
+  });
+
+  const finalReply = completion.choices[0].message.content?.trim() || basePrompt;
+
+  history.push({ role: "assistant", content: finalReply });
+
+  await supabase.from("chat_history").upsert({
+    session_id: sessionId,
+    messages: history,
+  });
+
+  const fullReply = humorLine ? humorLine + "\n\n" + finalReply : finalReply;
+
+  res.status(200).json({ reply: fullReply, sessionId });
 }
