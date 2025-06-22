@@ -3,20 +3,24 @@ import { useEffect, useRef, useState } from "react";
 export default function Home() {
   const [messages, setMessages] = useState<{ sender: "user" | "bot"; text: string }[]>([]);
   const [input, setInput] = useState("");
-  const [tableData, setTableData] = useState<{ [key: string]: number }>({});
-  const [showTable, setShowTable] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const sessionId = useRef(`session-${Date.now()}`).current;
 
+  // Auto-start the chat on page load
   useEffect(() => {
     const startMessage = async () => {
       try {
         const response = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: "\uD83D\uDC4B INITIATE" }),
+          body: JSON.stringify({
+            sessionId,
+            message: "👋 INITIATE",
+            history: [],
+          }),
         });
         const data = await response.json();
-        handleBotReply(data.reply);
+        setMessages([{ sender: "bot", text: data.reply }]);
       } catch {
         setMessages([{ sender: "bot", text: "⚠️ Error connecting to chatbot." }]);
       }
@@ -24,56 +28,60 @@ export default function Home() {
     startMessage();
   }, []);
 
+  // Auto-scroll to bottom after message update
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, showTable]);
-
-  const handleBotReply = (reply: string) => {
-    if (reply.startsWith("#INCOME_EXPENSES_TABLE")) {
-      setShowTable(true);
-    } else {
-      setMessages((prev) => [...prev, { sender: "bot", text: reply }]);
-    }
-  };
+  }, [messages]);
 
   const handleSubmit = async () => {
     if (!input.trim()) return;
-    const userMessage = { sender: "user" as const, text: input };
+
+    const userMessage = {
+      sender: "user" as const,
+      text: input,
+    };
+
     setMessages((prev) => [...prev, userMessage]);
 
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: input }),
+        body: JSON.stringify({
+          sessionId,
+          message: input,
+        }),
       });
+
       const data = await response.json();
-      handleBotReply(data.reply);
+
+      const botMessage = {
+        sender: "bot" as const,
+        text: data.reply || "⚠️ Error: Empty reply from server.",
+      };
+
+      setMessages((prev) => [...prev, botMessage]);
     } catch {
-      setMessages((prev) => [...prev, { sender: "bot", text: "⚠️ Error connecting to chatbot." }]);
+      setMessages((prev) => [
+        ...prev,
+        { sender: "bot", text: "⚠️ Error connecting to chatbot." },
+      ]);
     }
 
     setInput("");
   };
 
-  const handleTableInput = (field: string, value: string) => {
-    setTableData((prev) => ({ ...prev, [field]: Number(value) }));
-  };
-
-  const handleSubmitTable = async () => {
-    const response = await fetch("/api/income-expense", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionId: "demo-session", tableData }),
-    });
-    const data = await response.json();
-    setShowTable(false);
-    setMessages((prev) => [...prev, { sender: "bot", text: data.reply }]);
-  };
-
   const styles: { [key: string]: React.CSSProperties } = {
-    container: { maxWidth: "600px", margin: "0 auto", padding: "20px", fontFamily: "Arial, sans-serif" },
-    header: { textAlign: "center", marginBottom: "20px" },
+    container: {
+      maxWidth: "600px",
+      margin: "0 auto",
+      padding: "20px",
+      fontFamily: "Arial, sans-serif",
+    },
+    header: {
+      textAlign: "center",
+      marginBottom: "20px",
+    },
     chatbox: {
       border: "1px solid #ccc",
       borderRadius: "8px",
@@ -85,15 +93,40 @@ export default function Home() {
       display: "flex",
       flexDirection: "column" as const,
     },
-    bubble: { padding: "10px", borderRadius: "10px", marginBottom: "10px", maxWidth: "80%" },
-    userBubble: { backgroundColor: "#d4f0ff", alignSelf: "flex-end", textAlign: "right" as const },
-    botBubble: { backgroundColor: "#f0f0f0", alignSelf: "flex-start", textAlign: "left" as const },
-    inputRow: { display: "flex", gap: "10px" },
-    input: { flex: 1, padding: "10px", borderRadius: "5px", border: "1px solid #ccc" },
-    button: { padding: "10px 20px", borderRadius: "5px", border: "none", backgroundColor: "#0070f3", color: "#fff", cursor: "pointer" },
-    tableContainer: { padding: "10px", background: "#fff", borderRadius: "8px", border: "1px solid #ccc" },
-    table: { width: "100%", borderCollapse: "collapse" },
-    tableCell: { border: "1px solid #ddd", padding: "8px" },
+    bubble: {
+      padding: "10px",
+      borderRadius: "10px",
+      marginBottom: "10px",
+      maxWidth: "80%",
+    },
+    userBubble: {
+      backgroundColor: "#d4f0ff",
+      alignSelf: "flex-end",
+      textAlign: "right" as const,
+    },
+    botBubble: {
+      backgroundColor: "#f0f0f0",
+      alignSelf: "flex-start",
+      textAlign: "left" as const,
+    },
+    inputRow: {
+      display: "flex",
+      gap: "10px",
+    },
+    input: {
+      flex: 1,
+      padding: "10px",
+      borderRadius: "5px",
+      border: "1px solid #ccc",
+    },
+    button: {
+      padding: "10px 20px",
+      borderRadius: "5px",
+      border: "none",
+      backgroundColor: "#0070f3",
+      color: "#fff",
+      cursor: "pointer",
+    },
   };
 
   return (
@@ -101,31 +134,16 @@ export default function Home() {
       <h1 style={styles.header}>💬 AI Debt Advisor</h1>
       <div style={styles.chatbox}>
         {messages.map((msg, i) => (
-          <div key={i} style={{ ...styles.bubble, ...(msg.sender === "user" ? styles.userBubble : styles.botBubble) }}>
+          <div
+            key={i}
+            style={{
+              ...styles.bubble,
+              ...(msg.sender === "user" ? styles.userBubble : styles.botBubble),
+            }}
+          >
             {msg.text}
           </div>
         ))}
-
-        {showTable && (
-          <div style={styles.tableContainer}>
-            <table style={styles.table}>
-              <thead>
-                <tr><th>Category</th><th>Amount (£)</th></tr>
-              </thead>
-              <tbody>
-                {["Wages", "Benefits", "Rent", "Utilities", "Food", "Transport", "Other"].map((item, i) => (
-                  <tr key={i}>
-                    <td style={styles.tableCell}>{item}</td>
-                    <td style={styles.tableCell}>
-                      <input type="number" name={item} onChange={(e) => handleTableInput(item, e.target.value)} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <button onClick={handleSubmitTable} style={{ ...styles.button, marginTop: "10px" }}>Submit</button>
-          </div>
-        )}
         <div ref={bottomRef} />
       </div>
       <div style={styles.inputRow}>
@@ -133,10 +151,14 @@ export default function Home() {
           style={styles.input}
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") handleSubmit(); }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") handleSubmit();
+          }}
           placeholder="Type your message..."
         />
-        <button style={styles.button} onClick={handleSubmit}>Send</button>
+        <button style={styles.button} onClick={handleSubmit}>
+          Send
+        </button>
       </div>
     </div>
   );
