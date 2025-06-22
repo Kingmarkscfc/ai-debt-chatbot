@@ -11,60 +11,65 @@ const supabase = createClient(
   process.env.SUPABASE_ANON_KEY || ""
 );
 
+const fallbackHumour = [
+  "That’s a plot twist I didn’t see coming… but let’s stick to your debts, yeah?",
+  "I’m flattered you think I can do that, but let’s get back to helping you become debt-free!",
+  "As fun as that sounds, I’m here to help with your money stress, not become your life coach. Yet."
+];
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).end();
 
-  if (
-    !req.body ||
-    typeof req.body.message !== "string" ||
-    req.body.message.trim().length === 0
-  ) {
-    console.error("400 Error: Invalid request body", req.body);
-    return res.status(400).json({ reply: "Invalid request format." });
-  }
-
-  const userMessage = req.body.message.trim();
-  const sessionId = req.body.sessionId || uuidv4();
-
-  let { data: historyData } = await supabase
-    .from("chat_history")
-    .select("messages")
-    .eq("session_id", sessionId)
-    .single();
-
-  let history: ChatCompletionMessageParam[] = [];
-
-  if (userMessage === "👋 INITIATE") {
-    const openingLine =
-      fullScriptLogic.steps[0]?.prompt ||
-      "Hello, my name is Mark. What language would you like to use today so I can best help you with your debts?";
-    history = [{ role: "assistant", content: openingLine }];
-
-    await supabase.from("chat_history").upsert({
-      session_id: sessionId,
-      messages: history,
-    });
-
-    return res.status(200).json({ reply: openingLine, sessionId });
-  }
-
-  if (historyData?.messages) {
-    history = historyData.messages;
-  }
-
-  history.push({ role: "user", content: userMessage });
-
-  const currentStepIndex = Math.floor(history.length / 2);
-  const currentScriptStep =
-    fullScriptLogic.steps[currentStepIndex] ||
-    fullScriptLogic.steps[fullScriptLogic.steps.length - 1];
-
-  const basePrompt = currentScriptStep.prompt || "Let’s keep going with your debt help...";
-
-  const systemPrompt =
-    "You are a professional and friendly AI debt advisor named Mark. Follow the IVA script step-by-step using the prompt provided. If the user goes off-topic, gently bring them back using light humour. Do not skip steps or loop. Ensure the flow strictly follows the script.";
-
   try {
+    if (!req.body || typeof req.body.message !== "string") {
+      console.error("400 Error: Invalid request body", req.body);
+      return res.status(400).json({ reply: "Invalid request format." });
+    }
+
+    const userMessage = req.body.message.trim();
+    const sessionId = req.body.sessionId || uuidv4();
+
+    let { data: historyData } = await supabase
+      .from("chat_history")
+      .select("messages")
+      .eq("session_id", sessionId)
+      .single();
+
+    let history: ChatCompletionMessageParam[] = [];
+
+    if (userMessage === "👋 INITIATE") {
+      const openingLine = fullScriptLogic.steps[0]?.prompt ||
+        "Hello, my name is Mark. What language would you like to use today so I can best help you with your debts?";
+
+      history = [{ role: "assistant", content: openingLine }];
+
+      await supabase.from("chat_history").upsert({
+        session_id: sessionId,
+        messages: history,
+      });
+
+      return res.status(200).json({ reply: openingLine, sessionId });
+    }
+
+    if (historyData?.messages) {
+      history = historyData.messages;
+    }
+
+    history.push({ role: "user", content: userMessage });
+
+    const userStepCount = history.filter(m => m.role === "user").length;
+    const assistantStepCount = history.filter(m => m.role === "assistant").length;
+    const currentStepIndex = Math.min(userStepCount, assistantStepCount);
+
+    const currentScriptStep = fullScriptLogic.steps[currentStepIndex] ||
+      fullScriptLogic.steps[fullScriptLogic.steps.length - 1];
+
+    const basePrompt = currentScriptStep?.prompt ||
+      "Let’s keep going with your debt help...";
+
+    const systemPrompt =
+      "You are a professional and friendly AI debt advisor named Mark. Follow the IVA script strictly step-by-step using the provided script logic. NEVER skip ahead. If the user goes off-topic, bring them back using professional humour. Only use humour for off-topic replies. Do not loop or repeat past steps.";
+
     const completion = await openai.chat.completions.create({
       model: history.length > 12 ? "gpt-4o" : "gpt-3.5-turbo",
       messages: [
@@ -75,9 +80,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       temperature: 0.7,
     });
 
-    const reply =
-      completion.choices[0].message.content?.trim() ||
-      "Hmm... I’m not quite sure how to reply to that. Let’s get back on track!";
+    let reply = completion.choices[0].message.content?.trim() || "I'm not sure how to reply to that.";
+
+    // If reply ignores the prompt completely, fall back to humour
+    const botIgnoredPrompt = reply.toLowerCase().includes("i don't understand") ||
+      reply.toLowerCase().includes("i'm not sure");
+
+    if (botIgnoredPrompt) {
+      reply = fallbackHumour[Math.floor(Math.random() * fallbackHumour.length)];
+    }
 
     history.push({ role: "assistant", content: reply });
 
@@ -87,11 +98,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     });
 
     return res.status(200).json({ reply, sessionId });
-  } catch (error) {
-    console.error("❌ OpenAI error:", error);
-    return res.status(500).json({
-      reply:
-        "Oops, something went wrong while I was trying to help. Let’s give it another go in a moment!",
-    });
+  } catch (err: any) {
+    console.error("500 Error in /api/chat:", err.message || err);
+    return res.status(500).json({ reply: "Sorry, something went wrong on my end. Please try again shortly." });
   }
 }
+
