@@ -49,10 +49,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   // Determine next script step
   const currentStepIndex = Math.floor(history.length / 2);
-  const currentScriptStep = fullScriptLogic[currentStepIndex] || fullScriptLogic[fullScriptLogic.length - 1];
+  const currentScriptStep = fullScriptLogic.steps[currentStepIndex] || fullScriptLogic.steps[fullScriptLogic.steps.length - 1];
   const basePrompt = currentScriptStep?.prompt || 'Let’s keep going with your debt help...';
-  const branchIfYes = currentScriptStep?.yes_step_index ?? null;
-  const branchIfNo = currentScriptStep?.no_step_index ?? null;
+  const branchIfYes = null;
+  const branchIfNo = null;
 
   // Add logic instructions if branching exists
   const scriptInstruction = `${basePrompt}\n\n(Stay on script. ${
