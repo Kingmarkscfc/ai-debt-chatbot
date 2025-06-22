@@ -1,27 +1,32 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export default function Home() {
   const [messages, setMessages] = useState<{ sender: "user" | "bot"; text: string }[]>([]);
   const [input, setInput] = useState("");
+  const bottomRef = useRef<HTMLDivElement>(null); // 🔽 scroll anchor
 
   // 👋 Auto-start the chat on page load
-useEffect(() => {
-  const startMessage = async () => {
-    try {
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: "👋 INITIATE" }),
-      });
-      const data = await response.json();
-      setMessages([{ sender: "bot", text: data.reply }]);
-    } catch {
-      setMessages([{ sender: "bot", text: "⚠️ Error connecting to chatbot." }]);
-    }
-  };
-  startMessage();
-}, []);
+  useEffect(() => {
+    const startMessage = async () => {
+      try {
+        const response = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: "👋 INITIATE" }),
+        });
+        const data = await response.json();
+        setMessages([{ sender: "bot", text: data.reply }]);
+      } catch {
+        setMessages([{ sender: "bot", text: "⚠️ Error connecting to chatbot." }]);
+      }
+    };
+    startMessage();
+  }, []);
 
+  // 👇 Auto-scroll to bottom after message update
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
 
   const handleSubmit = async () => {
     if (!input.trim()) return;
@@ -131,6 +136,7 @@ useEffect(() => {
             {msg.text}
           </div>
         ))}
+        <div ref={bottomRef} /> {/* 👇 Scroll anchor */}
       </div>
       <div style={styles.inputRow}>
         <input

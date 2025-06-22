@@ -1,13 +1,12 @@
+// ✅ HYBRID chat.ts – FullScriptLogic control + GPT-3.5/4o model switching + humor + fallback
+
 import type { NextApiRequest, NextApiResponse } from 'next';
 import OpenAI from 'openai';
 import { ChatCompletionMessageParam } from 'openai/resources';
 import fullScriptLogic from '../../data/full_script_logic.json';
-import chatFlow from '../../data/chat_flow.json';
 import { createClient } from '@supabase/supabase-js';
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
@@ -15,11 +14,11 @@ const supabase = createClient(
 );
 
 const HUMOR_TRIGGERS = [
-  "aliens", "payslip", "plot twist", "joke", "what are you wearing",
-  "are you stupid", "talk dirty", "you sound hot", "prove you're real",
-  "do you have a soul", "banter", "nonsense", "you sound fit", "idiot",
-  "are you even qualified", "you're a robot", "flirt", "who built you",
-  "you single", "how much do you earn", "are you real"
+  'aliens', 'payslip', 'plot twist', 'joke', 'what are you wearing',
+  'are you stupid', 'talk dirty', 'you sound hot', 'prove you\'re real',
+  'do you have a soul', 'banter', 'nonsense', 'you sound fit', 'idiot',
+  'are you even qualified', 'you\'re a robot', 'flirt', 'you single',
+  'how much do you earn', 'are you real'
 ];
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -31,55 +30,48 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const lowerCaseMessage = userMessage.toLowerCase();
 
-  // 👋 INITIATE greeting
-  if (userMessage === "👋 INITIATE") {
-    await supabase
-      .from('chat_sessions')
-      .insert([{ session_id: sessionId, history: [] }]);
-
-    return res.status(200).json({
-      reply: "Hello! My name’s Mark. What prompted you to seek help with your debts today?",
-      step: 'start'
-    });
+  // INITIATE trigger
+  if (userMessage === '👋 INITIATE') {
+    await supabase.from('chat_sessions').upsert({ session_id: sessionId, history: [] }, { onConflict: 'session_id' });
+    return res.status(200).json({ reply: fullScriptLogic[0].prompt, step: 0 });
   }
 
-  // 💬 Humor fallback
+  // Humor fallback
   if (HUMOR_TRIGGERS.some(trigger => lowerCaseMessage.includes(trigger))) {
-    const cheekyReply = chatFlow.humor_fallbacks[
-      Math.floor(Math.random() * chatFlow.humor_fallbacks.length)
+    const jokes = [
+      "That’s a plot twist I didn’t see coming… but let’s get back to sorting your finances!",
+      "I’m flattered you think I can do that, but let’s stick to helping you become debt-free, yeah?",
+      "If the aliens return your payslip, just upload it when you can. Let’s keep going in the meantime."
     ];
-    return res.status(200).json({ reply: cheekyReply });
+    const joke = jokes[Math.floor(Math.random() * jokes.length)];
+    return res.status(200).json({ reply: joke });
   }
 
-  // 🤖 Choose model
-  const selectedModel =
-    userMessage.length < 40
-      ? process.env.SIMPLE_MODEL || 'gpt-3.5-turbo'
-      : process.env.ADVANCED_MODEL || 'gpt-4o';
-
-  // 🧠 Retrieve full script logic
-  const currentScriptStep = fullScriptLogic[history.length] || fullScriptLogic[fullScriptLogic.length - 1];
-  const currentPrompt = currentScriptStep?.prompt || 'Let’s keep going with your debt help...';
+  // Determine next script step
+  const currentStepIndex = Math.floor(history.length / 2);
+  const currentScriptStep = fullScriptLogic[currentStepIndex] || fullScriptLogic[fullScriptLogic.length - 1];
+  const basePrompt = currentScriptStep?.prompt || 'Let’s keep going with your debt help...';
   const branchIfYes = currentScriptStep?.yes_step_index ?? null;
   const branchIfNo = currentScriptStep?.no_step_index ?? null;
 
-  // Construct prompt with logic enforcement
-  const assistantReply = `${currentPrompt}\n\n(Stay on script. ${
-    branchIfYes !== null ? 'If the user says YES, move to step ' + branchIfYes + '.' : ''
+  // Add logic instructions if branching exists
+  const scriptInstruction = `${basePrompt}\n\n(Stay on script. ${
+    branchIfYes !== null ? 'If YES, go to step ' + branchIfYes + '.' : ''
   } ${
-    branchIfNo !== null ? 'If they say NO, move to step ' + branchIfNo + '.' : ''
+    branchIfNo !== null ? 'If NO, go to step ' + branchIfNo + '.' : ''
   })`;
 
   const contextMessages: ChatCompletionMessageParam[] = [
-    { role: 'system', content: 'You are a friendly, knowledgeable debt advisor bot named Mark. Follow the flow strictly. Never skip steps.' },
-    ...history.map((step: string, i: number): ChatCompletionMessageParam =>
-      i % 2 === 0
-        ? { role: 'user', content: step }
-        : { role: 'assistant', content: step }
-    ),
+    { role: 'system', content: 'You are a friendly, structured debt advisor named Mark. You must follow the script flow precisely, asking only what is provided.' },
+    ...history.map((msg: string, i: number) => ({
+      role: i % 2 === 0 ? 'user' : 'assistant',
+      content: msg
+    })),
     { role: 'user', content: userMessage },
-    { role: 'assistant', content: assistantReply }
+    { role: 'assistant', content: scriptInstruction }
   ];
+
+  const selectedModel = userMessage.length < 40 ? 'gpt-3.5-turbo' : 'gpt-4o';
 
   try {
     const response = await openai.chat.completions.create({
@@ -87,12 +79,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       messages: contextMessages
     });
 
-    const reply = response.choices?.[0]?.message?.content ?? '⚠️ No response from OpenAI.';
-
-    // Save updated chat session to Supabase
+    const reply = response.choices?.[0]?.message?.content ?? basePrompt;
     const updatedHistory = [...history, userMessage, reply];
-    await supabase
-      .from('chat_sessions')
+
+    await supabase.from('chat_sessions')
       .upsert({ session_id: sessionId, history: updatedHistory }, { onConflict: 'session_id' });
 
     return res.status(200).json({ reply, history: updatedHistory });
