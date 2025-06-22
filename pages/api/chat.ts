@@ -14,14 +14,20 @@ const supabase = createClient(
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).end();
 
-  if (!req.body || typeof req.body.message !== "string") {
-    console.error("400 Error: Invalid request body", req.body);
-    return res.status(400).json({ reply: "Invalid request format." });
+  // ✅ Strict request validation with logging
+  if (
+    !req.body ||
+    typeof req.body !== "object" ||
+    typeof req.body.message !== "string"
+  ) {
+    console.error("❌ 400 Error: Invalid request body format", JSON.stringify(req.body, null, 2));
+    return res.status(400).json({ reply: "Invalid request format. Please try again." });
   }
 
   const userMessage = req.body.message.trim();
   const sessionId = req.body.sessionId || uuidv4();
 
+  // 🗃️ Get or init chat history
   let { data: historyData } = await supabase
     .from("chat_history")
     .select("messages")
@@ -49,49 +55,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   history.push({ role: "user", content: userMessage });
 
-  // Determine script progression
   const currentStepIndex = Math.floor(history.length / 2);
-  const scriptSteps = fullScriptLogic.steps;
-  const currentStep = scriptSteps[currentStepIndex] || scriptSteps[scriptSteps.length - 1];
-  const basePrompt = currentStep.prompt || "Let’s keep going with your debt help...";
-
-  // Off-topic detection (naive for now)
-  const keywords = ["debt", "creditor", "bailiff", "income", "bankruptcy", "IVA", "DMP", "DRO"];
-  const isOnTopic = keywords.some((k) => userMessage.toLowerCase().includes(k));
-
-  let humorLine = "";
-  if (!isOnTopic) {
-    const fallbacks = fullScriptLogic.humor_fallbacks || [];
-    if (fallbacks.length > 0) {
-      const random = Math.floor(Math.random() * fallbacks.length);
-      humorLine = fallbacks[random];
-      history.push({ role: "assistant", content: humorLine });
-    }
-  }
-
-  const systemPrompt =
-    "You are a professional and friendly AI debt advisor named Mark. Follow the IVA script step-by-step. If the user goes off-topic, use a friendly humorous fallback, then return to the correct script step. Do not skip or repeat steps. Avoid free-form responses.";
-
-  const completion = await openai.chat.completions.create({
-    model: history.length > 12 ? "gpt-4o" : "gpt-3.5-turbo",
-    messages: [
-      { role: "system", content: systemPrompt },
-      ...history,
-      { role: "assistant", content: basePrompt },
-    ],
-    temperature: 0.7,
-  });
-
-  const finalReply = completion.choices[0].message.content?.trim() || basePrompt;
-
-  history.push({ role: "assistant", content: finalReply });
-
-  await supabase.from("chat_history").upsert({
-    session_id: sessionId,
-    messages: history,
-  });
-
-  const fullReply = humorLine ? humorLine + "\n\n" + finalReply : finalReply;
-
-  res.status(200).json({ reply: fullReply, sessionId });
-}
+  const currentScriptStep = fullScriptLogic.steps[currentStepIndex] ||
+    fullScriptLogic.steps[fullScriptLogic.steps.length -]()
