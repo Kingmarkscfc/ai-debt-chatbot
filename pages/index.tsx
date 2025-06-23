@@ -32,7 +32,6 @@ const Chat = () => {
       });
 
       const data = await response.json();
-
       if (!sessionId) setSessionId(data.sessionId);
       setMessages((prev) => [...prev, { sender: "bot", text: data.reply }]);
     } catch (err) {
@@ -52,65 +51,60 @@ const Chat = () => {
   };
 
   return (
-    <div className={isDarkMode ? "bg-gray-900 text-white min-h-screen" : "bg-gray-100 text-black min-h-screen"}>
+    <div className={isDarkMode ? "bg-gray-900 text-white h-screen flex flex-col" : "bg-gray-100 text-black h-screen flex flex-col"}>
       <Head>
         <title>Debt Advisor Chat</title>
       </Head>
 
-      <div className="w-full max-w-4xl mx-auto px-4 py-6">
-        <div className="flex justify-between items-center mb-4">
-          <h1 className="text-2xl font-bold">Debt Advisor</h1>
-          <button
-            className="px-4 py-2 border rounded text-sm"
-            onClick={() => setIsDarkMode(!isDarkMode)}
-          >
-            Toggle {isDarkMode ? "Light" : "Dark"} Mode
-          </button>
-        </div>
+      {/* Header */}
+      <div className="flex justify-between items-center p-4 shadow-md bg-white dark:bg-gray-800">
+        <h1 className="text-xl font-bold">Debt Advisor</h1>
+        <button
+          className="px-3 py-1 border rounded text-sm"
+          onClick={() => setIsDarkMode(!isDarkMode)}
+        >
+          Toggle {isDarkMode ? "Light" : "Dark"} Mode
+        </button>
+      </div>
 
-        <div className="border rounded-lg p-4 space-y-4 bg-white dark:bg-gray-800 h-[65vh] overflow-y-auto">
-          {messages.map((msg, index) => (
-            <div
-              key={index}
-              className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}
-            >
-              <div
-                className={`max-w-xs md:max-w-md px-4 py-2 rounded-2xl shadow-sm whitespace-pre-line
-                ${msg.sender === "user"
-                  ? "bg-blue-600 text-white rounded-br-none"
-                  : "bg-gray-200 text-black dark:bg-gray-700 dark:text-white rounded-bl-none"
-                }`}
-              >
-                {msg.text}
-              </div>
+      {/* Chat body */}
+      <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4 bg-gray-100 dark:bg-gray-900">
+        {messages.map((msg, index) => (
+          <div key={index} className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}>
+            <div className={`max-w-xs md:max-w-md px-4 py-2 rounded-2xl shadow-sm whitespace-pre-line
+              ${msg.sender === "user"
+                ? "bg-blue-600 text-white rounded-br-none"
+                : "bg-gray-200 text-black dark:bg-gray-700 dark:text-white rounded-bl-none"}`}>
+              {msg.text}
             </div>
-          ))}
-          {isBotTyping && (
-            <div className="flex justify-start">
-              <div className="bg-gray-200 dark:bg-gray-700 text-black dark:text-white px-4 py-2 rounded-2xl shadow-sm">
-                Typing...
-              </div>
+          </div>
+        ))}
+        {isBotTyping && (
+          <div className="flex justify-start">
+            <div className="bg-gray-200 dark:bg-gray-700 text-black dark:text-white px-4 py-2 rounded-2xl shadow-sm">
+              Typing...
             </div>
-          )}
-          <div ref={messagesEndRef} />
-        </div>
+          </div>
+        )}
+        <div ref={messagesEndRef} />
+      </div>
 
-        <div className="mt-4 flex items-center space-x-2">
-          <input
-            type="text"
-            className="flex-1 p-2 border rounded focus:outline-none dark:bg-gray-800 dark:text-white"
-            placeholder="Type your message..."
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-          />
-          <button
-            className="bg-blue-600 text-white px-4 py-2 rounded"
-            onClick={handleSend}
-          >
-            Send
-          </button>
-        </div>
+      {/* Input box */}
+      <div className="p-4 bg-white dark:bg-gray-800 shadow-inner flex items-center space-x-2">
+        <input
+          type="text"
+          className="flex-1 p-2 border rounded focus:outline-none dark:bg-gray-800 dark:text-white"
+          placeholder="Type your message..."
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+        />
+        <button
+          className="bg-blue-600 text-white px-4 py-2 rounded"
+          onClick={handleSend}
+        >
+          Send
+        </button>
       </div>
     </div>
   );
