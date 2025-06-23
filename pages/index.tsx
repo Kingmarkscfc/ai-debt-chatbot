@@ -52,7 +52,7 @@ const Chat = () => {
   };
 
   return (
-    <div className={`${isDarkMode ? "bg-gray-900 text-white" : "bg-gray-100 text-black"} min-h-screen w-full flex items-center justify-center`}>
+    <div className={`${isDarkMode ? "bg-gray-900 text-white" : "bg-gray-100 text-black"} min-h-screen flex items-center justify-center`}>
       <Head>
         <title>Debt Advisor Chat</title>
       </Head>
