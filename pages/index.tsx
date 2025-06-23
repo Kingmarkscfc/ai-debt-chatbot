@@ -52,12 +52,12 @@ const Chat = () => {
   };
 
   return (
-    <div className={`${isDarkMode ? "bg-gray-900 text-white" : "bg-gray-100 text-black"} min-h-screen flex items-center justify-center px-4`}>
+    <div className={`${isDarkMode ? "bg-gray-900 text-white" : "bg-gray-100 text-black"} min-h-screen w-full flex items-center justify-center`}>
       <Head>
         <title>Debt Advisor Chat</title>
       </Head>
 
-      <div className="w-full max-w-2xl">
+      <div className="w-full max-w-2xl p-4">
         <div className="flex justify-between items-center mb-4">
           <h1 className="text-2xl font-bold">Debt Advisor</h1>
           <button
@@ -95,4 +95,24 @@ const Chat = () => {
         </div>
 
         <div className="mt-4 flex items-center space-x-2">
-          <i
+          <input
+            type="text"
+            className="flex-1 p-2 border rounded focus:outline-none dark:bg-gray-800 dark:text-white"
+            placeholder="Type your message..."
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+          />
+          <button
+            className="bg-blue-600 text-white px-4 py-2 rounded"
+            onClick={handleSend}
+          >
+            Send
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default Chat;
