@@ -52,61 +52,57 @@ const Chat = () => {
   };
 
   return (
-    <div className={isDarkMode ? "bg-gray-900 text-white min-h-screen" : "bg-gray-100 text-black min-h-screen"}>
+    <div className={`${isDarkMode ? "bg-gray-900 text-white" : "bg-gray-100 text-black"} min-h-screen flex flex-col`}>
       <Head>
         <title>Debt Advisor</title>
       </Head>
 
-      <div className="w-full max-w-full px-4 py-6">
-        <div className="flex justify-between items-center mb-4">
-          <h1 className="text-2xl font-bold">Debt Advisor</h1>
-          <button
-            className="px-4 py-2 border rounded text-sm"
-            onClick={() => setIsDarkMode(!isDarkMode)}
-          >
-            Toggle {isDarkMode ? "Light" : "Dark"} Mode
-          </button>
-        </div>
+      <div className="flex justify-between items-center p-4 border-b border-gray-700">
+        <h1 className="text-xl font-semibold">Debt Advisor</h1>
+        <button
+          className="px-4 py-1 border rounded text-sm"
+          onClick={() => setIsDarkMode(!isDarkMode)}
+        >
+          Toggle {isDarkMode ? "Light" : "Dark"} Mode
+        </button>
+      </div>
 
-        <div className="border rounded-lg p-4 space-y-4 bg-white dark:bg-gray-800 h-[65vh] overflow-y-auto">
-          {messages.map((msg, index) => (
-            <div key={index} className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}>
-              <div
-                className={`max-w-[75%] px-4 py-2 rounded-2xl shadow-sm whitespace-pre-line
-                ${msg.sender === "user"
-                  ? "bg-blue-600 text-white rounded-br-none"
-                  : "bg-gray-200 text-black dark:bg-gray-700 dark:text-white rounded-bl-none"}`}
-              >
-                {msg.text}
-              </div>
+      <div className="flex-grow overflow-y-auto p-4 space-y-4">
+        {messages.map((msg, index) => (
+          <div key={index} className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}>
+            <div className={`max-w-[75%] px-4 py-2 rounded-2xl shadow whitespace-pre-line 
+              ${msg.sender === "user"
+                ? "bg-blue-600 text-white rounded-br-none"
+                : "bg-gray-300 text-black dark:bg-gray-700 dark:text-white rounded-bl-none"}`}>
+              {msg.text}
             </div>
-          ))}
-          {isBotTyping && (
-            <div className="flex justify-start">
-              <div className="bg-gray-200 dark:bg-gray-700 text-black dark:text-white px-4 py-2 rounded-2xl shadow-sm">
-                Typing...
-              </div>
+          </div>
+        ))}
+        {isBotTyping && (
+          <div className="flex justify-start">
+            <div className="bg-gray-300 dark:bg-gray-700 px-4 py-2 rounded-2xl shadow">
+              Typing...
             </div>
-          )}
-          <div ref={messagesEndRef} />
-        </div>
+          </div>
+        )}
+        <div ref={messagesEndRef} />
+      </div>
 
-        <div className="mt-4 flex items-center space-x-2">
-          <input
-            type="text"
-            className="flex-1 p-2 border rounded focus:outline-none dark:bg-gray-800 dark:text-white"
-            placeholder="Type your message..."
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-          />
-          <button
-            className="bg-blue-600 text-white px-4 py-2 rounded"
-            onClick={handleSend}
-          >
-            Send
-          </button>
-        </div>
+      <div className="p-4 border-t border-gray-700 flex items-center space-x-2">
+        <input
+          type="text"
+          placeholder="Type your message..."
+          className="flex-1 p-2 border rounded dark:bg-gray-800 dark:text-white"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+        />
+        <button
+          className="bg-blue-600 text-white px-4 py-2 rounded"
+          onClick={handleSend}
+        >
+          Send
+        </button>
       </div>
     </div>
   );
