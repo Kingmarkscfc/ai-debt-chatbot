@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import Head from "next/head";
 
+const languages = ["English", "Spanish", "Polish", "French", "German", "Portuguese", "Italian", "Romanian"];
+
 const Chat = () => {
   const [messages, setMessages] = useState<{ sender: string; text: string }[]>([]);
   const [input, setInput] = useState("");
   const [isBotTyping, setIsBotTyping] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isDarkMode, setIsDarkMode] = useState(true);
+  const [language, setLanguage] = useState("English");
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -28,12 +31,12 @@ const Chat = () => {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: input.trim(), sessionId }),
+        body: JSON.stringify({ message: input.trim(), sessionId, language }),
       });
 
       const data = await response.json();
-
       if (!sessionId) setSessionId(data.sessionId);
+
       setMessages((prev) => [...prev, { sender: "bot", text: data.reply }]);
     } catch (err) {
       console.error("Chat error:", err);
@@ -52,20 +55,31 @@ const Chat = () => {
   };
 
   return (
-    <div className={`${isDarkMode ? "bg-gray-900 text-white" : "bg-gray-100 text-black"} min-h-screen flex items-center justify-center`}>
+    <div className={`${isDarkMode ? "bg-gray-900 text-white" : "bg-gray-100 text-black"} min-h-screen w-full flex items-center justify-center`}>
       <Head>
-        <title>Debt Advisor Chat</title>
+        <title>Debt Advisor</title>
       </Head>
 
       <div className="w-full max-w-2xl p-4">
         <div className="flex justify-between items-center mb-4">
           <h1 className="text-2xl font-bold">Debt Advisor</h1>
-          <button
-            className="px-4 py-2 border rounded text-sm"
-            onClick={() => setIsDarkMode(!isDarkMode)}
-          >
-            Toggle {isDarkMode ? "Light" : "Dark"} Mode
-          </button>
+          <div className="flex items-center space-x-2">
+            <select
+              className="p-1 rounded border dark:bg-gray-800 dark:text-white"
+              value={language}
+              onChange={(e) => setLanguage(e.target.value)}
+            >
+              {languages.map((lang) => (
+                <option key={lang}>{lang}</option>
+              ))}
+            </select>
+            <button
+              className="px-3 py-1 text-sm border rounded"
+              onClick={() => setIsDarkMode(!isDarkMode)}
+            >
+              {isDarkMode ? "Light" : "Dark"} Mode
+            </button>
+          </div>
         </div>
 
         <div className="border rounded-lg p-4 space-y-4 bg-white dark:bg-gray-800 h-[65vh] overflow-y-auto">
