@@ -1,137 +1,54 @@
-import { useEffect, useRef, useState } from "react";
 import Head from "next/head";
+import { useState } from "react";
 
 export default function Home() {
-  const [messages, setMessages] = useState<{ sender: string; text: string }[]>([]);
+  const [messages, setMessages] = useState<string[]>([]);
   const [input, setInput] = useState("");
-  const [isBotTyping, setIsBotTyping] = useState(false);
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [isDarkMode, setIsDarkMode] = useState(true);
-  const [language, setLanguage] = useState("English");
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
-
-  const handleSend = async () => {
+  const handleSend = () => {
     if (!input.trim()) return;
-
-    const userMessage = { sender: "user", text: input.trim() };
-    setMessages((prev) => [...prev, userMessage]);
-    setIsBotTyping(true);
-
-    try {
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: input.trim(), sessionId }),
-      });
-
-      const data = await response.json();
-
-      if (!sessionId) setSessionId(data.sessionId);
-      setMessages((prev) => [...prev, { sender: "bot", text: data.reply }]);
-    } catch (err) {
-      console.error("Chat error:", err);
-      setMessages((prev) => [
-        ...prev,
-        { sender: "bot", text: "⚠️ Error: Unable to connect." },
-      ]);
-    } finally {
-      setIsBotTyping(false);
-      setInput("");
-    }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
+    setMessages((prev) => [...prev, input]);
+    setInput("");
   };
 
   return (
-    <div
-      className={`${
-        isDarkMode ? "bg-gray-900 text-white" : "bg-gray-100 text-black"
-      } min-h-screen flex items-center justify-center transition-colors duration-300`}
-    >
+    <>
       <Head>
         <title>Debt Advisor Chat</title>
       </Head>
+      <main className="flex flex-col items-center justify-center w-full min-h-screen px-4 py-8">
+        <div className="w-full max-w-2xl bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-6">
+          <h1 className="text-2xl font-bold mb-4 text-center">Debt Advisor</h1>
 
-      <div className="w-full max-w-3xl p-4">
-        <div className="flex justify-between items-center mb-4">
-          <h1 className="text-2xl font-bold">Debt Advisor</h1>
-          <div className="flex space-x-2">
-            <select
-              className="p-1 border rounded dark:bg-gray-800 dark:text-white"
-              value={language}
-              onChange={(e) => setLanguage(e.target.value)}
-            >
-              <option>English</option>
-              <option>Spanish</option>
-              <option>Polish</option>
-              <option>French</option>
-              <option>German</option>
-              <option>Portuguese</option>
-              <option>Italian</option>
-              <option>Romanian</option>
-            </select>
+          <div className="h-96 overflow-y-auto border border-gray-300 dark:border-gray-600 rounded-md p-4 space-y-2 bg-gray-50 dark:bg-gray-700 mb-4">
+            {messages.map((msg, i) => (
+              <div
+                key={i}
+                className="bg-blue-100 dark:bg-blue-700 text-black dark:text-white rounded-xl px-4 py-2 w-fit max-w-[75%]"
+              >
+                {msg}
+              </div>
+            ))}
+          </div>
+
+          <div className="flex items-center space-x-2">
+            <input
+              className="flex-grow px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 dark:bg-gray-800 text-black dark:text-white"
+              type="text"
+              placeholder="Type your message..."
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleSend()}
+            />
             <button
-              onClick={() => setIsDarkMode(!isDarkMode)}
-              className="px-3 py-1 border rounded text-sm"
+              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"
+              onClick={handleSend}
             >
-              Toggle {isDarkMode ? "Light" : "Dark"} Mode
+              Send
             </button>
           </div>
         </div>
-
-        <div className="h-[65vh] overflow-y-auto border rounded-lg p-4 space-y-4 bg-white dark:bg-gray-800">
-          {messages.map((msg, i) => (
-            <div key={i} className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}>
-              <div
-                className={`max-w-xs md:max-w-md px-4 py-2 rounded-2xl shadow
-                  ${msg.sender === "user"
-                    ? "bg-blue-600 text-white rounded-br-none"
-                    : "bg-gray-300 text-black dark:bg-gray-700 dark:text-white rounded-bl-none"}`}
-              >
-                {msg.text}
-              </div>
-            </div>
-          ))}
-          {isBotTyping && (
-            <div className="flex justify-start">
-              <div className="bg-gray-300 dark:bg-gray-700 text-black dark:text-white px-4 py-2 rounded-2xl shadow">
-                Typing...
-              </div>
-            </div>
-          )}
-          <div ref={messagesEndRef} />
-        </div>
-
-        <div className="mt-4 flex items-center space-x-2">
-          <input
-            type="text"
-            className="flex-1 p-2 border rounded focus:outline-none dark:bg-gray-800 dark:text-white"
-            placeholder="Type your message..."
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-          />
-          <button
-            className="bg-blue-600 text-white px-4 py-2 rounded"
-            onClick={handleSend}
-          >
-            Send
-          </button>
-        </div>
-      </div>
-    </div>
+      </main>
+    </>
   );
 }
