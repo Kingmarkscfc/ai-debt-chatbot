@@ -1,12 +1,46 @@
 import Head from "next/head";
-import { useState } from "react";
-import "@/styles/globals.css";
+import { useState, useEffect, useRef } from "react";
 
 export default function Home() {
   const [theme, setTheme] = useState("light");
+  const [messages, setMessages] = useState([
+    { role: "assistant", content: "Hello! My name’s Mark. What prompted you to seek help with your debts today?" },
+  ]);
+  const [input, setInput] = useState("");
+  const [isTyping, setIsTyping] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+
   const toggleTheme = () => {
     setTheme(theme === "light" ? "dark" : "light");
   };
+
+  const handleSend = async () => {
+    if (!input.trim()) return;
+    const userMessage = input.trim();
+    setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
+    setInput("");
+    setIsTyping(true);
+
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: userMessage, sessionId }),
+    });
+
+    const data = await res.json();
+    setSessionId(data.sessionId);
+    setMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
+    setIsTyping(false);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") handleSend();
+  };
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
 
   return (
     <>
@@ -14,36 +48,71 @@ export default function Home() {
         <title>Debt Advisor Chat</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
       </Head>
-      <div className={`${theme === "dark" ? "bg-gray-900 text-white" : "bg-gray-100 text-black"} min-h-screen flex items-center justify-center`}>
-        <div className="w-full max-w-2xl p-4 space-y-4">
-          <h1 className="text-2xl font-bold text-center">Debt Advisor</h1>
-          <div className="flex justify-between items-center">
-            <select className="p-2 border rounded">
-              <option>English</option>
-              <option>Español</option>
-              <option>Français</option>
-            </select>
-            <button
-              onClick={toggleTheme}
-              className="px-4 py-2 bg-blue-600 text-white rounded"
-            >
-              Toggle {theme === "light" ? "Dark" : "Light"} Mode
-            </button>
+      <div className={`${
+        theme === "dark" ? "bg-gray-900 text-white" : "bg-gray-100 text-black"
+      } min-h-screen flex flex-col items-center justify-center px-4 py-6 transition-colors duration-300`}>
+        <div className="w-full max-w-2xl space-y-4">
+          <div className="flex justify-between items-center mb-2">
+            <h1 className="text-xl font-bold">Debt Advisor</h1>
+            <div className="flex space-x-2">
+              <select className="p-1 border rounded text-sm">
+                <option>English</option>
+                <option>Español</option>
+                <option>Français</option>
+                <option>Deutsch</option>
+              </select>
+              <button
+                onClick={toggleTheme}
+                className="px-2 py-1 rounded bg-blue-600 text-white text-sm"
+              >
+                Toggle {theme === "light" ? "Dark" : "Light"} Mode
+              </button>
+            </div>
           </div>
-          <div className="bg-white dark:bg-gray-800 p-4 rounded shadow min-h-[200px]">
-            <p>Hello! My name’s Mark. What prompted you to seek help with your debts today?</p>
+
+          <div className="bg-white dark:bg-gray-800 rounded shadow p-4 space-y-2 min-h-[300px] max-h-[500px] overflow-y-auto">
+            {messages.map((msg, i) => (
+              <div
+                key={i}
+                className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+              >
+                <div
+                  className={`${
+                    msg.role === "user"
+                      ? "bg-green-500 text-white"
+                      : "bg-gray-200 dark:bg-gray-700 text-black dark:text-white"
+                  } px-4 py-2 rounded-lg max-w-xs text-sm`}
+                >
+                  {msg.content}
+                </div>
+              </div>
+            ))}
+            {isTyping && (
+              <div className="flex justify-start text-sm text-gray-500 italic">
+                Mark is typing...
+              </div>
+            )}
+            <div ref={bottomRef}></div>
           </div>
+
           <div className="flex items-center space-x-2">
             <input
               type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
               placeholder="Type your message..."
               className="flex-grow p-2 border rounded"
             />
-            <button className="p-2 bg-green-600 text-white rounded">Send</button>
+            <button
+              onClick={handleSend}
+              className="p-2 px-4 bg-green-600 text-white rounded"
+            >
+              Send
+            </button>
           </div>
         </div>
       </div>
     </>
   );
 }
-
