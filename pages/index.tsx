@@ -1,22 +1,27 @@
+// /pages/index.tsx
+
 import Head from "next/head";
 import { useState, useEffect, useRef } from "react";
 
 export default function Home() {
   const [theme, setTheme] = useState("light");
   const [messages, setMessages] = useState([
-    { role: "assistant", content: "Hello! My name’s Mark. What prompted you to seek help with your debts today?" },
+    { role: "assistant", content: "👋 INITIATE" }, // Triggers structured script
   ]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  const toggleTheme = () => setTheme(theme === "light" ? "dark" : "light");
+  const toggleTheme = () => {
+    setTheme((prev) => (prev === "light" ? "dark" : "light"));
+  };
 
   const handleSend = async () => {
     if (!input.trim()) return;
+
     const userMessage = input.trim();
-    setMessages(prev => [...prev, { role: "user", content: userMessage }]);
+    setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
     setInput("");
     setIsTyping(true);
 
@@ -28,7 +33,7 @@ export default function Home() {
 
     const data = await res.json();
     setSessionId(data.sessionId);
-    setMessages(prev => [...prev, { role: "assistant", content: data.reply }]);
+    setMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
     setIsTyping(false);
   };
 
@@ -46,8 +51,14 @@ export default function Home() {
         <title>Debt Advisor Chat</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
       </Head>
-      <div className={`min-h-screen w-full transition-colors duration-300 ${theme === "dark" ? "bg-gray-900 text-white" : "bg-gray-100 text-black"}`}>
-        <div className="max-w-2xl mx-auto py-6 px-4 flex flex-col space-y-4 min-h-screen">
+
+      <main
+        className={`${
+          theme === "dark" ? "bg-gray-900 text-white" : "bg-gray-100 text-black"
+        } min-h-screen w-full flex flex-col items-center justify-center transition-colors duration-300 px-4 py-6`}
+      >
+        <div className="w-full max-w-2xl space-y-4">
+          {/* Header Bar */}
           <div className="flex justify-between items-center">
             <h1 className="text-xl font-bold">Debt Advisor</h1>
             <div className="flex space-x-2">
@@ -55,28 +66,34 @@ export default function Home() {
                 <option>English</option>
                 <option>Español</option>
                 <option>Français</option>
+                <option>Deutsch</option>
+                <option>Polski</option>
+                <option>Română</option>
               </select>
               <button
                 onClick={toggleTheme}
-                className="px-2 py-1 rounded bg-blue-600 text-white text-sm"
+                className="px-3 py-1 rounded bg-blue-600 text-white text-sm"
               >
-                Toggle {theme === "light" ? "Dark" : "Light"} Mode
+                {theme === "light" ? "Dark" : "Light"} Mode
               </button>
             </div>
           </div>
 
-          <div className="bg-white dark:bg-gray-800 p-4 rounded shadow flex-1 overflow-y-auto space-y-2">
+          {/* Chat Window */}
+          <div className="bg-white dark:bg-gray-800 rounded shadow p-4 space-y-2 min-h-[300px] max-h-[500px] overflow-y-auto">
             {messages.map((msg, i) => (
               <div
                 key={i}
-                className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                className={`flex ${
+                  msg.role === "user" ? "justify-end" : "justify-start"
+                }`}
               >
                 <div
-                  className={`rounded-lg px-4 py-2 max-w-xs text-sm ${
+                  className={`${
                     msg.role === "user"
                       ? "bg-green-500 text-white"
                       : "bg-gray-200 dark:bg-gray-700 text-black dark:text-white"
-                  }`}
+                  } px-4 py-2 rounded-lg max-w-xs text-sm`}
                 >
                   {msg.content}
                 </div>
@@ -85,10 +102,11 @@ export default function Home() {
             {isTyping && (
               <div className="text-sm text-gray-500 italic">Mark is typing...</div>
             )}
-            <div ref={bottomRef} />
+            <div ref={bottomRef}></div>
           </div>
 
-          <div className="flex space-x-2">
+          {/* Input Bar */}
+          <div className="flex items-center space-x-2">
             <input
               type="text"
               value={input}
@@ -105,7 +123,7 @@ export default function Home() {
             </button>
           </div>
         </div>
-      </div>
+      </main>
     </>
   );
 }
