@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { v4 as uuidv4 } from "uuid";
-import fullScriptLogic from "import fullScriptLogic from "../../utils/full_script_logic.json";
+import fullScriptLogic from "../../utils/full_script_logic.json";
 import type { NextApiRequest, NextApiResponse } from "next";
 import { ChatCompletionMessageParam } from "openai/resources";
 import OpenAI from "openai";
