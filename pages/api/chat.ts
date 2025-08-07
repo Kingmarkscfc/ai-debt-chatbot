@@ -51,7 +51,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const currentStepIndex = assistantMessages.length;
 
 
-    const expectedKeywords = (currentStep.keywords || []).map(k => k.toLowerCase());
+    const expectedKeywords = (currentScriptStep.keywords || []).map(k => k.toLowerCase());
     const messageLower = userMessage.toLowerCase();
 
     const matched = expectedKeywords.length === 0 || expectedKeywords.some(k => messageLower.includes(k));
