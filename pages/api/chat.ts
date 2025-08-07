@@ -50,7 +50,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const assistantMessages = history.filter(m => m.role === "assistant");
     const currentStepIndex = assistantMessages.length;
 
-
+    const currentScriptStep = fullScriptLogic.steps[currentStepIndex] || {};
     const expectedKeywords = (currentScriptStep.keywords || []).map(k => k.toLowerCase());
     const messageLower = userMessage.toLowerCase();
 
