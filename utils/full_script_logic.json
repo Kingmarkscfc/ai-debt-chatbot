@@ -1,0 +1,17 @@
+{
+  "steps": [
+    {
+      "prompt": "Hello! My name’s Mark. What prompted you to seek help with your debts today?",
+      "keywords": ["debt", "help", "struggling", "money", "bailiffs"]
+    },
+    {
+      "prompt": "Let’s take a look at your total debt amount. Roughly how much do you owe in total?",
+      "keywords": ["£", "pounds", "thousand", "hundred"]
+    },
+    {
+      "prompt": "Thanks. And is this with at least two different unsecured creditors like credit cards or loans?",
+      "keywords": ["yes", "2", "two", "creditors", "loans", "cards"]
+    }
+  ]
+}
+
