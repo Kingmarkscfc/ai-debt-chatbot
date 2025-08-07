@@ -47,8 +47,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Add user message to history
     history.push({ role: "user", content: userMessage });
 
-    const stepCount = history.filter(m => m.role === "assistant").length;
-    const currentStep = fullScriptLogic.steps[stepCount - 1] || fullScriptLogic.steps[0];
+    const assistantMessages = history.filter(m => m.role === "assistant");
+    const currentStepIndex = assistantMessages.length;
 
     const expectedKeywords = (currentStep.keywords || []).map(k => k.toLowerCase());
     const messageLower = userMessage.toLowerCase();
