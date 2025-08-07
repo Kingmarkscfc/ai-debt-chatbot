@@ -56,11 +56,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const matched = expectedKeywords.length === 0 || expectedKeywords.some(k => messageLower.includes(k));
 
-    Type error: Cannot find name 'stepCount'.
     let reply = "";
 
-    if (matched && stepCount < fullScriptLogic.steps.length) {
-      reply = fullScriptLogic.steps[stepCount]?.prompt || "Let’s keep going with your debt help.";
+    if (matched && currentStepIndex < fullScriptLogic.steps.length) {
+      reply = fullScriptLogic.steps[currentStepIndex]?.prompt || "Let’s keep going with your debt help.";
     } else if (!matched) {
       // Use fallback humour
       reply = fallbackHumour[Math.floor(Math.random() * fallbackHumour.length)];
