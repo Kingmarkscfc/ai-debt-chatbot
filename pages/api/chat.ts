@@ -47,9 +47,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Add user message to history
     history.push({ role: "user", content: userMessage });
 
-    const assistantMessages = history.filter(m => m.role === "assistant");
-    const currentStepIndex = assistantMessages.length;
+    // Count only assistant replies that match script prompts
+    const assistantScriptReplies = history.filter(m =>
+      m.role === "assistant" &&
+      fullScriptLogic.steps.some(step => step.prompt === m.content)
+    );
 
+    const currentStepIndex = assistantScriptReplies.length;
     const currentScriptStep = fullScriptLogic.steps[currentStepIndex] || {};
     const expectedKeywords = (currentScriptStep.keywords || []).map(k => k.toLowerCase());
     const messageLower = userMessage.toLowerCase();
