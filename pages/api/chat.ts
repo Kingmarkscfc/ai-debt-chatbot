@@ -56,6 +56,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const matched = expectedKeywords.length === 0 || expectedKeywords.some(k => messageLower.includes(k));
 
+    Type error: Cannot find name 'stepCount'.
     let reply = "";
 
     if (matched && stepCount < fullScriptLogic.steps.length) {
