@@ -1,40 +1,70 @@
 // /pages/index.tsx
-
 import Head from "next/head";
 import { useState, useEffect, useRef } from "react";
 
+type Msg = { role: "user" | "assistant"; content: string };
+
 export default function Home() {
-  const [theme, setTheme] = useState("light");
-  const [messages, setMessages] = useState([
-    { role: "assistant", content: "👋 INITIATE" }, // Triggers structured script
-  ]);
+  const [theme, setTheme] = useState<"light" | "dark">("light");
+  const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const hasInitiatedRef = useRef(false);
 
-  const toggleTheme = () => {
-    setTheme((prev) => (prev === "light" ? "dark" : "light"));
-  };
+  const toggleTheme = () => setTheme(prev => (prev === "light" ? "dark" : "light"));
+
+  // Auto-init the scripted flow on first mount
+  useEffect(() => {
+    const init = async () => {
+      if (hasInitiatedRef.current) return;
+      hasInitiatedRef.current = true;
+
+      setIsTyping(true);
+      try {
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: "👋 INITIATE", sessionId: null }),
+        });
+        const data = await res.json();
+        if (data.sessionId) setSessionId(data.sessionId);
+
+        setMessages([{ role: "assistant", content: data.reply }]);
+      } catch (e) {
+        setMessages([{ role: "assistant", content: "⚠️ Failed to start the chat. Please refresh." }]);
+      } finally {
+        setIsTyping(false);
+      }
+    };
+    init();
+  }, []);
 
   const handleSend = async () => {
     if (!input.trim()) return;
-
     const userMessage = input.trim();
-    setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
+
+    setMessages(prev => [...prev, { role: "user", content: userMessage }]);
     setInput("");
     setIsTyping(true);
 
-    const res = await fetch("/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: userMessage, sessionId }),
-    });
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: userMessage, sessionId }),
+      });
 
-    const data = await res.json();
-    setSessionId(data.sessionId);
-    setMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
-    setIsTyping(false);
+      const data = await res.json();
+      if (data.sessionId && data.sessionId !== sessionId) setSessionId(data.sessionId);
+
+      setMessages(prev => [...prev, { role: "assistant", content: data.reply }]);
+    } catch (e) {
+      setMessages(prev => [...prev, { role: "assistant", content: "⚠️ Error: Unable to connect." }]);
+    } finally {
+      setIsTyping(false);
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -55,14 +85,14 @@ export default function Home() {
       <main
         className={`${
           theme === "dark" ? "bg-gray-900 text-white" : "bg-gray-100 text-black"
-        } min-h-screen w-full flex flex-col items-center justify-center transition-colors duration-300 px-4 py-6`}
+        } min-h-screen w-full flex items-center justify-center transition-colors duration-300`}
       >
-        <div className="w-full max-w-2xl space-y-4">
-          {/* Header Bar */}
-          <div className="flex justify-between items-center">
+        <div className="w-full max-w-2xl px-4">
+          {/* Header */}
+          <div className="flex items-center justify-between mb-3">
             <h1 className="text-xl font-bold">Debt Advisor</h1>
-            <div className="flex space-x-2">
-              <select className="p-1 border rounded text-sm">
+            <div className="flex items-center gap-2">
+              <select className="p-2 border rounded text-sm bg-white dark:bg-gray-800 dark:border-gray-700">
                 <option>English</option>
                 <option>Español</option>
                 <option>Français</option>
@@ -72,52 +102,47 @@ export default function Home() {
               </select>
               <button
                 onClick={toggleTheme}
-                className="px-3 py-1 rounded bg-blue-600 text-white text-sm"
+                className="px-3 py-2 rounded text-sm bg-blue-600 text-white hover:opacity-90"
               >
                 {theme === "light" ? "Dark" : "Light"} Mode
               </button>
             </div>
           </div>
 
-          {/* Chat Window */}
-          <div className="bg-white dark:bg-gray-800 rounded shadow p-4 space-y-2 min-h-[300px] max-h-[500px] overflow-y-auto">
-            {messages.map((msg, i) => (
-              <div
-                key={i}
-                className={`flex ${
-                  msg.role === "user" ? "justify-end" : "justify-start"
-                }`}
-              >
+          {/* Chat Panel */}
+          <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow p-4 min-h-[360px] max-h-[520px] overflow-y-auto space-y-2">
+            {messages.map((m, i) => (
+              <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
                 <div
-                  className={`${
-                    msg.role === "user"
-                      ? "bg-green-500 text-white"
-                      : "bg-gray-200 dark:bg-gray-700 text-black dark:text-white"
-                  } px-4 py-2 rounded-lg max-w-xs text-sm`}
+                  className={`px-4 py-2 rounded-2xl max-w-[80%] text-sm leading-relaxed whitespace-pre-wrap ${
+                    m.role === "user"
+                      ? "bg-green-600 text-white rounded-br-none"
+                      : "bg-gray-100 text-gray-900 dark:bg-gray-700 dark:text-white rounded-bl-none"
+                  }`}
                 >
-                  {msg.content}
+                  {m.content}
                 </div>
               </div>
             ))}
             {isTyping && (
-              <div className="text-sm text-gray-500 italic">Mark is typing...</div>
+              <div className="text-sm text-gray-500 dark:text-gray-400 italic">Mark is typing…</div>
             )}
-            <div ref={bottomRef}></div>
+            <div ref={bottomRef} />
           </div>
 
-          {/* Input Bar */}
-          <div className="flex items-center space-x-2">
+          {/* Input Row */}
+          <div className="mt-3 flex items-center gap-2">
             <input
               type="text"
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={e => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Type your message..."
-              className="flex-grow p-2 border rounded"
+              placeholder="Type your message…"
+              className="flex-1 p-3 border rounded-lg bg-white dark:bg-gray-800 dark:text-white dark:border-gray-700"
             />
             <button
               onClick={handleSend}
-              className="p-2 px-4 bg-green-600 text-white rounded"
+              className="px-5 py-3 rounded-lg bg-green-600 text-white font-medium hover:opacity-90"
             >
               Send
             </button>

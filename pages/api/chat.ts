@@ -28,56 +28,69 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const sessionId = req.body.sessionId || uuidv4();
 
     // Step 1: Load history from Supabase
-    let { data: historyData } = await supabase
-      .from("chat_history")
-      .select("messages")
-      .eq("session_id", sessionId)
-      .single();
+    // ...inside handler after you computed userMessage and sessionId
 
-    let history: ChatCompletionMessageParam[] = historyData?.messages || [];
+// Load history
+let { data: historyData } = await supabase
+  .from("chat_history")
+  .select("messages")
+  .eq("session_id", sessionId)
+  .single();
 
-    // INITIATE logic
-    if (userMessage === "👋 INITIATE") {
-      const firstStep = fullScriptLogic.steps[0]?.prompt || "Hello, how can I help?";
-      history = [{ role: "assistant", content: firstStep }];
-      await supabase.from("chat_history").upsert({ session_id: sessionId, messages: history });
-      return res.status(200).json({ reply: firstStep, sessionId });
-    }
+let history: ChatCompletionMessageParam[] = historyData?.messages || [];
 
-    // Add user message to history
-    history.push({ role: "user", content: userMessage });
+const normalized = userMessage.toLowerCase().trim();
 
-    // Count only assistant replies that match script prompts
-    const assistantScriptReplies = history.filter(m =>
-      m.role === "assistant" &&
-      fullScriptLogic.steps.some(step => step.prompt === m.content)
-    );
+// INITIATE: force step 0 and reset history
+if (normalized.includes("initiate") || normalized === "👋 initiate" || normalized === "👋" || normalized === "initiate") {
+  const firstPrompt = fullScriptLogic.steps[0]?.prompt
+    || "Hello! My name’s Mark. What prompted you to seek help with your debts today?";
+  history = [{ role: "assistant", content: firstPrompt }];
+  await supabase.from("chat_history").upsert({ session_id: sessionId, messages: history });
+  return res.status(200).json({ reply: firstPrompt, sessionId });
+}
 
-    const currentStepIndex = assistantScriptReplies.length;
-    const currentScriptStep = fullScriptLogic.steps[currentStepIndex] || {};
-    const expectedKeywords = (currentScriptStep.keywords || []).map(k => k.toLowerCase());
-    const messageLower = userMessage.toLowerCase();
+// Add user message
+history.push({ role: "user", content: userMessage });
 
-    const matched = expectedKeywords.length === 0 || expectedKeywords.some(k => messageLower.includes(k));
+// Determine current step by assistant script turns already sent
+const assistantMsgs = history.filter(m => m.role === "assistant");
+let stepIndex = assistantMsgs.length; // 0 means we’ve sent step 0
 
-    let reply = "";
+// Clamp to script length - 1
+stepIndex = Math.min(stepIndex, fullScriptLogic.steps.length - 1);
 
-    if (matched && currentStepIndex < fullScriptLogic.steps.length) {
-      reply = fullScriptLogic.steps[currentStepIndex]?.prompt || "Let’s keep going with your debt help.";
-    } else if (!matched) {
-      // Use fallback humour
-      reply = fallbackHumour[Math.floor(Math.random() * fallbackHumour.length)];
-    } else {
-      reply = "Thanks for sticking with me. Let’s move forward.";
-    }
+const currentStep = fullScriptLogic.steps[stepIndex] || {};
+const expected = (currentStep.keywords || []).map((k: string) => k.toLowerCase());
+const messageLower = userMessage.toLowerCase();
 
-    history.push({ role: "assistant", content: reply });
+const matched = expected.length === 0 || expected.some(k => messageLower.includes(k));
 
-    await supabase.from("chat_history").upsert({ session_id: sessionId, messages: history });
+// Decide reply
+let reply: string;
 
-    return res.status(200).json({ reply, sessionId });
-  } catch (err: any) {
-    console.error("❌ Error in chat.ts:", err.message || err);
-    return res.status(500).json({ reply: "Sorry, something went wrong on my end. Please try again." });
+if (matched) {
+  // Advance to the NEXT step if we matched, else stick on current
+  const nextIndex = Math.min(stepIndex + 1, fullScriptLogic.steps.length - 1);
+  reply = fullScriptLogic.steps[nextIndex]?.prompt
+    || "Let’s keep going with your debt help.";
+} else {
+  // Only humour if the step actually expects keywords AND we’re past step 0
+  if (expected.length > 0 && stepIndex > 0) {
+    const jokes = [
+      "That’s a plot twist I didn’t see coming… but let’s stick to your debts, yeah?",
+      "I’m flattered you think I can do that, but let’s get back to helping you become debt-free!",
+      "As fun as that sounds, I’m here to help with your money stress, not become your life coach. Yet."
+    ];
+    reply = jokes[Math.floor(Math.random() * jokes.length)];
+  } else {
+    // Nudge back to the current step’s prompt instead of joking
+    reply = currentStep.prompt || "Let’s keep going with your debt help.";
   }
 }
+
+// Save and return
+history.push({ role: "assistant", content: reply });
+await supabase.from("chat_history").upsert({ session_id: sessionId, messages: history });
+return res.status(200).json({ reply, sessionId });
+
