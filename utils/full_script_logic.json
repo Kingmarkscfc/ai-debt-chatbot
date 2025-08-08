@@ -1,17 +1,74 @@
 {
   "steps": [
     {
+      "id": "start",
       "prompt": "Hello! My name’s Mark. What prompted you to seek help with your debts today?",
-      "keywords": ["debt", "help", "struggling", "money", "bailiffs"]
+      "keywords": ["debt", "help", "struggling", "bailiff", "credit", "loan", "money", "arrears", "collection", "court"]
     },
     {
-      "prompt": "Let’s take a look at your total debt amount. Roughly how much do you owe in total?",
-      "keywords": ["£", "pounds", "thousand", "hundred"]
+      "id": "total_amount",
+      "prompt": "Thanks for sharing. Roughly how much do you owe in total across all debts?",
+      "keywords": ["£", "pound", "k", "thousand", "hundred", "approx", "about", "around", "total", "sum"]
     },
     {
-      "prompt": "Thanks. And is this with at least two different unsecured creditors like credit cards or loans?",
-      "keywords": ["yes", "2", "two", "creditors", "loans", "cards"]
+      "id": "creditors_count",
+      "prompt": "Is that with at least two different unsecured creditors (e.g., credit cards, loans, overdrafts)?",
+      "keywords": ["yes", "yep", "two", "2", "more than one", "multiple", "creditors", "cards", "loans", "overdrafts"]
+    },
+    {
+      "id": "main_concern",
+      "prompt": "What’s your main concern at the moment — bailiffs, interest, or court action?",
+      "keywords": ["bailiff", "bailiffs", "interest", "charges", "court", "ccj", "default", "calls", "letters"]
+    },
+    {
+      "id": "employment_income",
+      "prompt": "Got it. Are you employed or self-employed, and what’s your monthly income after tax?",
+      "keywords": ["employed", "self", "income", "salary", "wage", "pay", "monthly", "after tax", "net"]
+    },
+    {
+      "id": "expenditure_check",
+      "prompt": "Thanks. Roughly how much do you spend per month on essentials (rent/mortgage, utilities, food, travel)?",
+      "keywords": ["rent", "mortgage", "bills", "utilities", "food", "travel", "spend", "expenses", "outgoings"]
+    },
+    {
+      "id": "joint_guarantor",
+      "prompt": "Are any of your debts joint, or is anyone a guarantor — or are you a guarantor for someone else?",
+      "keywords": ["joint", "partner", "spouse", "guarantor", "co-sign", "no", "none"]
+    },
+    {
+      "id": "vulnerability",
+      "prompt": "Do you have any health or vulnerability considerations you’d like me to be aware of?",
+      "keywords": ["yes", "no", "anxiety", "depression", "illness", "disability", "mental", "health", "vulnerable"]
+    },
+    {
+      "id": "dmp_explain",
+      "prompt": "Option: DMP (Debt Management Plan) — informal, you repay what you owe over time; interest is often frozen but not guaranteed. Would you like me to compare this with an IVA?",
+      "keywords": ["compare", "iva", "dmp", "yes", "please", "what", "difference"]
+    },
+    {
+      "id": "iva_explain",
+      "prompt": "Option: IVA — legally binding, you pay what you can afford for 5–6 years; remaining unsecured debt is written off at the end. Interest/charges stop once approved. Make sense so far?",
+      "keywords": ["yes", "okay", "sounds good", "explain", "more", "how", "qualify", "eligibility"]
+    },
+    {
+      "id": "other_options",
+      "prompt": "Other solutions exist too (self-help negotiation, consolidation, DRO, bankruptcy). I’ll always outline all options fairly. Would you like to proceed by checking your eligibility for DMP/IVA?",
+      "keywords": ["yes", "proceed", "continue", "eligibility", "check", "go ahead"]
+    },
+    {
+      "id": "documents",
+      "prompt": "Great — to proceed we’ll need documents: ID, proof of income, and creditor statements. Are you ready to upload now, or should I send a secure portal link?",
+      "keywords": ["upload", "portal", "link", "send", "later", "now", "email"]
+    },
+    {
+      "id": "wrap_up",
+      "prompt": "Perfect. I’ll guide you through the portal next. If you have any questions at any point, just ask. Ready for your secure upload link?",
+      "keywords": ["yes", "ready", "link", "send", "ok"]
     }
+  ],
+  "humor_fallbacks": [
+    "That’s a plot twist I didn’t see coming… but let’s stick to sorting your finances!",
+    "I’m flattered you think I can do that — but let’s focus on getting you debt-free, yeah?",
+    "If the aliens return your payslip, pop it in the portal and we’ll pick up from there!"
   ]
 }
-
