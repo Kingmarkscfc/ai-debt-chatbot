@@ -1,0 +1,26 @@
+{
+  "normalized_to_display": {
+    "barclaycard": "Barclaycard",
+    "barclays": "Barclays",
+    "capital one": "Capital One",
+    "cap one": "Capital One",
+    "mbna": "MBNA",
+    "lloyds": "Lloyds Bank",
+    "lloyds bank": "Lloyds Bank",
+    "hsbc": "HSBC",
+    "halifax": "Halifax",
+    "natwest": "NatWest",
+    "rbs": "Royal Bank of Scotland",
+    "santander": "Santander",
+    "virgin money": "Virgin Money",
+    "newday": "NewDay",
+    "vanquis": "Vanquis",
+    "aqua": "Aqua (NewDay)",
+    "marbles": "Marbles (NewDay)",
+    "opus": "Opus",
+    "tesco": "Tesco Bank",
+    "cooperative": "The Co-operative Bank",
+    "co-operative bank": "The Co-operative Bank",
+    "coop bank": "The Co-operative Bank"
+  }
+}
