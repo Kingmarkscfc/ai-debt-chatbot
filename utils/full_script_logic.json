@@ -1,74 +1,74 @@
 {
   "steps": [
     {
-      "id": "start",
+      "id": "intro",
       "prompt": "Hello! My name’s Mark. What prompted you to seek help with your debts today?",
-      "keywords": ["debt", "help", "struggling", "bailiff", "credit", "loan", "money", "arrears", "collection", "court"]
+      "keywords": ["debt", "help", "struggling", "bailiff", "bailiffs", "interest", "court", "credit", "loan", "cards"]
     },
     {
       "id": "total_amount",
       "prompt": "Thanks for sharing. Roughly how much do you owe in total across all debts?",
-      "keywords": ["£", "pound", "k", "thousand", "hundred", "approx", "about", "around", "total", "sum"]
+      "keywords": ["£", "k", "thousand", "1000", "2000", "5000", "10000"]
     },
     {
       "id": "creditors_count",
-      "prompt": "Is that with at least two different unsecured creditors (e.g., credit cards, loans, overdrafts)?",
-      "keywords": ["yes", "yep", "two", "2", "more than one", "multiple", "creditors", "cards", "loans", "overdrafts"]
+      "prompt": "Got it. And is this with at least two different unsecured creditors like credit cards or loans?",
+      "keywords": ["yes", "2", "two", "more than one", "multiple", "barclaycard", "capital one", "mbna", "hsbc", "lloyds"]
     },
     {
-      "id": "main_concern",
-      "prompt": "What’s your main concern at the moment — bailiffs, interest, or court action?",
-      "keywords": ["bailiff", "bailiffs", "interest", "charges", "court", "ccj", "default", "calls", "letters"]
+      "id": "joint_or_guarantor",
+      "prompt": "Are any of your debts joint with someone else, or is anyone a guarantor (or are you a guarantor for someone)?",
+      "keywords": ["yes", "no", "joint", "guarantor", "partner", "spouse"]
     },
     {
       "id": "employment_income",
-      "prompt": "Got it. Are you employed or self-employed, and what’s your monthly income after tax?",
-      "keywords": ["employed", "self", "income", "salary", "wage", "pay", "monthly", "after tax", "net"]
+      "prompt": "Thanks. What’s your employment situation and approximate monthly income after tax?",
+      "keywords": ["job", "employed", "self", "self-employed", "benefits", "income", "salary", "wage", "earn"]
     },
     {
-      "id": "expenditure_check",
-      "prompt": "Thanks. Roughly how much do you spend per month on essentials (rent/mortgage, utilities, food, travel)?",
-      "keywords": ["rent", "mortgage", "bills", "utilities", "food", "travel", "spend", "expenses", "outgoings"]
+      "id": "housing_costs",
+      "prompt": "What are your monthly housing costs (rent or mortgage) and utility bills roughly?",
+      "keywords": ["rent", "mortgage", "housing", "utilities", "bills"]
     },
     {
-      "id": "joint_guarantor",
-      "prompt": "Are any of your debts joint, or is anyone a guarantor — or are you a guarantor for someone else?",
-      "keywords": ["joint", "partner", "spouse", "guarantor", "co-sign", "no", "none"]
+      "id": "assets_vehicle",
+      "prompt": "Do you own any assets such as a home with equity or a vehicle? If so, roughly what are they worth?",
+      "keywords": ["car", "vehicle", "house", "home", "equity", "no assets", "none"]
     },
     {
-      "id": "vulnerability",
-      "prompt": "Do you have any health or vulnerability considerations you’d like me to be aware of?",
-      "keywords": ["yes", "no", "anxiety", "depression", "illness", "disability", "mental", "health", "vulnerable"]
-    },
-    {
-      "id": "dmp_explain",
-      "prompt": "Option: DMP (Debt Management Plan) — informal, you repay what you owe over time; interest is often frozen but not guaranteed. Would you like me to compare this with an IVA?",
-      "keywords": ["compare", "iva", "dmp", "yes", "please", "what", "difference"]
+      "id": "options_overview",
+      "prompt": "Here are your main options. I’ll explain each briefly so you can decide: self-help, consolidation loan, DRO (if eligible), Bankruptcy, DMP, and IVA. Ready for a quick run-through?",
+      "keywords": ["yes", "ok", "ready", "go ahead", "explain"]
     },
     {
       "id": "iva_explain",
-      "prompt": "Option: IVA — legally binding, you pay what you can afford for 5–6 years; remaining unsecured debt is written off at the end. Interest/charges stop once approved. Make sense so far?",
-      "keywords": ["yes", "okay", "sounds good", "explain", "more", "how", "qualify", "eligibility"]
+      "prompt": "IVA: legally binding, usually 5–6 years. You pay what’s affordable; remaining unsecured debt may be written off. Protects from most creditor action.",
+      "keywords": ["ok", "understand", "iva", "sounds good", "tell me more"]
     },
     {
-      "id": "other_options",
-      "prompt": "Other solutions exist too (self-help negotiation, consolidation, DRO, bankruptcy). I’ll always outline all options fairly. Would you like to proceed by checking your eligibility for DMP/IVA?",
-      "keywords": ["yes", "proceed", "continue", "eligibility", "check", "go ahead"]
+      "id": "dmp_explain",
+      "prompt": "DMP: informal plan to repay what you owe over time. Interest/charges can be reduced or frozen but not guaranteed.",
+      "keywords": ["ok", "understand", "dmp", "sounds good"]
     },
     {
-      "id": "documents",
-      "prompt": "Great — to proceed we’ll need documents: ID, proof of income, and creditor statements. Are you ready to upload now, or should I send a secure portal link?",
-      "keywords": ["upload", "portal", "link", "send", "later", "now", "email"]
+      "id": "other_explain",
+      "prompt": "Other routes include self-help (talk to creditors directly), consolidation (if credit is good), DRO (low assets/low income), or Bankruptcy (last resort).",
+      "keywords": ["ok", "understand", "got it", "thanks"]
     },
     {
-      "id": "wrap_up",
-      "prompt": "Perfect. I’ll guide you through the portal next. If you have any questions at any point, just ask. Ready for your secure upload link?",
-      "keywords": ["yes", "ready", "link", "send", "ok"]
+      "id": "document_upload",
+      "prompt": "Next step: we’ll need documents (ID, proof of income, and creditor details). Are you ready to upload now? If not, I’ll send you a secure portal link.",
+      "keywords": ["yes", "ready", "not yet", "send link", "later"]
+    },
+    {
+      "id": "end",
+      "prompt": "Brilliant — I’ll guide you through the portal. I’m here if you need anything else!",
+      "keywords": []
     }
   ],
   "humor_fallbacks": [
     "That’s a plot twist I didn’t see coming… but let’s stick to sorting your finances!",
-    "I’m flattered you think I can do that — but let’s focus on getting you debt-free, yeah?",
-    "If the aliens return your payslip, pop it in the portal and we’ll pick up from there!"
+    "I’m flattered — but let’s keep the focus on getting you debt-free. 💪",
+    "If the aliens return your payslip, upload it — meanwhile, let’s keep going."
   ]
 }
