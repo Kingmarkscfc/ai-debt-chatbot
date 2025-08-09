@@ -1,136 +1,118 @@
 // /pages/api/chat.ts
-
-import type { NextApiRequest, NextApiResponse } from "next";
 import { createClient } from "@supabase/supabase-js";
 import { v4 as uuidv4 } from "uuid";
 import fullScriptLogic from "../../utils/full_script_logic.json";
+import creditors from "../../utils/creditors.json";
+import type { NextApiRequest, NextApiResponse } from "next";
+import { ChatCompletionMessageParam } from "openai/resources";
 
-// ---------- Types ----------
-type Step = {
-  id?: string;
-  prompt: string;
-  keywords?: string[];
-};
-type Script = { steps: Step[] };
+// If you want OpenAI back in, we can re-enable later. For now keep it deterministic to kill looping.
+// import OpenAI from "openai";
+// const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-const script = fullScriptLogic as Script;
+const supabase = createClient(
+  process.env.SUPABASE_URL || "",
+  process.env.SUPABASE_ANON_KEY || ""
+);
 
-// ---------- Supabase (optional) ----------
-const supabaseUrl = process.env.SUPABASE_URL || "";
-const supabaseKey = process.env.SUPABASE_ANON_KEY || "";
-const supabase =
-  supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
-
-// We’ll use/expect a table like:
-//   chat_progress(session_id text primary key, step_index int)
-// If it’s not there, we seamlessly fall back to memory:
-const memoryProgress: Record<string, number> = {};
-
-// ---------- Humour ----------
 const fallbackHumour = [
   "That’s a plot twist I didn’t see coming… but let’s stick to your debts, yeah?",
   "I’m flattered you think I can do that, but let’s get back to helping you become debt-free!",
   "As fun as that sounds, I’m here to help with your money stress, not become your life coach. Yet."
 ];
 
-// ---------- Helpers ----------
-async function getStepIndex(sessionId: string): Promise<number> {
-  // Try Supabase first
-  if (supabase) {
-    try {
-      const { data, error } = await supabase
-        .from("chat_progress")
-        .select("step_index")
-        .eq("session_id", sessionId)
-        .single();
+type Step = { prompt: string; keywords?: string[] };
+type Script = { steps: Step[] };
+const script: Script = fullScriptLogic as Script;
 
-      if (!error && data && typeof data.step_index === "number") {
-        return data.step_index;
-      }
-    } catch {
-      // fall back silently
-    }
-  }
-  // Memory fallback
-  return memoryProgress[sessionId] ?? 0;
+const creditorKeys = Object.keys(
+  (creditors as any)?.normalized_to_display || {}
+).map((k) => k.toLowerCase());
+
+// Basic normalizer for fuzzy contains
+function norm(s: string) {
+  return s
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
-async function setStepIndex(sessionId: string, stepIndex: number): Promise<void> {
-  // Try Supabase first
-  if (supabase) {
-    try {
-      const { error } = await supabase
-        .from("chat_progress")
-        .upsert({ session_id: sessionId, step_index: stepIndex });
-      if (!error) return;
-    } catch {
-      // fall back silently
-    }
-  }
-  // Memory fallback
-  memoryProgress[sessionId] = stepIndex;
-}
-
-function matchedKeywords(step: Step | undefined, userText: string): boolean {
-  if (!step) return false;
-  const kws = (step.keywords || []).map(k => k.toLowerCase().trim()).filter(Boolean);
-  if (kws.length === 0) return true; // no keywords means always accept and move on
-  const t = userText.toLowerCase();
-  return kws.some(k => t.includes(k));
-}
-
-// ---------- Handler ----------
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).end();
 
   try {
-    const raw = req.body;
-    if (!raw || typeof raw.message !== "string") {
-      return res.status(400).json({ reply: "Invalid request format." });
+    const userMessage: string | undefined = req.body?.message?.toString().trim();
+    if (!userMessage) {
+      return res.status(400).json({ reply: "Invalid message." });
     }
+    const sessionId = req.body.sessionId || uuidv4();
 
-    const userMessage = raw.message.trim();
-    const sessionId: string = raw.sessionId || uuidv4();
+    // 1) Load history
+    let { data: historyData } = await supabase
+      .from("chat_history")
+      .select("messages")
+      .eq("session_id", sessionId)
+      .single();
 
-    // INIT / RESET
-    if (userMessage.toLowerCase().includes("initiate")) {
-      await setStepIndex(sessionId, 0);
-      const first = script.steps[0]?.prompt || "Hello! How can I help today?";
+    let history: ChatCompletionMessageParam[] = historyData?.messages || [];
+
+    // 2) INITIATE -> send very first script prompt only once
+    if (userMessage === "👋 INITIATE") {
+      const first = script.steps[0]?.prompt || "Hello! How can I help with your debts today?";
+      history = [{ role: "assistant", content: first }];
+      await supabase.from("chat_history").upsert({
+        session_id: sessionId,
+        messages: history
+      });
       return res.status(200).json({ reply: first, sessionId });
     }
 
-    // Current step
-    let stepIndex = await getStepIndex(sessionId);
-    const current = script.steps[stepIndex];
+    // 3) Append user message
+    history.push({ role: "user", content: userMessage });
 
-    // If we’re somehow beyond the last step, just finish gracefully
-    if (!current) {
-      const endMsg =
-        "Thanks for going through everything. If you’re ready, you can upload your documents securely via your portal. I’m here if you need anything else!";
-      return res.status(200).json({ reply: endMsg, sessionId });
-    }
+    // Current step index = how many assistant prompts we’ve already sent
+    const assistantCount = history.filter((m) => m.role === "assistant").length;
+    const currentStepIndex = Math.min(assistantCount - 1, script.steps.length - 1);
+    const nextIndex = Math.min(currentStepIndex + 1, script.steps.length - 1);
 
-    // Decide whether to advance
-    const ok = matchedKeywords(current, userMessage);
+    const currentStep = script.steps[Math.max(currentStepIndex, 0)] || script.steps[0];
+    const nextStep = script.steps[nextIndex] || script.steps[script.steps.length - 1];
 
-    let reply: string;
+    // 4) Match by keywords OR creditor hit
+    const expectedKeywords = (currentStep.keywords || []).map((k) => k.toLowerCase());
+    const msgN = norm(userMessage);
 
-    if (ok) {
-      // Advance to the next step (or finish if none)
-      stepIndex = Math.min(stepIndex + 1, script.steps.length - 1);
-      await setStepIndex(sessionId, stepIndex);
-      reply = script.steps[stepIndex]?.prompt || current.prompt;
+    const keywordHit =
+      expectedKeywords.length === 0 ||
+      expectedKeywords.some((k) => msgN.includes(norm(k)));
+
+    const creditorHit = creditorKeys.some((ck) => msgN.includes(ck));
+
+    let reply = "";
+
+    if (keywordHit || creditorHit) {
+      // advance
+      reply = nextStep.prompt || "Let’s keep going with your debt help.";
     } else {
-      // Off-topic → humour + restate current step succinctly
-      const funny = fallbackHumour[Math.floor(Math.random() * fallbackHumour.length)];
-      reply = `${funny} ${current.prompt}`;
+      // humour fallback ONLY if truly off-topic
+      reply = fallbackHumour[Math.floor(Math.random() * fallbackHumour.length)];
     }
+
+    history.push({ role: "assistant", content: reply });
+
+    await supabase.from("chat_history").upsert({
+      session_id: sessionId,
+      messages: history
+    });
 
     return res.status(200).json({ reply, sessionId });
   } catch (err: any) {
-    console.error("❌ /api/chat error:", err?.message || err);
+    console.error("❌ Error in /api/chat:", err?.message || err);
     return res
       .status(500)
-      .json({ reply: "Sorry, something went wrong on my end. Please try again shortly." });
+      .json({ reply: "Sorry, something went wrong on my end. Please try again." });
   }
 }
