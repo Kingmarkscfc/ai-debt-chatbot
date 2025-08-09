@@ -1,0 +1,101 @@
+{
+  "general_debt": [
+    "debt", "debts", "in debt", "owe", "owing", "arrears", "behind on payments",
+    "missed payment", "missed payments", "late payment", "late fees",
+    "interest", "charges", "default", "defaulted", "ccj", "county court judgment",
+    "dmp", "debt management plan", "iva", "individual voluntary arrangement",
+    "dro", "debt relief order", "bankruptcy", "insolvency",
+    "payment plan", "repayment plan", "affordable payment", "restructure",
+    "consolidate", "consolidation", "payment holiday", "forbearance",
+    "credit score", "credit rating", "credit file", "credit report",
+    "collection", "collections", "debt collector", "debt collection",
+    "debt agency", "debt recovery", "letter of claim", "pre action",
+    "court", "court action", "claim form", "judgment", "warrant",
+    "attachment of earnings", "aoe", "charging order", "third party debt order"
+  ],
+  "credit_cards": [
+    "credit card", "credit cards", "store card", "balance transfer",
+    "minimum payment", "over limit", "overlimit", "cash advance",
+    "apr", "interest rate", "statement balance", "persistent debt"
+  ],
+  "loans": [
+    "loan", "loans", "personal loan", "unsecured loan", "secured loan",
+    "payday loan", "short term loan", "instalment loan", "hire purchase",
+    "hp", "logbook loan", "guarantor loan", "arrears on loan",
+    "default on loan", "microloan"
+  ],
+  "overdrafts": [
+    "overdraft", "unauthorised overdraft", "overdraft fees", "arranged overdraft"
+  ],
+  "council_tax": [
+    "council tax", "council tax arrears", "council tax debt",
+    "liability order", "council tax bailiff", "enforcement agent council tax"
+  ],
+  "rent_housing": [
+    "rent", "rent arrears", "rent debt", "rent behind", "behind on rent",
+    "landlord", "eviction", "section 21", "section 8",
+    "housing association", "social housing", "rent increase",
+    "possession order", "notice seeking possession"
+  ],
+  "mortgage": [
+    "mortgage", "mortgage arrears", "repossession", "mortgage holiday",
+    "interest only", "fixed rate", "variable rate", "remortgage"
+  ],
+  "utilities_bills": [
+    "gas bill", "electric bill", "electricity bill", "energy bill",
+    "water bill", "water rates", "broadband bill", "mobile bill",
+    "phone bill", "tv licence", "tv license", "arrears on bills",
+    "prepayment meter", "smart meter", "standing charge"
+  ],
+  "benefit_deductions": [
+    "dwp debt", "benefit overpayment", "tax credit overpayment",
+    "universal credit advance", "uc advance", "benefit deductions",
+    "direct earnings attachment", "dea"
+  ],
+  "gov_tax": [
+    "hmrc", "tax arrears", "self assessment", "sa bill", "vat arrears",
+    "time to pay", "ttp arrangement"
+  ],
+  "vehicle_finance": [
+    "car finance", "pcp", "personal contract purchase", "lease", "hp arrears",
+    "voluntary termination", "vt", "balloon payment"
+  ],
+  "student_debt": [
+    "student loan", "plan 1", "plan 2", "plan 5", "postgraduate loan",
+    "sfe", "student finance england", "deductions from salary"
+  ],
+  "enforcement_bailiffs": [
+    "bailiff", "bailiffs", "enforcement", "enforcement agent", "enforcement agents",
+    "cdl", "controlled goods agreement", "cga", "taking control of goods",
+    "compliance fee", "enforcement fee", "sale fee", "removal of goods",
+    "notice of enforcement", "writ of control", "high court enforcement officer",
+    "hceo", "clamp", "vehicle clamped"
+  ],
+  "work_income": [
+    "redundant", "redundancy", "reduced hours", "overtime cut",
+    "furlough", "self employed", "self-employment", "sole trader",
+    "director", "limited company", "zero hours", "agency work",
+    "on benefits", "benefits", "pip", "esa", "uc", "universal credit"
+  ],
+  "hardship_vulnerability": [
+    "mental health", "anxiety", "depression", "stress",
+    "bereavement", "disability", "long term illness",
+    "domestic abuse", "carer", "carrying caring responsibilities"
+  ],
+  "housing_costs": [
+    "council rent", "private rent", "rent deposit", "rent guarantee",
+    "service charge", "ground rent", "leasehold charges"
+  ],
+  "keywords_yes_no": [
+    "yes", "yeah", "yep", "yup", "correct", "that’s right", "thats right",
+    "no", "nope", "nah", "not really", "don’t think so", "dont think so"
+  ],
+  "money_markers": [
+    "£", "gbp", "quid", "grand", "k", "thousand", "hundred"
+  ],
+  "popular_creditors_examples": [
+    "barclaycard", "barclays", "capital one", "mbna", "lloyds", "hsbc",
+    "halifax", "natwest", "rbs", "santander", "virgin money", "newday",
+    "vanquis", "aqua", "marbles", "opus", "tesco bank", "co-operative bank"
+  ]
+}
