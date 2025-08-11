@@ -2,16 +2,30 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { createClient } from "@supabase/supabase-js";
 import { v4 as uuidv4 } from "uuid";
 import fullScriptLogic from "../../utils/full_script_logic.json";
-import creditors from "../../utils/creditors.json";
+import creditorsJson from "../../utils/creditors.json";
 
-type Msg = { role: "user" | "assistant"; content: string };
+// ----- Types for our JSON files -----
+type ScriptStep = { prompt: string; keywords?: string[] };
+type ScriptLogic = { steps: ScriptStep[] };
 
+type CreditorsJson = {
+  aliases_to_display: Record<string, string>;
+  generic_patterns: string[];
+};
+
+// Assert types for imported JSON
+const SCRIPT: ScriptLogic = fullScriptLogic as ScriptLogic;
+const CREDITORS: CreditorsJson = creditorsJson as unknown as CreditorsJson;
+
+// ----- Supabase -----
 const supabase = createClient(
   process.env.SUPABASE_URL || "",
   process.env.SUPABASE_ANON_KEY || ""
 );
 
-// --- helpers ---
+type Msg = { role: "user" | "assistant"; content: string };
+
+// ----- Helpers -----
 const normalize = (s: string) =>
   s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, "").replace(/\s+/g, " ").trim();
 
@@ -20,16 +34,15 @@ const NUMERIC_RE = /(?:£\s*)?[\d,]+(?:\.\d{1,2})?/;
 function detectCreditors(text: string): string[] {
   const t = normalize(text);
   const hits = new Set<string>();
-  const aliases = creditors.aliases_to_display || {};
+  const aliases: Record<string, string> = CREDITORS.aliases_to_display || {};
 
-  for (const alias in aliases) {
+  for (const alias of Object.keys(aliases)) {
     // whole-word-ish match
     const pat = new RegExp(`\\b${alias.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}\\b`, "i");
-    if (pat.test(t)) hits.add(aliases[alias]);
+    if (pat.test(t)) hits.add(aliases[alias]); // <-- now typed
   }
 
-  // generic patterns (council tax, rent arrears, etc.)
-  for (const p of creditors.generic_patterns || []) {
+  for (const p of CREDITORS.generic_patterns || []) {
     const pat = new RegExp(`\\b${p.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}\\b`, "i");
     if (pat.test(t)) hits.add(p.replace(/\b\w/g, c => c.toUpperCase()));
   }
@@ -50,7 +63,7 @@ async function saveHistory(sessionId: string, messages: Msg[]) {
   await supabase.from("chat_history").upsert({ session_id: sessionId, messages });
 }
 
-// --- route ---
+// ----- API Route -----
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).end();
 
@@ -61,48 +74,49 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const sessionId = (req.body?.sessionId as string) || uuidv4();
     let history = await getHistory(sessionId);
 
-    // Kick off scripted flow once (on first message or explicit INITIATE)
+    // INIT / first turn -> send first scripted step and stop
     const isInit = history.length === 0 || userMessage.toUpperCase().includes("INITIATE");
     if (isInit) {
-      const opening = fullScriptLogic.steps[0]?.prompt ||
+      const opening =
+        SCRIPT.steps[0]?.prompt ||
         "Hello! My name’s Mark. What prompted you to seek help with your debts today?";
       history = [{ role: "assistant", content: opening }];
       await saveHistory(sessionId, history);
       return res.status(200).json({ reply: opening, sessionId });
     }
 
-    // record user msg
+    // Record user message
     history.push({ role: "user", content: userMessage });
 
-    // current step index = how many assistant prompts already sent
-    const currentStepIndex = history.filter(m => m.role === "assistant").length - 1; // -1 because we pushed user
-    const step = fullScriptLogic.steps[currentStepIndex] || fullScriptLogic.steps.at(-1)!;
+    // Determine current step by how many assistant prompts already sent
+    const currentStepIndex = Math.max(
+      0,
+      history.filter(m => m.role === "assistant").length - 1
+    );
+    const step = SCRIPT.steps[currentStepIndex] || SCRIPT.steps.at(-1)!;
 
-    const expected = (step.keywords || []).map((k: string) => k.toLowerCase());
+    const expected = (step.keywords || []).map(k => k.toLowerCase());
     const lower = normalize(userMessage);
 
-    // creditor detection + amount detection for early steps
+    // Entity / amount detection for early progression
     const foundCreditors = detectCreditors(userMessage);
-    const looksLikeAmount = NUMERIC_RE.test(userMessage) || /\b(thousand|hundred|k)\b/i.test(userMessage);
+    const looksLikeAmount =
+      NUMERIC_RE.test(userMessage) || /\b(thousand|hundred|k)\b/i.test(userMessage);
 
-    let matched = false;
+    let matched: boolean;
 
-    // If this is one of the early information-gathering steps, allow creditor/amount to count as a match.
     if (currentStepIndex <= 2) {
       matched =
-        expected.some((k: string) => lower.includes(k)) ||
-        foundCreditors.length > 0 ||
-        looksLikeAmount;
+        expected.some(k => lower.includes(k)) || foundCreditors.length > 0 || looksLikeAmount;
     } else {
-      matched = expected.length === 0 || expected.some((k: string) => lower.includes(k));
+      matched = expected.length === 0 || expected.some(k => lower.includes(k));
     }
 
     let reply: string;
 
     if (matched) {
-      // progress to next step
-      const nextIdx = Math.min(currentStepIndex + 1, fullScriptLogic.steps.length - 1);
-      const nextPrompt = fullScriptLogic.steps[nextIdx]?.prompt || step.prompt;
+      const nextIdx = Math.min(currentStepIndex + 1, SCRIPT.steps.length - 1);
+      const nextPrompt = SCRIPT.steps[nextIdx]?.prompt || step.prompt;
 
       if (foundCreditors.length > 0 && currentStepIndex <= 2) {
         const ack = `Thanks — I’ve noted ${foundCreditors.slice(0, 3).join(", ")}.`;
@@ -113,24 +127,29 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         reply = nextPrompt;
       }
     } else {
-      // gentle nudge with the SAME step (no loop back to intro)
+      // Stay on the same step, give a nudge (no jump back to intro)
       reply =
         step.prompt +
         (currentStepIndex <= 2
-          ? " (It’s okay to just name who you owe — e.g., Barclaycard, Capital One — or a rough total like £5,000.)"
+          ? " (It’s okay to name your creditors — e.g., Barclaycard, Capital One — or a rough total like £5,000.)"
           : "");
     }
 
     history.push({ role: "assistant", content: reply });
     await saveHistory(sessionId, history);
 
-    // fire-and-forget telemetry (optional; ignore if you haven’t added the table)
-    fetch(process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}/api/telemetry` : "http://localhost:3000/api/telemetry", {
+    // Telemetry (optional; ignore failure)
+    const baseUrl =
+      process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000";
+    fetch(`${baseUrl}/api/telemetry`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         sessionId,
-        stepIndex: Math.min(currentStepIndex + (matched ? 1 : 0), fullScriptLogic.steps.length - 1),
+        stepIndex: Math.min(
+          currentStepIndex + (matched ? 1 : 0),
+          SCRIPT.steps.length - 1
+        ),
         matched,
         foundCreditors,
         ts: Date.now()
@@ -140,6 +159,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(200).json({ reply, sessionId });
   } catch (e: any) {
     console.error("chat.ts error:", e?.message || e);
-    return res.status(500).json({ reply: "Sorry, something went wrong on my end. Please try again." });
+    return res
+      .status(500)
+      .json({ reply: "Sorry, something went wrong on my end. Please try again." });
   }
 }
