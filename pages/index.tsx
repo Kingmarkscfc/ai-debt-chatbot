@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 
 type Msg = { role: "user" | "assistant"; content: string };
 
-function getOrCreateSessionId(): string {
+function getSessionId(): string {
   if (typeof window === "undefined") return Math.random().toString(36).slice(2);
   let sid = window.localStorage.getItem("da_session_id");
   if (!sid) {
@@ -13,32 +13,44 @@ function getOrCreateSessionId(): string {
   return sid;
 }
 
+function getStepIndex(): number {
+  if (typeof window === "undefined") return 0;
+  const raw = window.localStorage.getItem("da_step_index");
+  const n = raw ? parseInt(raw, 10) : 0;
+  return Number.isFinite(n) ? n : 0;
+}
+
+function setStepIndex(n: number) {
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem("da_step_index", String(n));
+  }
+}
+
 export default function Home() {
-  const [theme, setTheme] = useState<"light" | "dark">("light");
   const [sessionId, setSessionId] = useState<string>("");
+  const [stepIndex, setStepIdx] = useState<number>(0);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
+  const [dark, setDark] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // init
   useEffect(() => {
-    const sid = getOrCreateSessionId();
+    const sid = getSessionId();
+    const idx = getStepIndex();
     setSessionId(sid);
-    setMessages([
-      {
-        role: "assistant",
-        content:
-          "Hello! My name’s Mark. What prompted you to seek help with your debts today?",
-      },
-    ]);
+    setStepIdx(idx);
+
+    // Show the intro only once (if first load)
+    const intro =
+      "Hello! My name’s Mark. What prompted you to seek help with your debts today?";
+    setMessages([{ role: "assistant", content: intro }]);
   }, []);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
-
-  const toggleTheme = () => setTheme((p) => (p === "light" ? "dark" : "light"));
 
   const handleSend = async () => {
     const text = input.trim();
@@ -52,7 +64,7 @@ export default function Home() {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, sessionId }),
+        body: JSON.stringify({ message: text, sessionId, stepIndex }),
       });
       const data = await res.json();
 
@@ -63,11 +75,17 @@ export default function Home() {
           ? data.reply
           : "Sorry, something went wrong — please try again.";
 
+      // update local step index from server result
+      const nextIdx =
+        typeof data?.nextStepIndex === "number" ? data.nextStepIndex : stepIndex;
+
       setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
+      setStepIdx(nextIdx);
+      setStepIndex(nextIdx); // persist in localStorage
     } catch {
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: "Network hiccup — mind trying again?" },
+        { role: "assistant", content: "Network hiccup — please try again." },
       ]);
     } finally {
       setIsTyping(false);
@@ -85,85 +103,214 @@ export default function Home() {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
       </Head>
 
-      <main
-        className={`${
-          theme === "dark" ? "bg-gray-900 text-white" : "bg-gray-100 text-black"
-        } min-h-screen w-full flex items-center justify-center transition-colors duration-300 px-4 py-8`}
-      >
-        <div className="w-full max-w-2xl">
-          {/* Card */}
-          <div
-            className={`${
-              theme === "dark" ? "bg-gray-800" : "bg-white"
-            } rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden`}
-          >
-            {/* Top bar */}
-            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-700">
-              <div className="flex items-center gap-2">
-                <div className="h-2.5 w-2.5 rounded-full bg-green-500" />
-                <h1 className="text-base font-semibold">Debt Advisor</h1>
+      <div className={`app ${dark ? "dark" : ""}`}>
+        <main className="viewport">
+          <div className="card">
+            {/* Header */}
+            <div className="topbar">
+              <div className="brand">
+                <span className="dot" />
+                <h1>Debt Advisor</h1>
               </div>
-              <div className="flex items-center gap-2">
-                <select
-                  className="text-sm border rounded px-2 py-1 bg-transparent"
-                  defaultValue="English"
-                  aria-label="Language"
-                >
+              <div className="actions">
+                <select defaultValue="English" aria-label="Language">
                   <option>English</option>
                   <option>Español</option>
                   <option>Français</option>
                   <option>Deutsch</option>
                 </select>
-                <button
-                  onClick={toggleTheme}
-                  className="text-sm px-3 py-1 rounded bg-blue-600 text-white"
-                >
-                  {theme === "light" ? "Dark" : "Light"} Mode
+                <button onClick={() => setDark((d) => !d)}>
+                  {dark ? "Light" : "Dark"} Mode
                 </button>
               </div>
             </div>
 
             {/* Messages */}
-            <div className="px-4 py-4 max-h-[60vh] min-h-[40vh] overflow-y-auto space-y-3">
+            <div className="messages">
               {messages.map((m, i) => (
-                <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-                  <div
-                    className={`${
-                      m.role === "user"
-                        ? "bg-green-600 text-white"
-                        : "bg-gray-200 dark:bg-gray-700 text-black dark:text-white"
-                    } px-4 py-2 rounded-2xl max-w-[80%] text-sm`}
-                  >
-                    {m.content}
-                  </div>
+                <div
+                  key={i}
+                  className={`row ${m.role === "user" ? "right" : "left"}`}
+                >
+                  <div className={`bubble ${m.role}`}>{m.content}</div>
                 </div>
               ))}
               {isTyping && (
-                <div className="text-sm text-gray-500 italic">Mark is typing…</div>
+                <div className="typing">Mark is typing…</div>
               )}
               <div ref={bottomRef} />
             </div>
 
-            {/* Input bar */}
-            <div className="flex items-center gap-2 px-4 py-3 border-t border-gray-200 dark:border-gray-700">
+            {/* Input */}
+            <div className="inputbar">
               <input
                 type="text"
+                placeholder="Type your message…"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Type your message…"
-                className="flex-grow p-2 border rounded bg-transparent"
               />
-              <button
-                onClick={handleSend}
-                className="px-4 py-2 rounded bg-green-600 text-white"
-              >
-                Send
-              </button>
+              <button onClick={handleSend}>Send</button>
             </div>
           </div>
-        </div>
-      </main>
+        </main>
+      </div>
+
+      {/* styled-jsx so you don't need Tailwind or external CSS */}
+      <style jsx>{`
+        .app {
+          background: #f3f4f6;
+          color: #111827;
+          min-height: 100vh;
+        }
+        .app.dark {
+          background: #111827;
+          color: #f9fafb;
+        }
+        .viewport {
+          min-height: 100vh;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 24px;
+        }
+        .card {
+          width: 100%;
+          max-width: 720px;
+          border-radius: 16px;
+          background: #ffffff;
+          border: 1px solid #e5e7eb;
+          overflow: hidden;
+          box-shadow: 0 8px 24px rgba(0,0,0,0.06);
+        }
+        .app.dark .card {
+          background: #1f2937;
+          border-color: #374151;
+        }
+        .topbar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 12px 16px;
+          border-bottom: 1px solid #e5e7eb;
+        }
+        .app.dark .topbar {
+          border-bottom-color: #374151;
+        }
+        .brand {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .brand h1 {
+          font-size: 16px;
+          margin: 0;
+          font-weight: 600;
+        }
+        .dot {
+          width: 10px;
+          height: 10px;
+          background: #10b981;
+          border-radius: 999px;
+          display: inline-block;
+        }
+        .actions {
+          display: flex;
+          gap: 8px;
+          align-items: center;
+        }
+        select, .actions button {
+          font-size: 14px;
+          border-radius: 6px;
+          border: 1px solid #d1d5db;
+          background: transparent;
+          color: inherit;
+          padding: 6px 10px;
+        }
+        .app.dark select, .app.dark .actions button {
+          border-color: #4b5563;
+        }
+        .actions button {
+          background: #2563eb;
+          color: #fff;
+          border: none;
+        }
+        .messages {
+          max-height: 65vh;
+          min-height: 40vh;
+          overflow-y: auto;
+          padding: 16px;
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+        .row {
+          display: flex;
+        }
+        .row.left {
+          justify-content: flex-start;
+        }
+        .row.right {
+          justify-content: flex-end;
+        }
+        .bubble {
+          max-width: 80%;
+          padding: 10px 12px;
+          border-radius: 16px;
+          font-size: 14px;
+          line-height: 1.4;
+          word-break: break-word;
+        }
+        .bubble.assistant {
+          background: #e5e7eb;
+          color: #111827;
+        }
+        .app.dark .bubble.assistant {
+          background: #374151;
+          color: #f9fafb;
+        }
+        .bubble.user {
+          background: #16a34a;
+          color: white;
+        }
+        .typing {
+          font-size: 13px;
+          color: #6b7280;
+          font-style: italic;
+          padding: 0 4px;
+        }
+        .app.dark .typing {
+          color: #9ca3af;
+        }
+        .inputbar {
+          display: flex;
+          gap: 8px;
+          padding: 12px;
+          border-top: 1px solid #e5e7eb;
+        }
+        .app.dark .inputbar {
+          border-top-color: #374151;
+        }
+        .inputbar input {
+          flex: 1;
+          padding: 10px;
+          border-radius: 8px;
+          border: 1px solid #d1d5db;
+          background: transparent;
+          color: inherit;
+        }
+        .app.dark .inputbar input {
+          border-color: #4b5563;
+        }
+        .inputbar button {
+          padding: 10px 16px;
+          background: #16a34a;
+          color: #fff;
+          border: none;
+          border-radius: 8px;
+          cursor: pointer;
+        }
+      `}</style>
     </>
   );
 }

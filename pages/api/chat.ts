@@ -1,10 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { v4 as uuidv4 } from "uuid";
 
-/**
- * Minimal, reliable script for now (you can expand freely).
- * We purposely keep it inline to avoid JSON-import issues and get you unblocked today.
- */
 const STEPS: string[] = [
   "Hello! My name’s Mark. What prompted you to seek help with your debts today?",
   "Thanks for sharing. Roughly how much do you owe in total across all debts?",
@@ -21,60 +17,39 @@ const HUMOUR = [
   "If the aliens return your payslip, feel free to upload it later — for now, let’s keep going."
 ];
 
-// very simple in-memory session store (works on Vercel but resets between cold starts)
-const sessionSteps: Record<string, number> = {};
-
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).json({ reply: "Method not allowed" });
 
   try {
-    const rawMsg = (req.body?.message ?? "").toString().trim();
+    const message = (req.body?.message ?? "").toString().trim();
     let sessionId = (req.body?.sessionId ?? "").toString().trim();
+    let stepIndex = Number(req.body?.stepIndex);
+
+    if (!Number.isFinite(stepIndex) || stepIndex < 0) stepIndex = 0;
     if (!sessionId) sessionId = uuidv4();
 
-    // initialize step if none
-    if (sessionSteps[sessionId] === undefined) {
-      // index 0 is the intro we already render on the client
-      // so the first user reply should move us to step 1
-      sessionSteps[sessionId] = 1;
-    }
+    // Choose the prompt for THIS turn
+    const safeIdx = Math.min(stepIndex, STEPS.length - 1);
+    let reply = STEPS[safeIdx];
 
-    // If the user said nothing, gently prompt again (but don't change step)
-    if (!rawMsg) {
-      const idx = sessionSteps[sessionId];
-      const reply = STEPS[Math.min(idx, STEPS.length - 1)];
-      return res.status(200).json({ reply, sessionId });
-    }
-
-    // basic off-topic nudge (we still advance, to avoid loops)
-    const lower = rawMsg.toLowerCase();
+    // Very light off-topic detection. We still progress either way.
+    const lower = message.toLowerCase();
     const offTopic =
       ["weather", "football", "recipe", "joke"].some((k) => lower.includes(k)) ||
       lower.length < 2;
 
-    let nextIdx = sessionSteps[sessionId];
-
-    // reply with the current step prompt (where we are now)
-    let reply = STEPS[Math.min(nextIdx, STEPS.length - 1)];
-
-    // prepare to move forward for the *next* turn
-    if (nextIdx < STEPS.length - 1) {
-      nextIdx += 1;
-    }
-
-    // if off-topic, prepend a quick nudge once (but do not stall)
     if (offTopic) {
-      const nudge = HUMOUR[Math.floor(Math.random() * HUMOUR.length)];
-      reply = `${nudge} ${reply}`;
+      reply = `${HUMOUR[Math.floor(Math.random() * HUMOUR.length)]} ${reply}`;
     }
 
-    sessionSteps[sessionId] = nextIdx;
+    // Compute next step index for the NEXT user turn
+    const nextStepIndex = Math.min(safeIdx + 1, STEPS.length - 1);
 
-    return res.status(200).json({ reply, sessionId });
+    return res.status(200).json({ reply, sessionId, nextStepIndex });
   } catch (e) {
     console.error("chat error:", e);
-    return res.status(500).json({
-      reply: "Sorry, something went wrong on my end. Please try again shortly.",
-    });
+    return res
+      .status(500)
+      .json({ reply: "Sorry, something went wrong on my end. Please try again." });
   }
 }
