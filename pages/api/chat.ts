@@ -1,145 +1,145 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import OpenAI from "openai";
-
-// If Supabase envs are present we’ll use them; otherwise fall back to in-memory
 import { createClient } from "@supabase/supabase-js";
-
-// IMPORTANT: keep this relative path – it works in Next API routes
+import { v4 as uuidv4 } from "uuid";
 import fullScriptLogic from "../../utils/full_script_logic.json";
+import creditors from "../../utils/creditors.json";
 
 type Msg = { role: "user" | "assistant"; content: string };
-type SessionRow = { session_id: string; messages: Msg[]; step_index: number };
 
-const fallbackHumour = [
-  "That’s a plot twist I didn’t see coming… but let’s stick to your debts, yeah?",
-  "I’m flattered you think I can do that, but let’s get back to helping you become debt-free!",
-  "As fun as that sounds, I’m here to help with your money stress, not become your life coach. Yet.",
-];
+const supabase = createClient(
+  process.env.SUPABASE_URL || "",
+  process.env.SUPABASE_ANON_KEY || ""
+);
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// --- helpers ---
+const normalize = (s: string) =>
+  s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, "").replace(/\s+/g, " ").trim();
 
-// Optional Supabase (safe fallback to memory)
-const SUPABASE_URL = process.env.SUPABASE_URL || "";
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || "";
-const supabase =
-  SUPABASE_URL && SUPABASE_ANON_KEY
-    ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
-    : null;
+const NUMERIC_RE = /(?:£\s*)?[\d,]+(?:\.\d{1,2})?/;
 
-// In-memory fallback store (dev only)
-const memoryStore = new Map<string, SessionRow>();
+function detectCreditors(text: string): string[] {
+  const t = normalize(text);
+  const hits = new Set<string>();
+  const aliases = creditors.aliases_to_display || {};
 
-async function getSession(sessionId: string): Promise<SessionRow> {
-  if (supabase) {
-    const { data, error } = await supabase
-      .from("chat_history")
-      .select("session_id,messages,step_index")
-      .eq("session_id", sessionId)
-      .single();
-
-    if (error || !data) {
-      return { session_id: sessionId, messages: [], step_index: 0 };
-    }
-    // Ensure defaults
-    return {
-      session_id: sessionId,
-      messages: data.messages || [],
-      step_index: typeof data.step_index === "number" ? data.step_index : 0,
-    };
+  for (const alias in aliases) {
+    // whole-word-ish match
+    const pat = new RegExp(`\\b${alias.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}\\b`, "i");
+    if (pat.test(t)) hits.add(aliases[alias]);
   }
 
-  // memory fallback
-  return memoryStore.get(sessionId) ?? { session_id: sessionId, messages: [], step_index: 0 };
-}
-
-async function saveSession(row: SessionRow): Promise<void> {
-  if (supabase) {
-    await supabase
-      .from("chat_history")
-      .upsert({ session_id: row.session_id, messages: row.messages, step_index: row.step_index });
-    return;
+  // generic patterns (council tax, rent arrears, etc.)
+  for (const p of creditors.generic_patterns || []) {
+    const pat = new RegExp(`\\b${p.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}\\b`, "i");
+    if (pat.test(t)) hits.add(p.replace(/\b\w/g, c => c.toUpperCase()));
   }
-  memoryStore.set(row.session_id, row);
+
+  return Array.from(hits);
 }
 
-// Very light keyword scoring so we can advance even if not perfect
-function scoreMatch(input: string, keywords: string[] = []): number {
-  const t = input.toLowerCase();
-  let score = 0;
-  for (const k of keywords) {
-    if (!k) continue;
-    const kw = k.toLowerCase().trim();
-    if (!kw) continue;
-    if (t.includes(kw)) score += 1;
-  }
-  // numbers suggest amounts (helps the “how much do you owe?” step)
-  if (/\d/.test(t)) score += 1;
-  return score;
+async function getHistory(sessionId: string): Promise<Msg[]> {
+  const { data } = await supabase
+    .from("chat_history")
+    .select("messages")
+    .eq("session_id", sessionId)
+    .single();
+  return (data?.messages as Msg[]) || [];
 }
 
+async function saveHistory(sessionId: string, messages: Msg[]) {
+  await supabase.from("chat_history").upsert({ session_id: sessionId, messages });
+}
+
+// --- route ---
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).end();
 
   try {
-    const userMessage = (req.body?.message ?? "").toString().trim();
-    const sessionId = (req.body?.sessionId ?? "").toString().trim();
-    if (!userMessage || !sessionId) {
-      return res.status(400).json({ reply: "Invalid request.", sessionId });
+    const userMessage = (req.body?.message || "").toString().trim();
+    if (!userMessage) return res.status(400).json({ reply: "Invalid message." });
+
+    const sessionId = (req.body?.sessionId as string) || uuidv4();
+    let history = await getHistory(sessionId);
+
+    // Kick off scripted flow once (on first message or explicit INITIATE)
+    const isInit = history.length === 0 || userMessage.toUpperCase().includes("INITIATE");
+    if (isInit) {
+      const opening = fullScriptLogic.steps[0]?.prompt ||
+        "Hello! My name’s Mark. What prompted you to seek help with your debts today?";
+      history = [{ role: "assistant", content: opening }];
+      await saveHistory(sessionId, history);
+      return res.status(200).json({ reply: opening, sessionId });
     }
 
-    // Load session (history + current step)
-    const row = await getSession(sessionId);
+    // record user msg
+    history.push({ role: "user", content: userMessage });
 
-    // INIT starts the flow (only once)
-    if (userMessage.toUpperCase() === "INIT") {
-      row.messages = [];
-      row.step_index = 0;
+    // current step index = how many assistant prompts already sent
+    const currentStepIndex = history.filter(m => m.role === "assistant").length - 1; // -1 because we pushed user
+    const step = fullScriptLogic.steps[currentStepIndex] || fullScriptLogic.steps.at(-1)!;
 
-      const first = fullScriptLogic.steps?.[0]?.prompt ?? "Hello! My name’s Mark. How can I help today?";
-      row.messages.push({ role: "assistant", content: first });
-      await saveSession(row);
-      return res.status(200).json({ reply: first, sessionId });
+    const expected = (step.keywords || []).map((k: string) => k.toLowerCase());
+    const lower = normalize(userMessage);
+
+    // creditor detection + amount detection for early steps
+    const foundCreditors = detectCreditors(userMessage);
+    const looksLikeAmount = NUMERIC_RE.test(userMessage) || /\b(thousand|hundred|k)\b/i.test(userMessage);
+
+    let matched = false;
+
+    // If this is one of the early information-gathering steps, allow creditor/amount to count as a match.
+    if (currentStepIndex <= 2) {
+      matched =
+        expected.some((k: string) => lower.includes(k)) ||
+        foundCreditors.length > 0 ||
+        looksLikeAmount;
+    } else {
+      matched = expected.length === 0 || expected.some((k: string) => lower.includes(k));
     }
 
-    // Append user message
-    row.messages.push({ role: "user", content: userMessage });
+    let reply: string;
 
-    const steps = fullScriptLogic.steps || [];
-    const currentIdx = Math.min(row.step_index, Math.max(0, steps.length - 1));
-    const currentStep = steps[currentIdx] || { prompt: "Let’s keep going…", keywords: [] as string[] };
+    if (matched) {
+      // progress to next step
+      const nextIdx = Math.min(currentStepIndex + 1, fullScriptLogic.steps.length - 1);
+      const nextPrompt = fullScriptLogic.steps[nextIdx]?.prompt || step.prompt;
 
-    // Decide whether to advance
-    const s = scoreMatch(userMessage, (currentStep as any).keywords || []);
-    const shouldAdvance = s > 0 || ((currentStep as any).keywords || []).length === 0;
-
-    if (shouldAdvance && row.step_index < steps.length - 1) {
-      // advance to next step
-      row.step_index += 1;
-      const nextPrompt = steps[row.step_index]?.prompt || "Let’s continue…";
-      row.messages.push({ role: "assistant", content: nextPrompt });
-      await saveSession(row);
-      return res.status(200).json({ reply: nextPrompt, sessionId });
+      if (foundCreditors.length > 0 && currentStepIndex <= 2) {
+        const ack = `Thanks — I’ve noted ${foundCreditors.slice(0, 3).join(", ")}.`;
+        reply = `${ack} ${nextPrompt}`.trim();
+      } else if (looksLikeAmount && currentStepIndex <= 2) {
+        reply = `Thanks for confirming the amount. ${nextPrompt}`;
+      } else {
+        reply = nextPrompt;
+      }
+    } else {
+      // gentle nudge with the SAME step (no loop back to intro)
+      reply =
+        step.prompt +
+        (currentStepIndex <= 2
+          ? " (It’s okay to just name who you owe — e.g., Barclaycard, Capital One — or a rough total like £5,000.)"
+          : "");
     }
 
-    // If we’re at the last step, just restate the final instruction
-    if (row.step_index >= steps.length - 1) {
-      const endPrompt = steps[steps.length - 1]?.prompt || "Thanks — I’m here if you need anything else.";
-      row.messages.push({ role: "assistant", content: endPrompt });
-      await saveSession(row);
-      return res.status(200).json({ reply: endPrompt, sessionId });
-    }
+    history.push({ role: "assistant", content: reply });
+    await saveHistory(sessionId, history);
 
-    // If we didn’t advance, provide a gentle nudge (not humor by default)
-    const nudge =
-      currentStep.prompt ||
-      "Thanks — just to keep us moving, could you answer the previous question so I can help properly?";
-    row.messages.push({ role: "assistant", content: nudge });
-    await saveSession(row);
-    return res.status(200).json({ reply: nudge, sessionId });
-  } catch (err: any) {
-    console.error("API /api/chat error:", err?.message || err);
-    return res
-      .status(500)
-      .json({ reply: "Sorry, something went wrong on my end. Please try again.", sessionId: req.body?.sessionId });
+    // fire-and-forget telemetry (optional; ignore if you haven’t added the table)
+    fetch(process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}/api/telemetry` : "http://localhost:3000/api/telemetry", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionId,
+        stepIndex: Math.min(currentStepIndex + (matched ? 1 : 0), fullScriptLogic.steps.length - 1),
+        matched,
+        foundCreditors,
+        ts: Date.now()
+      })
+    }).catch(() => {});
+
+    return res.status(200).json({ reply, sessionId });
+  } catch (e: any) {
+    console.error("chat.ts error:", e?.message || e);
+    return res.status(500).json({ reply: "Sorry, something went wrong on my end. Please try again." });
   }
 }
