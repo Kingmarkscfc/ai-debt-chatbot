@@ -1,55 +1,56 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { v4 as uuidv4 } from "uuid";
+import { scripts, Lang } from "@/utils/i18n";
 
-const STEPS: string[] = [
-  "Hello! My name’s Mark. What prompted you to seek help with your debts today?",
-  "Thanks for sharing. Roughly how much do you owe in total across all debts?",
-  "Is this with at least two different unsecured creditors (like credit cards or loans)?",
-  "Are any debts joint or guaranteed by someone else (or are you a guarantor)?",
-  "Let’s walk through your options briefly (self-help, consolidation, DRO, bankruptcy, DMP, IVA). Which would you like to hear first?",
-  "Based on what you’ve said, I can help you prepare the next steps. Are you ready to upload proof of income, debts, and ID now?",
-  "Great — you can upload your documents securely via your online portal. I’m here if you need anything else!"
-];
+const HUMOUR = {
+  en: [
+    "That’s a plot twist I didn’t see coming… but let’s stick to your debts, yeah?",
+    "I’m flattered — but let’s focus on getting you debt-free.",
+    "If the aliens return your payslip, upload it — meanwhile, let’s keep going.",
+  ],
+  es: [
+    "Vaya giro… pero volvamos a tus deudas, ¿sí?",
+    "Me halaga, pero enfoquémonos en dejarte sin deudas.",
+    "Si los alienígenas devuelven tu nómina, súbela; seguimos mientras tanto.",
+  ],
+  fr: [
+    "Surprenant… mais revenons à vos dettes, d’accord ?",
+    "Flatté, mais concentrons-nous sur l’objectif : vous libérer des dettes.",
+    "Si les aliens rendent votre fiche de paie, envoyez-la — on continue.",
+  ],
+};
 
-const HUMOUR = [
-  "That’s a plot twist I didn’t see coming… but let’s stick to your debts, yeah?",
-  "I’m flattered you think I can do that — but let’s focus on getting you debt-free!",
-  "If the aliens return your payslip, feel free to upload it later — for now, let’s keep going."
-];
+type Session = { idx: number; lang: Lang };
+const sessions = new Map<string, Session>();
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method !== "POST") return res.status(405).json({ reply: "Method not allowed" });
+export default function handler(req: NextApiRequest, res: NextApiResponse) {
+  if (req.method !== "POST") return res.status(405).end();
 
-  try {
-    const message = (req.body?.message ?? "").toString().trim();
-    let sessionId = (req.body?.sessionId ?? "").toString().trim();
-    let stepIndex = Number(req.body?.stepIndex);
+  const { message, sessionId: raw, init, lang } = req.body || {};
+  const sessionId: string = typeof raw === "string" && raw ? raw : Math.random().toString(36).slice(2);
+  const langSafe: Lang = (["en","es","fr"].includes(lang) ? lang : "en") as Lang;
 
-    if (!Number.isFinite(stepIndex) || stepIndex < 0) stepIndex = 0;
-    if (!sessionId) sessionId = uuidv4();
+  // start / re-init
+  if (init || !sessions.has(sessionId)) {
+    sessions.set(sessionId, { idx: 0, lang: langSafe });
+    return res.status(200).json({ reply: scripts[langSafe].steps[0].prompt, sessionId });
+  }
 
-    // Choose the prompt for THIS turn
-    const safeIdx = Math.min(stepIndex, STEPS.length - 1);
-    let reply = STEPS[safeIdx];
+  const s = sessions.get(sessionId)!;
+  if (lang && s.lang !== lang) s.lang = langSafe; // allow language switch mid-session
 
-    // Very light off-topic detection. We still progress either way.
-    const lower = message.toLowerCase();
-    const offTopic =
-      ["weather", "football", "recipe", "joke"].some((k) => lower.includes(k)) ||
-      lower.length < 2;
+  const steps = scripts[s.lang].steps;
+  const userText: string = (message || "").toString().trim();
+  if (!userText) return res.status(200).json({ reply: steps[s.idx].prompt, sessionId });
 
-    if (offTopic) {
-      reply = `${HUMOUR[Math.floor(Math.random() * HUMOUR.length)]} ${reply}`;
-    }
+  const kws = (steps[s.idx].keywords || []).map((k) => k.toLowerCase());
+  const matched = kws.length === 0 || kws.some((k) => userText.toLowerCase().includes(k));
 
-    // Compute next step index for the NEXT user turn
-    const nextStepIndex = Math.min(safeIdx + 1, STEPS.length - 1);
-
-    return res.status(200).json({ reply, sessionId, nextStepIndex });
-  } catch (e) {
-    console.error("chat error:", e);
-    return res
-      .status(500)
-      .json({ reply: "Sorry, something went wrong on my end. Please try again." });
+  if (matched) {
+    s.idx = Math.min(s.idx + 1, steps.length - 1);
+    sessions.set(sessionId, s);
+    return res.status(200).json({ reply: steps[s.idx].prompt, sessionId });
+  } else {
+    const h = HUMOUR[s.lang];
+    return res.status(200).json({ reply: h[Math.floor(Math.random() * h.length)], sessionId });
   }
 }

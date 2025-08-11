@@ -1,99 +1,111 @@
 import Head from "next/head";
 import { useEffect, useRef, useState } from "react";
+import "../styles/globals.css";
+import { ui } from "@/utils/i18n";
 
 type Msg = { role: "user" | "assistant"; content: string };
+type Lang = "en" | "es" | "fr";
 
-function getSessionId(): string {
+function getOrCreateSessionId(): string {
   if (typeof window === "undefined") return Math.random().toString(36).slice(2);
-  let sid = window.localStorage.getItem("da_session_id");
+  let sid = localStorage.getItem("da_session_id");
   if (!sid) {
     sid = Math.random().toString(36).slice(2);
-    window.localStorage.setItem("da_session_id", sid);
+    localStorage.setItem("da_session_id", sid);
   }
   return sid;
 }
 
-function getStepIndex(): number {
-  if (typeof window === "undefined") return 0;
-  const raw = window.localStorage.getItem("da_step_index");
-  const n = raw ? parseInt(raw, 10) : 0;
-  return Number.isFinite(n) ? n : 0;
-}
-
-function setStepIndex(n: number) {
-  if (typeof window !== "undefined") {
-    window.localStorage.setItem("da_step_index", String(n));
-  }
-}
+const EMOJIS = ["🙂","👍","🙏","💪","✅","📝","📎","📄","📤","💬","🎯","✨"];
 
 export default function Home() {
-  const [sessionId, setSessionId] = useState<string>("");
-  const [stepIndex, setStepIdx] = useState<number>(0);
+  const [theme, setTheme] = useState<"light" | "dark">("light");
+  const [lang, setLang] = useState<Lang>("en");
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
-  const [dark, setDark] = useState(false);
+  const [sessionId, setSessionId] = useState<string>("");
+  const [uploads, setUploads] = useState<{name:string; url:string}[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // init
   useEffect(() => {
-    const sid = getSessionId();
-    const idx = getStepIndex();
+    const sid = getOrCreateSessionId();
     setSessionId(sid);
-    setStepIdx(idx);
-
-    // Show the intro only once (if first load)
-    const intro =
-      "Hello! My name’s Mark. What prompted you to seek help with your debts today?";
-    setMessages([{ role: "assistant", content: intro }]);
-  }, []);
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
-
-  const handleSend = async () => {
-    const text = input.trim();
-    if (!text) return;
-
-    setMessages((prev) => [...prev, { role: "user", content: text }]);
-    setInput("");
-    setIsTyping(true);
-
-    try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, sessionId, stepIndex }),
+    (async () => {
+      setIsTyping(true);
+      const res = await fetch("/api/chat",{
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({ init:true, sessionId:sid, lang })
       });
       const data = await res.json();
-
-      if (data?.sessionId && data.sessionId !== sessionId) setSessionId(data.sessionId);
-
-      const reply =
-        typeof data?.reply === "string"
-          ? data.reply
-          : "Sorry, something went wrong — please try again.";
-
-      // update local step index from server result
-      const nextIdx =
-        typeof data?.nextStepIndex === "number" ? data.nextStepIndex : stepIndex;
-
-      setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
-      setStepIdx(nextIdx);
-      setStepIndex(nextIdx); // persist in localStorage
-    } catch {
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: "Network hiccup — please try again." },
-      ]);
-    } finally {
+      setMessages([{ role:"assistant", content:data.reply }]);
       setIsTyping(false);
-    }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[]);
+
+  useEffect(() => { bottomRef.current?.scrollIntoView({behavior:"smooth"}); }, [messages]);
+
+  const toggleTheme = () => setTheme(t=>t==="light"?"dark":"light");
+
+  const handleSend = async () => {
+    const userText = input.trim();
+    if (!userText) return;
+
+    setMessages(m=>[...m,{role:"user",content:userText}]);
+    setInput("");
+    setIsTyping(true);
+    const res = await fetch("/api/chat",{
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ message:userText, sessionId, lang })
+    });
+    const data = await res.json();
+    setMessages(m=>[...m,{role:"assistant",content:data.reply}]);
+    setIsTyping(false);
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") handleSend();
+  const handleLang = async (next:Lang) => {
+    setLang(next);
+    // gently re-prompt current step in new language
+    setIsTyping(true);
+    const res = await fetch("/api/chat",{
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ message:"", sessionId, lang:next })
+    });
+    const data = await res.json();
+    setMessages(m=>[...m,{role:"assistant",content:data.reply}]);
+    setIsTyping(false);
+  };
+
+  const pickEmoji = (e: string) => setInput(v => v + e);
+
+  const onUpload = async (file: File) => {
+    if (!file) return;
+    const okTypes = ["application/pdf","image/png","image/jpeg"];
+    if (!okTypes.includes(file.type)) {
+      alert("Please upload PDF / PNG / JPG");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const base64 = (reader.result as string).split(",")[1];
+      const res = await fetch("/api/upload",{
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({ name:file.name, contentBase64: base64, sessionId })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setUploads(u=>[...u,{name:file.name, url:data.url}]);
+        setMessages(m=>[...m,{role:"assistant",content:"Thanks — I’ve received your document."}]);
+      } else {
+        alert("Upload failed: " + (data.error||""));
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   return (
@@ -103,214 +115,69 @@ export default function Home() {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
       </Head>
 
-      <div className={`app ${dark ? "dark" : ""}`}>
-        <main className="viewport">
-          <div className="card">
-            {/* Header */}
-            <div className="topbar">
-              <div className="brand">
-                <span className="dot" />
-                <h1>Debt Advisor</h1>
-              </div>
-              <div className="actions">
-                <select defaultValue="English" aria-label="Language">
-                  <option>English</option>
-                  <option>Español</option>
-                  <option>Français</option>
-                  <option>Deutsch</option>
-                </select>
-                <button onClick={() => setDark((d) => !d)}>
-                  {dark ? "Light" : "Dark"} Mode
-                </button>
-              </div>
-            </div>
-
-            {/* Messages */}
-            <div className="messages">
-              {messages.map((m, i) => (
-                <div
-                  key={i}
-                  className={`row ${m.role === "user" ? "right" : "left"}`}
-                >
-                  <div className={`bubble ${m.role}`}>{m.content}</div>
-                </div>
-              ))}
-              {isTyping && (
-                <div className="typing">Mark is typing…</div>
-              )}
-              <div ref={bottomRef} />
-            </div>
-
-            {/* Input */}
-            <div className="inputbar">
-              <input
-                type="text"
-                placeholder="Type your message…"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-              />
-              <button onClick={handleSend}>Send</button>
+      <div className={`main ${theme==="dark"?"dark":""}`}>
+        <div className="card">
+          {/* Top bar */}
+          <div className="topbar">
+            <h1>{ui.title[lang]}</h1>
+            <div className="row">
+              <label className="small">{ui.language[lang]}</label>
+              <select className="select" value={lang} onChange={(e)=>handleLang(e.target.value as Lang)}>
+                <option value="en">English</option>
+                <option value="es">Español</option>
+                <option value="fr">Français</option>
+              </select>
+              <button className="btn" onClick={toggleTheme}>
+                {theme==="light"?ui.dark[lang]:ui.light[lang]} Mode
+              </button>
             </div>
           </div>
-        </main>
-      </div>
 
-      {/* styled-jsx so you don't need Tailwind or external CSS */}
-      <style jsx>{`
-        .app {
-          background: #f3f4f6;
-          color: #111827;
-          min-height: 100vh;
-        }
-        .app.dark {
-          background: #111827;
-          color: #f9fafb;
-        }
-        .viewport {
-          min-height: 100vh;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          padding: 24px;
-        }
-        .card {
-          width: 100%;
-          max-width: 720px;
-          border-radius: 16px;
-          background: #ffffff;
-          border: 1px solid #e5e7eb;
-          overflow: hidden;
-          box-shadow: 0 8px 24px rgba(0,0,0,0.06);
-        }
-        .app.dark .card {
-          background: #1f2937;
-          border-color: #374151;
-        }
-        .topbar {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 12px 16px;
-          border-bottom: 1px solid #e5e7eb;
-        }
-        .app.dark .topbar {
-          border-bottom-color: #374151;
-        }
-        .brand {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-        }
-        .brand h1 {
-          font-size: 16px;
-          margin: 0;
-          font-weight: 600;
-        }
-        .dot {
-          width: 10px;
-          height: 10px;
-          background: #10b981;
-          border-radius: 999px;
-          display: inline-block;
-        }
-        .actions {
-          display: flex;
-          gap: 8px;
-          align-items: center;
-        }
-        select, .actions button {
-          font-size: 14px;
-          border-radius: 6px;
-          border: 1px solid #d1d5db;
-          background: transparent;
-          color: inherit;
-          padding: 6px 10px;
-        }
-        .app.dark select, .app.dark .actions button {
-          border-color: #4b5563;
-        }
-        .actions button {
-          background: #2563eb;
-          color: #fff;
-          border: none;
-        }
-        .messages {
-          max-height: 65vh;
-          min-height: 40vh;
-          overflow-y: auto;
-          padding: 16px;
-          display: flex;
-          flex-direction: column;
-          gap: 10px;
-        }
-        .row {
-          display: flex;
-        }
-        .row.left {
-          justify-content: flex-start;
-        }
-        .row.right {
-          justify-content: flex-end;
-        }
-        .bubble {
-          max-width: 80%;
-          padding: 10px 12px;
-          border-radius: 16px;
-          font-size: 14px;
-          line-height: 1.4;
-          word-break: break-word;
-        }
-        .bubble.assistant {
-          background: #e5e7eb;
-          color: #111827;
-        }
-        .app.dark .bubble.assistant {
-          background: #374151;
-          color: #f9fafb;
-        }
-        .bubble.user {
-          background: #16a34a;
-          color: white;
-        }
-        .typing {
-          font-size: 13px;
-          color: #6b7280;
-          font-style: italic;
-          padding: 0 4px;
-        }
-        .app.dark .typing {
-          color: #9ca3af;
-        }
-        .inputbar {
-          display: flex;
-          gap: 8px;
-          padding: 12px;
-          border-top: 1px solid #e5e7eb;
-        }
-        .app.dark .inputbar {
-          border-top-color: #374151;
-        }
-        .inputbar input {
-          flex: 1;
-          padding: 10px;
-          border-radius: 8px;
-          border: 1px solid #d1d5db;
-          background: transparent;
-          color: inherit;
-        }
-        .app.dark .inputbar input {
-          border-color: #4b5563;
-        }
-        .inputbar button {
-          padding: 10px 16px;
-          background: #16a34a;
-          color: #fff;
-          border: none;
-          border-radius: 8px;
-          cursor: pointer;
-        }
-      `}</style>
+          {/* Chat window */}
+          <div className="chat">
+            {messages.map((m,i)=>(
+              <div key={i} className={`msg ${m.role}`}>
+                <div className="bubble">{m.content}</div>
+              </div>
+            ))}
+            {isTyping && <div className="small">Mark is typing…</div>}
+            <div ref={bottomRef}/>
+          </div>
+
+          {/* Upload bar */}
+          <div className="uploadbar">
+            <label className="small">{ui.uploadLabel[lang]}</label>
+            <input
+              type="file"
+              accept=".pdf,.png,.jpg,.jpeg"
+              onChange={(e)=> e.target.files && onUpload(e.target.files[0])}
+            />
+            {uploads.map((f,i)=>(
+              <a key={i} href={f.url} target="_blank" rel="noreferrer" className="filepill">{f.name}</a>
+            ))}
+          </div>
+
+          {/* Input row */}
+          <div className="inputbar">
+            <button className="emojiBtn" title="Emoji">
+              <span style={{display:"flex", gap:6}}>
+                {EMOJIS.slice(0,6).map(e => (
+                  <span key={e} style={{cursor:"pointer"}} onClick={()=>pickEmoji(e)}>{e}</span>
+                ))}
+              </span>
+            </button>
+            <input
+              className="input"
+              placeholder={ui.prompt[lang]}
+              value={input}
+              onChange={(e)=>setInput(e.target.value)}
+              onKeyDown={(e)=> e.key==="Enter" && handleSend()}
+              style={{flex:1}}
+            />
+            <button className="btn" onClick={handleSend}>{ui.send[lang]}</button>
+          </div>
+        </div>
+      </div>
     </>
   );
 }
