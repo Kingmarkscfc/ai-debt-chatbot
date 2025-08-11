@@ -1,10 +1,14 @@
 import Head from "next/head";
-import { useEffect, useRef, useState } from "react";
-import "../styles/globals.css";
-import { ui } from "@/utils/i18n";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-type Msg = { role: "user" | "assistant"; content: string };
-type Lang = "en" | "es" | "fr";
+type ChatMsg = { role: "user" | "assistant" | "system"; content: string };
+type ChatResponse = {
+  reply: string;
+  sessionId: string;
+  stepIndex?: number;
+  totalSteps?: number;
+  quickReplies?: string[];
+};
 
 function getOrCreateSessionId(): string {
   if (typeof window === "undefined") return Math.random().toString(36).slice(2);
@@ -16,97 +20,135 @@ function getOrCreateSessionId(): string {
   return sid;
 }
 
-const EMOJIS = ["🙂","👍","🙏","💪","✅","📝","📎","📄","📤","💬","🎯","✨"];
-
 export default function Home() {
   const [theme, setTheme] = useState<"light" | "dark">("light");
-  const [lang, setLang] = useState<Lang>("en");
-  const [messages, setMessages] = useState<Msg[]>([]);
+  const [lang, setLang] = useState<"en" | "es" | "fr" | "de" | "pl" | "ro">("en");
+  const [messages, setMessages] = useState<ChatMsg[]>([
+    { role: "assistant", content: "Hello! My name’s Mark. What prompted you to seek help with your debts today?" },
+  ]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
+  const [quickReplies, setQuickReplies] = useState<string[]>([]);
   const [sessionId, setSessionId] = useState<string>("");
-  const [uploads, setUploads] = useState<{name:string; url:string}[]>([]);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const [stepIndex, setStepIndex] = useState<number>(0);
+  const [totalSteps, setTotalSteps] = useState<number>(12);
+  const [speaking, setSpeaking] = useState<boolean>(false);
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const chatScrollRef = useRef<HTMLDivElement>(null);
+
+  // Init session id once
   useEffect(() => {
-    const sid = getOrCreateSessionId();
-    setSessionId(sid);
-    (async () => {
-      setIsTyping(true);
-      const res = await fetch("/api/chat",{
-        method:"POST",
-        headers:{ "Content-Type":"application/json" },
-        body: JSON.stringify({ init:true, sessionId:sid, lang })
-      });
-      const data = await res.json();
-      setMessages([{ role:"assistant", content:data.reply }]);
-      setIsTyping(false);
-    })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[]);
+    setSessionId(getOrCreateSessionId());
+  }, []);
 
-  useEffect(() => { bottomRef.current?.scrollIntoView({behavior:"smooth"}); }, [messages]);
+  // Auto scroll
+  useEffect(() => {
+    chatScrollRef.current?.scrollTo({ top: chatScrollRef.current.scrollHeight, behavior: "smooth" });
+  }, [messages, isTyping]);
 
-  const toggleTheme = () => setTheme(t=>t==="light"?"dark":"light");
+  // Voice: speak last assistant message if enabled
+  useEffect(() => {
+    if (!speaking) return;
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    const last = [...messages].reverse().find((m) => m.role === "assistant");
+    if (!last) return;
+    const utter = new SpeechSynthesisUtterance(last.content.replace(/<\/?mark>/g, ""));
+    utter.rate = 1;
+    utter.pitch = 1;
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utter);
+  }, [messages, speaking]);
 
-  const handleSend = async () => {
-    const userText = input.trim();
-    if (!userText) return;
+  const progressPct = useMemo(() => {
+    const total = totalSteps || 12;
+    const i = stepIndex || 0;
+    const pct = Math.max(0, Math.min(100, Math.round(((i + 1) / total) * 100)));
+    return pct;
+  }, [stepIndex, totalSteps]);
 
-    setMessages(m=>[...m,{role:"user",content:userText}]);
+  const sendMessage = async (text: string) => {
+    if (!text.trim()) return;
+    const userMessage = text.trim();
+    setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
     setInput("");
     setIsTyping(true);
-    const res = await fetch("/api/chat",{
-      method:"POST",
-      headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ message:userText, sessionId, lang })
+
+    // call chat API
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: userMessage, sessionId, lang }),
     });
-    const data = await res.json();
-    setMessages(m=>[...m,{role:"assistant",content:data.reply}]);
+    const data: ChatResponse = await res.json();
+
     setIsTyping(false);
+    if (data.sessionId) setSessionId(data.sessionId);
+    if (typeof data.stepIndex === "number") setStepIndex(data.stepIndex);
+    if (typeof data.totalSteps === "number") setTotalSteps(data.totalSteps);
+    setQuickReplies(data.quickReplies || []);
+    setMessages((prev) => [...prev, { role: "assistant", content: highlightKeywords(data.reply) }]);
   };
 
-  const handleLang = async (next:Lang) => {
-    setLang(next);
-    // gently re-prompt current step in new language
-    setIsTyping(true);
-    const res = await fetch("/api/chat",{
-      method:"POST",
-      headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ message:"", sessionId, lang:next })
-    });
-    const data = await res.json();
-    setMessages(m=>[...m,{role:"assistant",content:data.reply}]);
-    setIsTyping(false);
+  const handleSend = () => sendMessage(input);
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") handleSend();
   };
 
-  const pickEmoji = (e: string) => setInput(v => v + e);
+  const toggleTheme = () => setTheme((t) => (t === "light" ? "dark" : "light"));
+  const toggleVoice = () => setSpeaking((s) => !s);
 
-  const onUpload = async (file: File) => {
+  // Upload doc
+  const handleUploadClick = () => fileInputRef.current?.click();
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
     if (!file) return;
-    const okTypes = ["application/pdf","image/png","image/jpeg"];
-    if (!okTypes.includes(file.type)) {
-      alert("Please upload PDF / PNG / JPG");
-      return;
+    // show a local preview as a message
+    if (file.type.startsWith("image/")) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        setMessages((prev) => [
+          ...prev,
+          { role: "user", content: `(uploaded image) ` + `<img src="${reader.result}" class="preview-img" alt="upload" />` },
+        ]);
+      };
+      reader.readAsDataURL(file);
+    } else {
+      setMessages((prev) => [...prev, { role: "user", content: `📎 Uploaded: ${file.name}` }]);
     }
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const base64 = (reader.result as string).split(",")[1];
-      const res = await fetch("/api/upload",{
-        method:"POST",
-        headers:{ "Content-Type":"application/json" },
-        body: JSON.stringify({ name:file.name, contentBase64: base64, sessionId })
-      });
-      const data = await res.json();
-      if (data.ok) {
-        setUploads(u=>[...u,{name:file.name, url:data.url}]);
-        setMessages(m=>[...m,{role:"assistant",content:"Thanks — I’ve received your document."}]);
-      } else {
-        alert("Upload failed: " + (data.error||""));
-      }
-    };
-    reader.readAsDataURL(file);
+
+    const form = new FormData();
+    form.append("file", file);
+    const resp = await fetch("/api/upload", { method: "POST", body: form });
+    const data = await resp.json();
+    if (data.url) {
+      setMessages((prev) => [...prev, { role: "assistant", content: `✅ Received your document. Stored as: ${data.url}` }]);
+    } else {
+      setMessages((prev) => [...prev, { role: "assistant", content: `⚠️ Upload failed. Please try again.` }]);
+    }
   };
+
+  // Emoji reaction to last assistant msg — purely visual “wow factor”
+  const reactToLast = (emoji: string) => {
+    setMessages((prev) => {
+      const idx = [...prev].map((m) => m.role).lastIndexOf("assistant");
+      if (idx === -1) return prev;
+      const clone = [...prev];
+      clone[idx] = { ...clone[idx], content: `${clone[idx].content} <span class="emoji-react">${emoji}</span>` };
+      return clone;
+    });
+  };
+
+  // Keyword highlight for IVA/DMP etc.
+  function highlightKeywords(s: string) {
+    const terms = ["IVA", "DMP", "bankruptcy", "Debt Relief Order", "DRO", "bailiffs", "credit file"];
+    let out = s;
+    terms.forEach((t) => {
+      const re = new RegExp(`\\b(${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})\\b`, "gi");
+      out = out.replace(re, "<mark>$1</mark>");
+    });
+    return out;
+  }
 
   return (
     <>
@@ -115,69 +157,110 @@ export default function Home() {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
       </Head>
 
-      <div className={`main ${theme==="dark"?"dark":""}`}>
-        <div className="card">
-          {/* Top bar */}
-          <div className="topbar">
-            <h1>{ui.title[lang]}</h1>
-            <div className="row">
-              <label className="small">{ui.language[lang]}</label>
-              <select className="select" value={lang} onChange={(e)=>handleLang(e.target.value as Lang)}>
-                <option value="en">English</option>
-                <option value="es">Español</option>
-                <option value="fr">Français</option>
-              </select>
-              <button className="btn" onClick={toggleTheme}>
-                {theme==="light"?ui.dark[lang]:ui.light[lang]} Mode
-              </button>
-            </div>
-          </div>
-
-          {/* Chat window */}
-          <div className="chat">
-            {messages.map((m,i)=>(
-              <div key={i} className={`msg ${m.role}`}>
-                <div className="bubble">{m.content}</div>
-              </div>
-            ))}
-            {isTyping && <div className="small">Mark is typing…</div>}
-            <div ref={bottomRef}/>
-          </div>
-
-          {/* Upload bar */}
-          <div className="uploadbar">
-            <label className="small">{ui.uploadLabel[lang]}</label>
-            <input
-              type="file"
-              accept=".pdf,.png,.jpg,.jpeg"
-              onChange={(e)=> e.target.files && onUpload(e.target.files[0])}
-            />
-            {uploads.map((f,i)=>(
-              <a key={i} href={f.url} target="_blank" rel="noreferrer" className="filepill">{f.name}</a>
-            ))}
-          </div>
-
-          {/* Input row */}
-          <div className="inputbar">
-            <button className="emojiBtn" title="Emoji">
-              <span style={{display:"flex", gap:6}}>
-                {EMOJIS.slice(0,6).map(e => (
-                  <span key={e} style={{cursor:"pointer"}} onClick={()=>pickEmoji(e)}>{e}</span>
-                ))}
-              </span>
+      <main className={`app-shell ${theme === "dark" ? "theme-dark" : "theme-light"}`}>
+        {/* Top bar */}
+        <header className="topbar">
+          <div className="brand">Debt Advisor</div>
+          <div className="controls">
+            <select
+              className="lang"
+              value={lang}
+              onChange={(e) => setLang(e.target.value as any)}
+              aria-label="Language"
+              title="Language"
+            >
+              <option value="en">English</option>
+              <option value="es">Español</option>
+              <option value="fr">Français</option>
+              <option value="de">Deutsch</option>
+              <option value="pl">Polski</option>
+              <option value="ro">Română</option>
+            </select>
+            <button className="btn" onClick={toggleVoice} title="Toggle voice">
+              {speaking ? "🔊 Voice On" : "🔈 Voice Off"}
             </button>
-            <input
-              className="input"
-              placeholder={ui.prompt[lang]}
-              value={input}
-              onChange={(e)=>setInput(e.target.value)}
-              onKeyDown={(e)=> e.key==="Enter" && handleSend()}
-              style={{flex:1}}
-            />
-            <button className="btn" onClick={handleSend}>{ui.send[lang]}</button>
+            <button className="btn" onClick={toggleTheme} title="Toggle theme">
+              {theme === "light" ? "🌙 Dark" : "☀️ Light"}
+            </button>
+          </div>
+        </header>
+
+        {/* Progress */}
+        <div className="progress">
+          <div className="progress-label">
+            Journey progress: <strong>{progressPct}%</strong>
+          </div>
+          <div className="progress-bar">
+            <div className="progress-fill" style={{ width: `${progressPct}%` }} />
+          </div>
+          <div className="badges">
+            {progressPct >= 25 && <span className="badge">✅ Eligibility started</span>}
+            {progressPct >= 50 && <span className="badge">🧭 Options reviewed</span>}
+            {progressPct >= 75 && <span className="badge">📄 Docs stage</span>}
+            {progressPct >= 95 && <span className="badge">🎉 Almost done</span>}
           </div>
         </div>
-      </div>
+
+        {/* Chat window */}
+        <section className="chat-card">
+          <div className="chat-scroll" ref={chatScrollRef}>
+            {messages.map((m, i) => (
+              <div key={i} className={`row ${m.role}`}>
+                <div
+                  className={`bubble ${m.role}`}
+                  dangerouslySetInnerHTML={{ __html: m.content }}
+                />
+              </div>
+            ))}
+            {isTyping && (
+              <div className="row assistant">
+                <div className="bubble assistant typing">
+                  <span className="dot" />
+                  <span className="dot" />
+                  <span className="dot" />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Quick replies */}
+          {!!quickReplies.length && (
+            <div className="chips">
+              {quickReplies.slice(0, 6).map((q, i) => (
+                <button key={i} className="chip" onClick={() => sendMessage(q)}>
+                  {q}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Input + actions */}
+          <div className="composer">
+            <div className="left-actions">
+              <button className="icon-btn" onClick={() => reactToLast("👍")} title="React thumbs up">👍</button>
+              <button className="icon-btn" onClick={() => reactToLast("❤️")} title="React heart">❤️</button>
+              <button className="icon-btn" onClick={() => reactToLast("😮")} title="React wow">😮</button>
+              <button className="icon-btn" onClick={handleUploadClick} title="Upload document">📎</button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="hidden-file"
+                onChange={handleFileChange}
+                accept="image/*,.pdf,.jpg,.jpeg,.png"
+              />
+            </div>
+
+            <input
+              className="composer-input"
+              placeholder="Type your message…"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+            />
+            <button className="send-btn" onClick={handleSend}>Send</button>
+          </div>
+        </section>
+      </main>
     </>
   );
 }
