@@ -1,83 +1,134 @@
 {
   "steps": [
     {
-      "id": "start",
       "prompt": "Hello! My name’s Mark. What prompted you to seek help with your debts today?",
-      "keywords": ["hello", "hi", "help", "debt", "debts", "struggling", "credit card", "loan", "overdraft", "bailiff", "bailiffs", "interest", "arrears", "collection", "collector", "ccj", "default", "court"]
+      "keywords": [
+        "debts",
+        "credit card",
+        "loan",
+        "arrears",
+        "overdraft",
+        "store card",
+        "catalogue",
+        "ccj",
+        "bailiff",
+        "mortgage",
+        "rent"
+      ]
     },
     {
-      "id": "main_concern",
       "prompt": "Thank you for sharing that. What would you say is your main concern right now—bailiffs, interest building up, missed payments, or court action?",
-      "keywords": ["bailiff", "bailiffs", "interest", "charges", "court", "ccj", "missed", "late", "payment", "harassment", "letters", "calls", "defaults"]
+      "keywords": [
+        "bailiff",
+        "interest",
+        "missed payment",
+        "court",
+        "repossession",
+        "ccj",
+        "charging order",
+        "warrant"
+      ]
     },
     {
-      "id": "total_amount",
-      "prompt": "Got it. Roughly how much do you owe in total across all debts?",
-      "keywords": ["£", "pounds", "k", "thousand", "hundred", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
+      "prompt": "Thanks for sharing. Roughly how much do you owe in total across all debts?",
+      "keywords": [
+        "£",
+        "pound",
+        "thousand",
+        "hundred",
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9"
+      ]
     },
     {
-      "id": "creditors_count",
-      "prompt": "Thanks. Is that with at least two different unsecured creditors—like credit cards, loans, or catalogues?",
-      "keywords": ["yes", "yeah", "yep", "two", "2", "three", "3", "multiple", "several", "barclaycard", "mbna", "capital one", "natwest", "lloyds", "hsbc", "santander", "amex"]
+      "prompt": "Are any of your debts in joint names with anybody else?",
+      "keywords": [
+        "yes",
+        "no",
+        "joint",
+        "partner",
+        "husband",
+        "wife",
+        "spouse"
+      ]
     },
     {
-      "id": "joint_guarantor",
-      "prompt": "Are any debts in joint names, or does any account have a guarantor? And are you a guarantor for anyone else?",
-      "keywords": ["yes", "no", "joint", "guarantor", "partner", "spouse", "wife", "husband", "co-signed"]
+      "prompt": "Is anybody a guarantor for any of your debts or are you a guarantor for anyone else?",
+      "keywords": [
+        "yes",
+        "no",
+        "guarantor"
+      ]
     },
     {
-      "id": "income_expense_intro",
-      "prompt": "To make sure advice fits, I’ll ask a couple of quick questions about your situation. Are you employed, self-employed, or not working at the moment?",
-      "keywords": ["employed", "self", "self-employed", "business", "not working", "unemployed", "benefits", "part-time", "full-time", "contract", "zero hours"]
+      "prompt": "Got it. What is your current monthly income after tax?",
+      "keywords": [
+        "£",
+        "pound",
+        "salary",
+        "wage",
+        "income",
+        "earn",
+        "per month",
+        "weekly",
+        "yearly"
+      ]
     },
     {
-      "id": "housing",
-      "prompt": "Thanks. What’s your housing situation—renting, mortgaged homeowner, or living with family?",
-      "keywords": ["rent", "renting", "mortgage", "mortgaged", "homeowner", "council", "housing association", "family", "parents", "with parents"]
+      "prompt": "Thank you. And roughly what are your total monthly household expenses?",
+      "keywords": [
+        "£",
+        "pound",
+        "rent",
+        "mortgage",
+        "bills",
+        "food",
+        "council tax",
+        "utilities"
+      ]
     },
     {
-      "id": "vulnerability_check",
-      "prompt": "Do you have any health or wellbeing factors you’d like me to be mindful of? (It just helps me support you better.)",
-      "keywords": ["yes", "no", "anxiety", "depression", "adhd", "autism", "bereavement", "illness", "disability", "none", "n/a"]
+      "prompt": "Understood. Are you currently up to date with your priority bills like rent, mortgage, and council tax?",
+      "keywords": [
+        "yes",
+        "no",
+        "arrears",
+        "behind",
+        "up to date"
+      ]
     },
     {
-      "id": "options_overview",
-      "prompt": "Thanks—based on what you’ve said, I’ll outline the main options: Self-help, Debt Management Plan (DMP), Individual Voluntary Arrangement (IVA), Debt Relief Order (DRO), and Bankruptcy. I’ll explain each briefly so you know the pros and cons. Ready to continue?",
-      "keywords": ["yes", "yeah", "ok", "okay", "ready", "go on", "continue", "sure"]
+      "prompt": "Thanks for clarifying. Have you received any default notices, court claims, or bailiff letters recently?",
+      "keywords": [
+        "yes",
+        "no",
+        "default",
+        "court",
+        "bailiff",
+        "ccj",
+        "letter"
+      ]
     },
     {
-      "id": "self_help",
-      "prompt": "Self-help: you negotiate with creditors yourself to reduce payments or freeze interest. It’s flexible but relies on creditors agreeing and staying consistent. Shall I move on?",
-      "keywords": ["yes", "yeah", "ok", "continue", "next", "go on"]
+      "prompt": "Based on what you’ve told me so far, I can explain the different debt solutions available to you in the UK. Shall we go through them one by one?",
+      "keywords": [
+        "yes",
+        "no",
+        "ok",
+        "sure",
+        "go ahead"
+      ]
     },
     {
-      "id": "dmp",
-      "prompt": "Debt Management Plan (DMP): an informal plan where you repay what you owe at an affordable rate. Interest can sometimes be reduced or frozen, but it’s not guaranteed. Creditors can still contact you, though it usually eases. Want the next option?",
-      "keywords": ["yes", "yeah", "ok", "continue", "next", "go on"]
-    },
-    {
-      "id": "iva",
-      "prompt": "IVA: a legally binding plan—usually 5–6 years—where you pay what you can afford and remaining unsecured debt is written off at the end. Interest and charges stop, and creditors are bound by the agreement once approved. Move on to other options?",
-      "keywords": ["yes", "yeah", "ok", "continue", "next", "go on"]
-    },
-    {
-      "id": "dro",
-      "prompt": "DRO: for low income and low assets. Debts are frozen for 12 months and then written off if your situation does not improve. There are strict criteria (debt/asset/income limits). Shall I cover bankruptcy too?",
-      "keywords": ["yes", "yeah", "ok", "continue", "next", "go on"]
-    },
-    {
-      "id": "bankruptcy",
-      "prompt": "Bankruptcy: usually lasts 12 months, but it can affect assets and will impact your credit file for 6 years. For some, it’s the cleanest fresh start; for others, it’s too heavy. Based on your details, IVA or DMP may be more suitable. Shall we look at documents so we can advise properly?",
-      "keywords": ["yes", "yeah", "ok", "continue", "next", "go on", "documents", "upload"]
-    },
-    {
-      "id": "document_upload",
-      "prompt": "Great. We’ll need proof of income (payslips or benefits), a list of debts/statements, and photo ID. Are you ready to upload those now via your secure portal?",
-      "keywords": ["yes", "yeah", "ok", "ready", "upload", "portal", "send", "attach", "email"]
-    },
-    {
-      "id": "end",
-      "prompt": "Brilliant—thanks for working through that. You can upload your documents securely in your client portal now. I’m here if you have any questions at all.",
+      "prompt": "Great — let's start with self-help options and work through loans, DRO, bankruptcy, DMP, and finally IVA so you can make an informed choice.",
       "keywords": []
     }
   ]
