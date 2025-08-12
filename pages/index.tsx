@@ -64,13 +64,12 @@ export default function Home() {
   async function handleFileChosen(file: File) {
     if (!file) return;
 
-    // Show a “user uploaded” chip immediately
+    // show user “uploading” chip immediately
     setMessages((prev) => [
       ...prev,
       { role: "user", content: `📎 Uploading: ${file.name}`, isAttachment: true },
     ]);
 
-    // Read file as base64 and POST to /api/upload
     const contentBase64 = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(String(reader.result));
@@ -92,12 +91,11 @@ export default function Home() {
 
       const data = await res.json();
       if (data?.ok && data.url) {
-        // Show assistant confirmation + download link
         setMessages((prev) => [
           ...prev,
           {
             role: "assistant",
-            content: `✅ Got your document: **${file.name}**\n\n[Download file](${data.url})`,
+            content: `✅ Got your document: <strong>${file.name}</strong><br/><a href="${data.url}" target="_blank" rel="noreferrer" class="underline">Download file</a>`,
             isAttachment: true,
           },
         ]);
@@ -107,7 +105,7 @@ export default function Home() {
           { role: "assistant", content: "Sorry, upload failed. Please try again." },
         ]);
       }
-    } catch (e) {
+    } catch {
       setMessages((prev) => [
         ...prev,
         { role: "assistant", content: "Sorry, upload failed. Please try again." },
@@ -126,11 +124,10 @@ export default function Home() {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
       </Head>
 
-      <main
-        className={`${containerBg} min-h-screen w-full flex items-center justify-center transition-colors duration-300 p-4`}
-      >
+      {/* Centered wrapper */}
+      <main className={`${containerBg} min-h-screen w-full flex items-center justify-center transition-colors duration-300 px-4 py-6`}>
         <div className="w-full max-w-2xl space-y-4">
-          {/* Header */}
+          {/* Header compact and aligned with chat */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <h1 className="text-xl font-semibold">Debt Advisor</h1>
@@ -152,34 +149,23 @@ export default function Home() {
                 <option>Polski</option>
                 <option>Română</option>
               </select>
-              <button
-                onClick={toggleTheme}
-                className="px-3 py-1 rounded bg-blue-600 text-white text-sm"
-              >
+              <button onClick={toggleTheme} className="px-3 py-1 rounded bg-blue-600 text-white text-sm">
                 {theme === "light" ? "Dark" : "Light"} Mode
               </button>
             </div>
           </div>
 
-          {/* Chat panel */}
+          {/* Chat window */}
           <div className={`${panelBg} rounded-lg shadow p-4 space-y-3 min-h-[420px] max-h-[540px] overflow-y-auto`}>
             {messages.map((m, i) => {
               const isUser = m.role === "user";
-              const bubbleClass = isUser
-                ? "bg-green-600 text-white"
-                : assistantBubble;
-
-              // Render basic markdown link for downloads
-              const content = m.content.replace(
-                /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
-                (_match, text, url) => `<a href="${url}" target="_blank" rel="noreferrer" class="underline">${text}</a>`
-              );
+              const bubbleClass = isUser ? "bg-green-600 text-white" : assistantBubble;
 
               return (
                 <div key={i} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
                   <div
                     className={`${bubbleClass} px-4 py-2 rounded-lg max-w-[80%] text-sm leading-relaxed`}
-                    dangerouslySetInnerHTML={{ __html: content }}
+                    dangerouslySetInnerHTML={{ __html: m.content.replace(/\n/g, "<br/>") }}
                   />
                 </div>
               );
@@ -194,7 +180,7 @@ export default function Home() {
             <div ref={bottomRef} />
           </div>
 
-          {/* Composer */}
+          {/* Composer row — kept tight and centered */}
           <div className="flex items-center gap-2">
             <input
               type="text"
@@ -204,7 +190,8 @@ export default function Home() {
               placeholder="Type your message…"
               className="flex-grow p-2 border rounded"
             />
-            {/* Upload button */}
+
+            {/* Bigger Upload button */}
             <input
               ref={fileInputRef}
               type="file"
@@ -213,16 +200,13 @@ export default function Home() {
             />
             <button
               onClick={() => fileInputRef.current?.click()}
-              className="px-3 py-2 rounded border font-medium flex items-center gap-2"
+              className="px-4 py-2 rounded border font-semibold"
               title="Upload documents"
             >
               📎 Upload docs
             </button>
 
-            <button
-              onClick={handleSend}
-              className="px-4 py-2 rounded bg-green-600 text-white font-semibold"
-            >
+            <button onClick={handleSend} className="px-4 py-2 rounded bg-green-600 text-white font-semibold">
               Send
             </button>
           </div>
