@@ -33,29 +33,26 @@ export default function Home() {
   const [stepIndex, setStepIndex] = useState<number>(0);
   const [totalSteps, setTotalSteps] = useState<number>(12);
   const [speaking, setSpeaking] = useState<boolean>(false);
+  const [showEmojis, setShowEmojis] = useState<boolean>(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
 
-  // Init session id once
   useEffect(() => {
     setSessionId(getOrCreateSessionId());
   }, []);
 
-  // Auto scroll
   useEffect(() => {
     chatScrollRef.current?.scrollTo({ top: chatScrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, isTyping]);
+  }, [messages, isTyping, showEmojis]);
 
-  // Voice: speak last assistant message if enabled
   useEffect(() => {
     if (!speaking) return;
     if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
     const last = [...messages].reverse().find((m) => m.role === "assistant");
     if (!last) return;
     const utter = new SpeechSynthesisUtterance(last.content.replace(/<\/?mark>/g, ""));
-    utter.rate = 1;
-    utter.pitch = 1;
+    utter.rate = 1; utter.pitch = 1;
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(utter);
   }, [messages, speaking]);
@@ -63,8 +60,7 @@ export default function Home() {
   const progressPct = useMemo(() => {
     const total = totalSteps || 12;
     const i = stepIndex || 0;
-    const pct = Math.max(0, Math.min(100, Math.round(((i + 1) / total) * 100)));
-    return pct;
+    return Math.max(0, Math.min(100, Math.round(((i + 1) / total) * 100)));
   }, [stepIndex, totalSteps]);
 
   const sendMessage = async (text: string) => {
@@ -74,7 +70,6 @@ export default function Home() {
     setInput("");
     setIsTyping(true);
 
-    // call chat API
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -91,44 +86,37 @@ export default function Home() {
   };
 
   const handleSend = () => sendMessage(input);
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") handleSend();
-  };
-
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key === "Enter") handleSend(); };
   const toggleTheme = () => setTheme((t) => (t === "light" ? "dark" : "light"));
   const toggleVoice = () => setSpeaking((s) => !s);
+  const toggleEmojis = () => setShowEmojis((v) => !v);
 
-  // Upload doc
   const handleUploadClick = () => fileInputRef.current?.click();
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    // show a local preview as a message
+    const file = e.target.files?.[0]; if (!file) return;
     if (file.type.startsWith("image/")) {
       const reader = new FileReader();
       reader.onload = () => {
         setMessages((prev) => [
           ...prev,
-          { role: "user", content: `(uploaded image) ` + `<img src="${reader.result}" class="preview-img" alt="upload" />` },
+          { role: "user", content: `(uploaded image) <img src="${reader.result}" class="preview-img" alt="upload" />` },
         ]);
       };
       reader.readAsDataURL(file);
     } else {
       setMessages((prev) => [...prev, { role: "user", content: `📎 Uploaded: ${file.name}` }]);
     }
-
     const form = new FormData();
     form.append("file", file);
     const resp = await fetch("/api/upload", { method: "POST", body: form });
     const data = await resp.json();
-    if (data.url) {
-      setMessages((prev) => [...prev, { role: "assistant", content: `✅ Received your document. Stored as: ${data.url}` }]);
-    } else {
-      setMessages((prev) => [...prev, { role: "assistant", content: `⚠️ Upload failed. Please try again.` }]);
-    }
+    setMessages((prev) => [
+      ...prev,
+      { role: "assistant", content: data.url ? `✅ Received your document. Stored as: ${data.url}` : `⚠️ Upload failed. Please try again.` },
+    ]);
   };
 
-  // Emoji reaction to last assistant msg — purely visual “wow factor”
+  const allEmojis = ["👍","❤️","😮","😊","🎉","✅","🙏","💬","📎","💡","🚀","🔎","🧾","📄","📤","🕒","💷","🏠","🏦","📞"];
   const reactToLast = (emoji: string) => {
     setMessages((prev) => {
       const idx = [...prev].map((m) => m.role).lastIndexOf("assistant");
@@ -139,9 +127,8 @@ export default function Home() {
     });
   };
 
-  // Keyword highlight for IVA/DMP etc.
   function highlightKeywords(s: string) {
-    const terms = ["IVA", "DMP", "bankruptcy", "Debt Relief Order", "DRO", "bailiffs", "credit file"];
+    const terms = ["IVA","DMP","bankruptcy","Debt Relief Order","DRO","bailiffs","credit file","arrears","council tax"];
     let out = s;
     terms.forEach((t) => {
       const re = new RegExp(`\\b(${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})\\b`, "gi");
@@ -158,89 +145,85 @@ export default function Home() {
       </Head>
 
       <main className={`app-shell ${theme === "dark" ? "theme-dark" : "theme-light"}`}>
-        {/* Top bar */}
-        <header className="topbar">
-          <div className="brand">Debt Advisor</div>
-          <div className="controls">
-            <select
-              className="lang"
-              value={lang}
-              onChange={(e) => setLang(e.target.value as any)}
-              aria-label="Language"
-              title="Language"
-            >
-              <option value="en">English</option>
-              <option value="es">Español</option>
-              <option value="fr">Français</option>
-              <option value="de">Deutsch</option>
-              <option value="pl">Polski</option>
-              <option value="ro">Română</option>
-            </select>
-            <button className="btn" onClick={toggleVoice} title="Toggle voice">
-              {speaking ? "🔊 Voice On" : "🔈 Voice Off"}
-            </button>
-            <button className="btn" onClick={toggleTheme} title="Toggle theme">
-              {theme === "light" ? "🌙 Dark" : "☀️ Light"}
-            </button>
+        {/* Single compact card containing everything */}
+        <section className="chat-card compact">
+          {/* Header row (inside card) */}
+          <div className="card-header">
+            <div className="brand">Debt Advisor</div>
+            <div className="controls">
+              <select
+                className="lang"
+                value={lang}
+                onChange={(e) => setLang(e.target.value as any)}
+                aria-label="Language"
+                title="Language"
+              >
+                <option value="en">English</option>
+                <option value="es">Español</option>
+                <option value="fr">Français</option>
+                <option value="de">Deutsch</option>
+                <option value="pl">Polski</option>
+                <option value="ro">Română</option>
+              </select>
+              <button className="btn" onClick={toggleVoice} title="Toggle voice">
+                {speaking ? "🔊 Voice On" : "🔈 Voice Off"}
+              </button>
+              <button className="btn" onClick={toggleTheme} title="Toggle theme">
+                {theme === "light" ? "🌙 Dark" : "☀️ Light"}
+              </button>
+            </div>
           </div>
-        </header>
 
-        {/* Progress */}
-        <div className="progress">
-          <div className="progress-label">
-            Journey progress: <strong>{progressPct}%</strong>
+          {/* Progress bar snug under header */}
+          <div className="progress tiny">
+            <div className="progress-bar">
+              <div className="progress-fill" style={{ width: `${progressPct}%` }} />
+            </div>
+            <div className="progress-inline-label">Journey {progressPct}%</div>
           </div>
-          <div className="progress-bar">
-            <div className="progress-fill" style={{ width: `${progressPct}%` }} />
-          </div>
-          <div className="badges">
-            {progressPct >= 25 && <span className="badge">✅ Eligibility started</span>}
-            {progressPct >= 50 && <span className="badge">🧭 Options reviewed</span>}
-            {progressPct >= 75 && <span className="badge">📄 Docs stage</span>}
-            {progressPct >= 95 && <span className="badge">🎉 Almost done</span>}
-          </div>
-        </div>
 
-        {/* Chat window */}
-        <section className="chat-card">
+          {/* Chat window */}
           <div className="chat-scroll" ref={chatScrollRef}>
             {messages.map((m, i) => (
               <div key={i} className={`row ${m.role}`}>
-                <div
-                  className={`bubble ${m.role}`}
-                  dangerouslySetInnerHTML={{ __html: m.content }}
-                />
+                <div className={`bubble ${m.role}`} dangerouslySetInnerHTML={{ __html: m.content }} />
               </div>
             ))}
             {isTyping && (
               <div className="row assistant">
                 <div className="bubble assistant typing">
-                  <span className="dot" />
-                  <span className="dot" />
-                  <span className="dot" />
+                  <span className="dot" /><span className="dot" /><span className="dot" />
                 </div>
               </div>
             )}
           </div>
 
-          {/* Quick replies */}
+          {/* Quick replies (tight) */}
           {!!quickReplies.length && (
-            <div className="chips">
+            <div className="chips tight">
               {quickReplies.slice(0, 6).map((q, i) => (
-                <button key={i} className="chip" onClick={() => sendMessage(q)}>
-                  {q}
-                </button>
+                <button key={i} className="chip" onClick={() => sendMessage(q)}>{q}</button>
               ))}
             </div>
           )}
 
-          {/* Input + actions */}
-          <div className="composer">
+          {/* Composer */}
+          <div className="composer merged">
             <div className="left-actions">
-              <button className="icon-btn" onClick={() => reactToLast("👍")} title="React thumbs up">👍</button>
-              <button className="icon-btn" onClick={() => reactToLast("❤️")} title="React heart">❤️</button>
-              <button className="icon-btn" onClick={() => reactToLast("😮")} title="React wow">😮</button>
-              <button className="icon-btn" onClick={handleUploadClick} title="Upload document">📎</button>
+              <div className="emoji-box">
+                <button className="icon-btn" onClick={toggleEmojis} title="Emoji reactions">😊 Emojis</button>
+                {showEmojis && (
+                  <div className="emoji-panel">
+                    {allEmojis.map((e) => (
+                      <button key={e} className="emoji" onClick={() => reactToLast(e)}>{e}</button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <button className="upload-btn" onClick={handleUploadClick} title="Upload documents">
+                📎 Upload docs
+              </button>
               <input
                 ref={fileInputRef}
                 type="file"
