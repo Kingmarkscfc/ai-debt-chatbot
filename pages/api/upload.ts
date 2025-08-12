@@ -1,42 +1,54 @@
+// pages/api/upload.ts
 import type { NextApiRequest, NextApiResponse } from "next";
 import { createClient } from "@supabase/supabase-js";
+import { v4 as uuidv4 } from "uuid";
 
 const supabase = createClient(
   process.env.SUPABASE_URL || "",
-  process.env.SUPABASE_SERVICE_ROLE || "" // server-side only
+  process.env.SUPABASE_ANON_KEY || ""
 );
 
-export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
+// Make sure you have a public Storage bucket named "documents" in Supabase.
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method !== "POST") return res.status(405).end();
+  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   try {
-    const { name, contentBase64, sessionId } = req.body || {};
-    if (!name || !contentBase64) {
-      return res.status(400).json({ ok: false, error: "Missing file" });
+    const { sessionId, fileName, contentBase64, contentType } = req.body || {};
+    if (!sessionId || !fileName || !contentBase64) {
+      return res.status(400).json({ error: "Missing sessionId, fileName or contentBase64" });
     }
 
-    const arrayBuffer = Buffer.from(contentBase64, "base64");
-    const path = `${sessionId || "anon"}/${Date.now()}-${name}`;
+    // Decode base64 to Uint8Array
+    const base64 = contentBase64.split(",").pop() || contentBase64;
+    const buffer = Buffer.from(base64, "base64");
+    const path = `${sessionId}/${uuidv4()}-${fileName}`;
 
-    const { error } = await supabase.storage.from("uploads").upload(path, arrayBuffer, {
-      contentType: guessMime(name),
-      upsert: false,
+    const { error: uploadErr } = await supabase
+      .storage
+      .from("documents")
+      .upload(path, buffer, {
+        contentType: contentType || "application/octet-stream",
+        upsert: false
+      });
+
+    if (uploadErr) {
+      console.error("Supabase upload error:", uploadErr);
+      return res.status(500).json({ error: "Upload failed" });
+    }
+
+    const { data: publicUrl } = supabase
+      .storage
+      .from("documents")
+      .getPublicUrl(path);
+
+    return res.status(200).json({
+      ok: true,
+      url: publicUrl.publicUrl,
+      path
     });
-    if (error) return res.status(500).json({ ok: false, error: error.message });
-
-    const { data: pub } = supabase.storage.from("uploads").getPublicUrl(path);
-    return res.status(200).json({ ok: true, url: pub.publicUrl });
   } catch (e: any) {
-    return res.status(500).json({ ok: false, error: e?.message || "Upload failed" });
+    console.error("Upload API error:", e?.message || e);
+    return res.status(500).json({ error: "Server error" });
   }
-}
-
-function guessMime(filename: string) {
-  const f = filename.toLowerCase();
-  if (f.endsWith(".pdf")) return "application/pdf";
-  if (f.endsWith(".png")) return "image/png";
-  if (f.endsWith(".jpg") || f.endsWith(".jpeg")) return "image/jpeg";
-  return "application/octet-stream";
 }
