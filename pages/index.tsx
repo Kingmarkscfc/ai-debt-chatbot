@@ -21,7 +21,7 @@ function getOrCreateSessionId(): string {
 }
 
 export default function Home() {
-  const [theme, setTheme] = useState<"light" | "dark">("light");
+  const [theme, setTheme] = useState<"light" | "dark">("dark");
   const [lang, setLang] = useState<"en" | "es" | "fr" | "de" | "pl" | "ro">("en");
   const [messages, setMessages] = useState<ChatMsg[]>([
     { role: "assistant", content: "Hello! My name’s Mark. What prompted you to seek help with your debts today?" },
@@ -34,25 +34,53 @@ export default function Home() {
   const [totalSteps, setTotalSteps] = useState<number>(12);
   const [speaking, setSpeaking] = useState<boolean>(false);
   const [showEmojis, setShowEmojis] = useState<boolean>(false);
+  const [showSkinTones, setShowSkinTones] = useState<boolean>(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
+  const voiceRef = useRef<SpeechSynthesisVoice | null>(null);
 
   useEffect(() => {
     setSessionId(getOrCreateSessionId());
   }, []);
 
+  // Choose a professional en-GB voice if available
+  useEffect(() => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    const pickVoice = () => {
+      const list = window.speechSynthesis.getVoices();
+      const prefer = [
+        "Google UK English Female",
+        "Google UK English Male",
+        "en-GB",
+        "Microsoft Sonia Online (Natural) - English (United Kingdom)",
+        "Microsoft Ryan Online (Natural) - English (United Kingdom)",
+      ];
+      const found =
+        list.find(v => prefer.includes(v.name)) ||
+        list.find(v => v.lang?.toLowerCase() === "en-gb") ||
+        list.find(v => v.lang?.toLowerCase().startsWith("en"));
+      voiceRef.current = found || null;
+    };
+    pickVoice();
+    window.speechSynthesis.onvoiceschanged = pickVoice;
+  }, []);
+
   useEffect(() => {
     chatScrollRef.current?.scrollTo({ top: chatScrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, isTyping, showEmojis]);
+  }, [messages, isTyping, showEmojis, showSkinTones]);
 
+  // Speak last assistant message in professional English voice
   useEffect(() => {
     if (!speaking) return;
     if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
     const last = [...messages].reverse().find((m) => m.role === "assistant");
     if (!last) return;
-    const utter = new SpeechSynthesisUtterance(last.content.replace(/<\/?mark>/g, ""));
+    const utter = new SpeechSynthesisUtterance(
+      last.content.replace(/<\/?mark>/g, "").replace(/<[^>]+>/g, "")
+    );
     utter.rate = 1; utter.pitch = 1;
+    if (voiceRef.current) utter.voice = voiceRef.current;
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(utter);
   }, [messages, speaking]);
@@ -89,34 +117,54 @@ export default function Home() {
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key === "Enter") handleSend(); };
   const toggleTheme = () => setTheme((t) => (t === "light" ? "dark" : "light"));
   const toggleVoice = () => setSpeaking((s) => !s);
-  const toggleEmojis = () => setShowEmojis((v) => !v);
+  const toggleEmojis = () => {
+    setShowEmojis(v => !v);
+    setShowSkinTones(false);
+  };
 
   const handleUploadClick = () => fileInputRef.current?.click();
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; if (!file) return;
-    if (file.type.startsWith("image/")) {
-      const reader = new FileReader();
-      reader.onload = () => {
-        setMessages((prev) => [
-          ...prev,
-          { role: "user", content: `(uploaded image) <img src="${reader.result}" class="preview-img" alt="upload" />` },
-        ]);
-      };
-      reader.readAsDataURL(file);
-    } else {
-      setMessages((prev) => [...prev, { role: "user", content: `📎 Uploaded: ${file.name}` }]);
-    }
     const form = new FormData();
     form.append("file", file);
     const resp = await fetch("/api/upload", { method: "POST", body: form });
     const data = await resp.json();
+    const url = data.url as string | undefined;
+
+    // Show a downloadable link directly in chat
     setMessages((prev) => [
       ...prev,
-      { role: "assistant", content: data.url ? `✅ Received your document. Stored as: ${data.url}` : `⚠️ Upload failed. Please try again.` },
+      { role: "user", content: `📎 Uploaded: ${file.name}${url ? ` — <a href="${url}" download>Download</a>` : ""}` },
+    ]);
+    setMessages((prev) => [
+      ...prev,
+      {
+        role: "assistant",
+        content: url
+          ? `✅ Got your document safely. I’ve saved it to your case files. You can also <a href="${url}" download>download it here</a>.`
+          : `⚠️ Upload failed. Please try again.`,
+      },
     ]);
   };
 
-  const allEmojis = ["👍","❤️","😮","😊","🎉","✅","🙏","💬","📎","💡","🚀","🔎","🧾","📄","📤","🕒","💷","🏠","🏦","📞"];
+  // Minimal, focused emoji set + skin tones for 👍
+  const baseEmojis = ["🙂","🙁","✅","❌","👍"];
+  const skinTones = ["🏻","🏼","🏽","🏾","🏿"];
+  const onEmoji = (e: string) => {
+    if (e === "👍") {
+      setShowSkinTones((s) => !s);
+      return;
+    }
+    setShowSkinTones(false);
+    reactToLast(e);
+    sendMessage(e); // let backend acknowledge emoji
+  };
+  const onThumbWithTone = (tone: string) => {
+    const e = `👍${tone}`;
+    reactToLast(e);
+    setShowSkinTones(false);
+    sendMessage(e);
+  };
   const reactToLast = (emoji: string) => {
     setMessages((prev) => {
       const idx = [...prev].map((m) => m.role).lastIndexOf("assistant");
@@ -145,9 +193,7 @@ export default function Home() {
       </Head>
 
       <main className={`app-shell ${theme === "dark" ? "theme-dark" : "theme-light"}`}>
-        {/* Single compact card containing everything */}
         <section className="chat-card compact">
-          {/* Header row (inside card) */}
           <div className="card-header">
             <div className="brand">Debt Advisor</div>
             <div className="controls">
@@ -174,7 +220,6 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Progress bar snug under header */}
           <div className="progress tiny">
             <div className="progress-bar">
               <div className="progress-fill" style={{ width: `${progressPct}%` }} />
@@ -182,7 +227,6 @@ export default function Home() {
             <div className="progress-inline-label">Journey {progressPct}%</div>
           </div>
 
-          {/* Chat window */}
           <div className="chat-scroll" ref={chatScrollRef}>
             {messages.map((m, i) => (
               <div key={i} className={`row ${m.role}`}>
@@ -198,7 +242,6 @@ export default function Home() {
             )}
           </div>
 
-          {/* Quick replies (tight) */}
           {!!quickReplies.length && (
             <div className="chips tight">
               {quickReplies.slice(0, 6).map((q, i) => (
@@ -207,16 +250,22 @@ export default function Home() {
             </div>
           )}
 
-          {/* Composer */}
           <div className="composer merged">
             <div className="left-actions">
               <div className="emoji-box">
                 <button className="icon-btn" onClick={toggleEmojis} title="Emoji reactions">😊 Emojis</button>
                 {showEmojis && (
                   <div className="emoji-panel">
-                    {allEmojis.map((e) => (
-                      <button key={e} className="emoji" onClick={() => reactToLast(e)}>{e}</button>
+                    {baseEmojis.map((e) => (
+                      <button key={e} className="emoji" onClick={() => onEmoji(e)}>{e}</button>
                     ))}
+                    {showSkinTones && (
+                      <div className="tones-row">
+                        {skinTones.map((t) => (
+                          <button key={t} className="emoji tone" onClick={() => onThumbWithTone(t)}>👍{t}</button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
