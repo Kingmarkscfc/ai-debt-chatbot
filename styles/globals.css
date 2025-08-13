@@ -1,4 +1,4 @@
-:root {
+::root {
   --bg: #0e1320;
   --text: #e5e7eb;
   --card: #111827;
@@ -197,3 +197,4 @@ body {
 
 mark { background: var(--mark); padding: 0 3px; border-radius: 4px; }
 .emoji-react { margin-left: 6px; }
+

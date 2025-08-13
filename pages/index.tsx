@@ -1,15 +1,16 @@
 import Head from "next/head";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-type Msg = {
-  role: "user" | "assistant";
-  content: string;
-  isUpload?: boolean;
-  fileName?: string;
-  fileUrl?: string;
+type ChatMsg = { role: "user" | "assistant" | "system"; content: string };
+type ChatResponse = {
+  reply: string;
+  sessionId: string;
+  stepIndex?: number;
+  totalSteps?: number;
+  quickReplies?: string[];
 };
 
-function getSessionId() {
+function getOrCreateSessionId(): string {
   if (typeof window === "undefined") return Math.random().toString(36).slice(2);
   let sid = localStorage.getItem("da_session_id");
   if (!sid) {
@@ -20,91 +21,169 @@ function getSessionId() {
 }
 
 export default function Home() {
-  const [theme, setTheme] = useState<"light" | "dark">("light");
-  const [lang, setLang] = useState("en");
-  const [messages, setMessages] = useState<Msg[]>([
+  const [theme, setTheme] = useState<"light" | "dark">("dark");
+  const [lang, setLang] = useState<"en" | "es" | "fr" | "de" | "pl" | "ro">("en");
+  const [messages, setMessages] = useState<ChatMsg[]>([
     { role: "assistant", content: "Hello! My name’s Mark. What prompted you to seek help with your debts today?" },
   ]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
-  const [sessionId, setSessionId] = useState<string>(getSessionId());
-  const fileRef = useRef<HTMLInputElement>(null);
-  const scroller = useRef<HTMLDivElement>(null);
+  const [quickReplies, setQuickReplies] = useState<string[]>([]);
+  const [sessionId, setSessionId] = useState<string>("");
+  const [stepIndex, setStepIndex] = useState<number>(0);
+  const [totalSteps, setTotalSteps] = useState<number>(12);
+  const [speaking, setSpeaking] = useState<boolean>(false);
+  const [showEmojis, setShowEmojis] = useState<boolean>(false);
+  const [showSkinTones, setShowSkinTones] = useState<boolean>(false);
 
-  // keep card centered + dark mode on <html>
-  useEffect(() => {
-    const html = document.documentElement;
-    if (theme === "dark") html.classList.add("dark");
-    else html.classList.remove("dark");
-  }, [theme]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const chatScrollRef = useRef<HTMLDivElement>(null);
+  const voiceRef = useRef<SpeechSynthesisVoice | null>(null);
 
   useEffect(() => {
-    scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" });
-  }, [messages, isTyping]);
+    setSessionId(getOrCreateSessionId());
+  }, []);
+
+  // Choose a professional en-GB voice if available
+  useEffect(() => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    const pickVoice = () => {
+      const list = window.speechSynthesis.getVoices();
+      const prefer = [
+        "Google UK English Female",
+        "Google UK English Male",
+        "en-GB",
+        "Microsoft Sonia Online (Natural) - English (United Kingdom)",
+        "Microsoft Ryan Online (Natural) - English (United Kingdom)",
+      ];
+      const found =
+        list.find(v => prefer.includes(v.name)) ||
+        list.find(v => v.lang?.toLowerCase() === "en-gb") ||
+        list.find(v => v.lang?.toLowerCase().startsWith("en"));
+      voiceRef.current = found || null;
+    };
+    pickVoice();
+    window.speechSynthesis.onvoiceschanged = pickVoice;
+  }, []);
+
+  useEffect(() => {
+    chatScrollRef.current?.scrollTo({ top: chatScrollRef.current.scrollHeight, behavior: "smooth" });
+  }, [messages, isTyping, showEmojis, showSkinTones]);
+
+  // Speak last assistant message in professional English voice
+  useEffect(() => {
+    if (!speaking) return;
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    const last = [...messages].reverse().find((m) => m.role === "assistant");
+    if (!last) return;
+    const utter = new SpeechSynthesisUtterance(
+      last.content.replace(/<\/?mark>/g, "").replace(/<[^>]+>/g, "")
+    );
+    utter.rate = 1; utter.pitch = 1;
+    if (voiceRef.current) utter.voice = voiceRef.current;
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utter);
+  }, [messages, speaking]);
+
+  const progressPct = useMemo(() => {
+    const total = totalSteps || 12;
+    const i = stepIndex || 0;
+    return Math.max(0, Math.min(100, Math.round(((i + 1) / total) * 100)));
+  }, [stepIndex, totalSteps]);
 
   const sendMessage = async (text: string) => {
     if (!text.trim()) return;
-    const userMsg: Msg = { role: "user", content: text.trim() };
-    setMessages((m) => [...m, userMsg]);
+    const userMessage = text.trim();
+    setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
     setInput("");
     setIsTyping(true);
-    try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text.trim(), sessionId, lang }),
-      });
-      const data = await res.json();
-      if (data.sessionId && data.sessionId !== sessionId) setSessionId(data.sessionId);
-      setMessages((m) => [...m, { role: "assistant", content: data.reply || "…" }]);
-    } catch {
-      setMessages((m) => [...m, { role: "assistant", content: "⚠️ Couldn’t reach the server. Try again." }]);
-    } finally {
-      setIsTyping(false);
-    }
+
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: userMessage, sessionId, lang }),
+    });
+    const data: ChatResponse = await res.json();
+
+    setIsTyping(false);
+    if (data.sessionId) setSessionId(data.sessionId);
+    if (typeof data.stepIndex === "number") setStepIndex(data.stepIndex);
+    if (typeof data.totalSteps === "number") setTotalSteps(data.totalSteps);
+    setQuickReplies(data.quickReplies || []);
+    setMessages((prev) => [...prev, { role: "assistant", content: highlightKeywords(data.reply) }]);
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage(input);
-    }
+  const handleSend = () => sendMessage(input);
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key === "Enter") handleSend(); };
+  const toggleTheme = () => setTheme((t) => (t === "light" ? "dark" : "light"));
+  const toggleVoice = () => setSpeaking((s) => !s);
+  const toggleEmojis = () => {
+    setShowEmojis(v => !v);
+    setShowSkinTones(false);
   };
 
-  const handleUploadClick = () => fileRef.current?.click();
+  const handleUploadClick = () => fileInputRef.current?.click();
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    const form = new FormData();
+    form.append("file", file);
+    const resp = await fetch("/api/upload", { method: "POST", body: form });
+    const data = await resp.json();
+    const url = data.url as string | undefined;
 
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      const form = new FormData();
-      form.append("file", file);
-      form.append("sessionId", sessionId);
-      const resp = await fetch("/api/upload", { method: "POST", body: form });
-      const data = await resp.json();
-      if (data?.url) {
-        // show upload bubble (with download link)
-        setMessages((m) => [
-          ...m,
-          {
-            role: "user",
-            content: `Uploaded: ${file.name}`,
-            isUpload: true,
-            fileName: file.name,
-            fileUrl: data.url,
-          },
-        ]);
-        // let the bot know (optional)
-        await sendMessage(`I've uploaded ${file.name}.`);
-      } else {
-        setMessages((m) => [...m, { role: "assistant", content: "⚠️ Upload failed. Please try again." }]);
-      }
-    } catch {
-      setMessages((m) => [...m, { role: "assistant", content: "⚠️ Upload failed. Please try again." }]);
-    } finally {
-      if (fileRef.current) fileRef.current.value = "";
-    }
+    // Show a downloadable link directly in chat
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", content: `📎 Uploaded: ${file.name}${url ? ` — <a href="${url}" download>Download</a>` : ""}` },
+    ]);
+    setMessages((prev) => [
+      ...prev,
+      {
+        role: "assistant",
+        content: url
+          ? `✅ Got your document safely. I’ve saved it to your case files. You can also <a href="${url}" download>download it here</a>.`
+          : `⚠️ Upload failed. Please try again.`,
+      },
+    ]);
   };
+
+  // Minimal, focused emoji set + skin tones for 👍
+  const baseEmojis = ["🙂","🙁","✅","❌","👍"];
+  const skinTones = ["🏻","🏼","🏽","🏾","🏿"];
+  const onEmoji = (e: string) => {
+    if (e === "👍") {
+      setShowSkinTones((s) => !s);
+      return;
+    }
+    setShowSkinTones(false);
+    reactToLast(e);
+    sendMessage(e); // let backend acknowledge emoji
+  };
+  const onThumbWithTone = (tone: string) => {
+    const e = `👍${tone}`;
+    reactToLast(e);
+    setShowSkinTones(false);
+    sendMessage(e);
+  };
+  const reactToLast = (emoji: string) => {
+    setMessages((prev) => {
+      const idx = [...prev].map((m) => m.role).lastIndexOf("assistant");
+      if (idx === -1) return prev;
+      const clone = [...prev];
+      clone[idx] = { ...clone[idx], content: `${clone[idx].content} <span class="emoji-react">${emoji}</span>` };
+      return clone;
+    });
+  };
+
+  function highlightKeywords(s: string) {
+    const terms = ["IVA","DMP","bankruptcy","Debt Relief Order","DRO","bailiffs","credit file","arrears","council tax"];
+    let out = s;
+    terms.forEach((t) => {
+      const re = new RegExp(`\\b(${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})\\b`, "gi");
+      out = out.replace(re, "<mark>$1</mark>");
+    });
+    return out;
+  }
 
   return (
     <>
@@ -113,31 +192,17 @@ export default function Home() {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
       </Head>
 
-      {/* Page wrapper — stays centered */}
-      <main
-        className={`${
-          theme === "dark" ? "bg-gray-900 text-white" : "bg-gray-100 text-black"
-        } min-h-screen w-full flex items-center justify-center px-4 py-8 transition-colors`}
-      >
-        {/* Chat Card (bounded, centered) */}
-        <div className="w-full max-w-2xl rounded-2xl border border-gray-200 dark:border-gray-700 shadow-xl bg-white dark:bg-gray-900 overflow-hidden">
-          {/* Header */}
-          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-700">
-            <div className="flex items-center gap-2">
-              <h1 className="text-lg font-semibold">Debt Advisor</h1>
-              <span className="flex items-center gap-1 text-xs font-semibold text-green-400">
-                <span
-                  className="inline-block h-2.5 w-2.5 rounded-full bg-green-400"
-                  style={{ boxShadow: "0 0 8px #22c55e, 0 0 16px #22c55e" }}
-                />
-                Online
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
+      <main className={`app-shell ${theme === "dark" ? "theme-dark" : "theme-light"}`}>
+        <section className="chat-card compact">
+          <div className="card-header">
+            <div className="brand">Debt Advisor</div>
+            <div className="controls">
               <select
+                className="lang"
                 value={lang}
-                onChange={(e) => setLang(e.target.value)}
-                className="px-2 py-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm"
+                onChange={(e) => setLang(e.target.value as any)}
+                aria-label="Language"
+                title="Language"
               >
                 <option value="en">English</option>
                 <option value="es">Español</option>
@@ -146,85 +211,87 @@ export default function Home() {
                 <option value="pl">Polski</option>
                 <option value="ro">Română</option>
               </select>
-              <button
-                onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}
-                className="px-3 py-1 rounded bg-blue-600 text-white text-sm"
-              >
-                {theme === "light" ? "Dark" : "Light"} Mode
+              <button className="btn" onClick={toggleVoice} title="Toggle voice">
+                {speaking ? "🔊 Voice On" : "🔈 Voice Off"}
+              </button>
+              <button className="btn" onClick={toggleTheme} title="Toggle theme">
+                {theme === "light" ? "🌙 Dark" : "☀️ Light"}
               </button>
             </div>
           </div>
 
-          {/* Messages */}
-          <div ref={scroller} className="h-[460px] overflow-y-auto p-4 space-y-3 bg-gray-50 dark:bg-gray-800">
-            {messages.map((m, i) => {
-              const isUser = m.role === "user";
-              return (
-                <div key={i} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
-                  <div
-                    className={`max-w-[80%] rounded-2xl px-4 py-2 text-sm shadow ${
-                      isUser
-                        ? "bg-blue-600 text-white rounded-br-sm"
-                        : "bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-50 rounded-bl-sm border border-gray-200 dark:border-gray-600"
-                    }`}
-                  >
-                    {m.isUpload && m.fileUrl ? (
-                      <div className="flex flex-col gap-1">
-                        <div className="font-medium">📄 {m.fileName}</div>
-                        <a className="underline text-white/90 dark:text-blue-200" href={m.fileUrl} download target="_blank" rel="noreferrer">
-                          Download
-                        </a>
-                      </div>
-                    ) : (
-                      m.content
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+          <div className="progress tiny">
+            <div className="progress-bar">
+              <div className="progress-fill" style={{ width: `${progressPct}%` }} />
+            </div>
+            <div className="progress-inline-label">Journey {progressPct}%</div>
+          </div>
+
+          <div className="chat-scroll" ref={chatScrollRef}>
+            {messages.map((m, i) => (
+              <div key={i} className={`row ${m.role}`}>
+                <div className={`bubble ${m.role}`} dangerouslySetInnerHTML={{ __html: m.content }} />
+              </div>
+            ))}
             {isTyping && (
-              <div className="flex justify-start">
-                <div className="max-w-[80%] rounded-2xl px-4 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-50 border border-gray-200 dark:border-gray-600 shadow">
-                  Mark is typing…
+              <div className="row assistant">
+                <div className="bubble assistant typing">
+                  <span className="dot" /><span className="dot" /><span className="dot" />
                 </div>
               </div>
             )}
           </div>
 
-          {/* Composer */}
-          <div className="border-t border-gray-200 dark:border-gray-700 p-3">
-            <div className="flex items-center gap-2">
-              {/* Single upload button + hidden input */}
-              <input ref={fileRef} type="file" className="hidden" onChange={handleUpload} />
-              <button
-                onClick={handleUploadClick}
-                className="inline-flex items-center gap-2 px-3 py-2 rounded border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-700 text-sm hover:bg-gray-200 dark:hover:bg-gray-600"
-              >
-                <span style={{ fontSize: 18 }}>📎</span>
-                <span className="font-medium">Upload docs</span>
-              </button>
-
-              <input
-                type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Type your message…"
-                className="flex-1 px-3 py-2 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
-              />
-              <button
-                onClick={() => sendMessage(input)}
-                disabled={!input.trim()}
-                className={`px-4 py-2 rounded text-white ${
-                  input.trim() ? "bg-green-600 hover:bg-green-700" : "bg-green-900/40 cursor-not-allowed"
-                }`}
-              >
-                Send
-              </button>
+          {!!quickReplies.length && (
+            <div className="chips tight">
+              {quickReplies.slice(0, 6).map((q, i) => (
+                <button key={i} className="chip" onClick={() => sendMessage(q)}>{q}</button>
+              ))}
             </div>
+          )}
+
+          <div className="composer merged">
+            <div className="left-actions">
+              <div className="emoji-box">
+                <button className="icon-btn" onClick={toggleEmojis} title="Emoji reactions">😊 Emojis</button>
+                {showEmojis && (
+                  <div className="emoji-panel">
+                    {baseEmojis.map((e) => (
+                      <button key={e} className="emoji" onClick={() => onEmoji(e)}>{e}</button>
+                    ))}
+                    {showSkinTones && (
+                      <div className="tones-row">
+                        {skinTones.map((t) => (
+                          <button key={t} className="emoji tone" onClick={() => onThumbWithTone(t)}>👍{t}</button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <button className="upload-btn" onClick={handleUploadClick} title="Upload documents">
+                📎 Upload docs
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="hidden-file"
+                onChange={handleFileChange}
+                accept="image/*,.pdf,.jpg,.jpeg,.png"
+              />
+            </div>
+
+            <input
+              className="composer-input"
+              placeholder="Type your message…"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+            />
+            <button className="send-btn" onClick={handleSend}>Send</button>
           </div>
-        </div>
-        {/* /Chat Card */}
+        </section>
       </main>
     </>
   );
