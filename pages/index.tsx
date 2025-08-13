@@ -16,7 +16,6 @@ export default function Home() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // keep the centered UI… no layout changes
   const toggleTheme = () => setTheme((prev) => (prev === "light" ? "dark" : "light"));
 
   const handleSend = async () => {
@@ -36,7 +35,7 @@ export default function Home() {
       const data = await res.json();
       setSessionId(data.sessionId || sessionId);
       setMessages((prev) => [...prev, { role: "assistant", content: data.reply, type: "text" }]);
-    } catch (e) {
+    } catch {
       setMessages((prev) => [
         ...prev,
         { role: "assistant", content: "Sorry, I hit a snag sending that. Please try again.", type: "text" },
@@ -50,34 +49,24 @@ export default function Home() {
     if (e.key === "Enter") handleSend();
   };
 
-  // Upload docs: create a download link immediately in the chat
   const handleUploadClick = () => fileInputRef.current?.click();
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Create a local, downloadable URL so the user can download right from the chat
     const objectUrl = URL.createObjectURL(file);
-
-    // show the file right away in the chat
     setMessages((prev) => [
       ...prev,
       { role: "user", content: "Document uploaded", type: "file", fileName: file.name, fileUrl: objectUrl },
     ]);
 
-    // (Optional) notify server for logging/telemetry — download still works locally regardless
     try {
-      await fetch("/api/upload", {
-        method: "POST",
-        body: (() => {
-          const form = new FormData();
-          form.append("file", file);
-          form.append("sessionId", sessionId || "");
-          return form;
-        })(),
-      });
-      // small acknowledgement from the bot
+      const form = new FormData();
+      form.append("file", file);
+      form.append("sessionId", sessionId || "");
+      await fetch("/api/upload", { method: "POST", body: form });
+
       setMessages((prev) => [
         ...prev,
         {
@@ -92,7 +81,6 @@ export default function Home() {
         { role: "assistant", content: "Upload noted locally. If you see any issues, please try again.", type: "text" },
       ]);
     } finally {
-      // make sure input can be re-selected later
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
@@ -108,22 +96,21 @@ export default function Home() {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
       </Head>
 
-      <main
+      {/* Hard-center everything, always */}
+      <div
         className={`${
           theme === "dark" ? "bg-gray-900 text-white" : "bg-gray-100 text-black"
-        } min-h-screen w-full flex items-center justify-center transition-colors duration-300 px-4 py-6`}
+        } min-h-screen grid place-items-center transition-colors duration-300`}
       >
-        <div className="w-full max-w-2xl space-y-4">
-          {/* Header */}
-          <div className="flex items-center justify-between">
+        {/* Card container – centered, max width, keeps spacing tight */}
+        <main className="w-full max-w-2xl mx-auto px-4 py-6">
+          {/* Header row */}
+          <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-3">
               <h1 className="text-xl font-bold">Debt Advisor</h1>
-              {/* Neon Online badge (minimal CSS only) */}
               <span
                 className="text-green-400 text-sm font-semibold"
-                style={{
-                  textShadow: "0 0 6px rgba(34,197,94,0.9), 0 0 12px rgba(34,197,94,0.6)",
-                }}
+                style={{ textShadow: "0 0 6px rgba(34,197,94,0.9), 0 0 12px rgba(34,197,94,0.6)" }}
                 aria-label="Online"
                 title="Online"
               >
@@ -131,7 +118,7 @@ export default function Home() {
               </span>
             </div>
             <div className="flex items-center gap-2">
-              <select className="p-1 border rounded text-sm">
+              <select className="p-1 border rounded text-sm bg-white dark:bg-gray-900">
                 <option>English</option>
                 <option>Español</option>
                 <option>Français</option>
@@ -146,14 +133,13 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Chat window (centered, unchanged layout style) */}
-          <div className="bg-white dark:bg-gray-800 rounded shadow p-4 space-y-3 min-h-[360px] max-h-[560px] overflow-y-auto">
+          {/* Chat window */}
+          <div className="bg-white dark:bg-gray-800 rounded shadow p-4 space-y-3 min-h-[380px] max-h-[560px] overflow-y-auto">
             {messages.map((msg, i) => {
               const isUser = msg.role === "user";
-              const baseBubble =
-                isUser
-                  ? "bg-green-500 text-white"
-                  : "bg-gray-200 dark:bg-gray-700 text-black dark:text-white";
+              const baseBubble = isUser
+                ? "bg-green-500 text-white"
+                : "bg-gray-200 dark:bg-gray-700 text-black dark:text-white";
 
               return (
                 <div key={i} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
@@ -161,11 +147,7 @@ export default function Home() {
                     {msg.type === "file" ? (
                       <div className="flex flex-col gap-1">
                         <div className="font-semibold">📎 {msg.fileName}</div>
-                        <a
-                          href={(msg as any).fileUrl}
-                          download={(msg as any).fileName}
-                          className="underline"
-                        >
+                        <a href={(msg as any).fileUrl} download={(msg as any).fileName} className="underline">
                           Download
                         </a>
                       </div>
@@ -176,15 +158,12 @@ export default function Home() {
                 </div>
               );
             })}
-            {isTyping && (
-              <div className="text-sm text-gray-500 italic">Mark is typing...</div>
-            )}
+            {isTyping && <div className="text-sm text-gray-500 italic">Mark is typing...</div>}
             <div ref={bottomRef} />
           </div>
 
           {/* Input row */}
-          <div className="flex items-center gap-2">
-            {/* Upload docs */}
+          <div className="flex items-center gap-2 mt-3">
             <button
               onClick={handleUploadClick}
               className="px-3 py-2 rounded border border-dashed border-gray-400 dark:border-gray-500 hover:bg-gray-50 dark:hover:bg-gray-700"
@@ -192,14 +171,8 @@ export default function Home() {
             >
               📎 <span className="font-medium">Upload docs</span>
             </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              className="hidden"
-              onChange={handleFileChange}
-            />
+            <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileChange} />
 
-            {/* Message input */}
             <input
               type="text"
               value={input}
@@ -209,16 +182,12 @@ export default function Home() {
               className="flex-grow p-2 border rounded bg-white dark:bg-gray-900"
             />
 
-            {/* Send */}
-            <button
-              onClick={handleSend}
-              className="p-2 px-4 bg-green-600 text-white rounded"
-            >
+            <button onClick={handleSend} className="p-2 px-4 bg-green-600 text-white rounded">
               Send
             </button>
           </div>
-        </div>
-      </main>
+        </main>
+      </div>
     </>
   );
 }
