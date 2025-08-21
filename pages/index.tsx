@@ -24,6 +24,10 @@ export default function Home() {
   const [sessionId, setSessionId] = useState<string>("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // Voice
+  const [voiceOn, setVoiceOn] = useState(true);
+  const [gbVoice, setGbVoice] = useState<SpeechSynthesisVoice | null>(null);
+
   useEffect(() => {
     setSessionId(getSessionId());
   }, []);
@@ -35,6 +39,38 @@ export default function Home() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // Load UK/English voice
+  useEffect(() => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+
+    const pickVoice = () => {
+      const voices = window.speechSynthesis.getVoices();
+      // Prefer British English
+      const candidates = voices.filter(
+        v =>
+          /en-GB/i.test(v.lang) ||
+          /english/i.test(v.name) && /UK|British|GB/i.test(v.name)
+      );
+      setGbVoice(candidates[0] || voices.find(v => /en-/.test(v.lang)) || null);
+    };
+
+    pickVoice();
+    window.speechSynthesis.onvoiceschanged = pickVoice;
+  }, []);
+
+  const speakText = (text: string) => {
+    if (!voiceOn || typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    // Strip HTML tags from assistant (we add links for uploads)
+    const plain = text.replace(/<[^>]+>/g, " ");
+    const u = new SpeechSynthesisUtterance(plain);
+    if (gbVoice) u.voice = gbVoice;
+    u.lang = gbVoice?.lang || "en-GB";
+    u.rate = 1.0;
+    u.pitch = 1.0;
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(u);
+  };
 
   const sendToChat = async (text: string) => {
     setMessages((prev) => [...prev, { role: "user", content: text }]);
@@ -50,11 +86,11 @@ export default function Home() {
       const data = await res.json();
       const reply: string = data.reply ?? "Sorry, I didn’t catch that.";
       setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
+      speakText(reply);
     } catch {
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: "Sorry—something went wrong sending that. Please try again." },
-      ]);
+      const err = "Sorry—something went wrong sending that. Please try again.";
+      setMessages((prev) => [...prev, { role: "assistant", content: err }]);
+      speakText(err);
     } finally {
       setIsTyping(false);
     }
@@ -68,8 +104,6 @@ export default function Home() {
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") handleSend();
   };
-
-  const handleQuick = (text: string) => sendToChat(text);
 
   const handleEmoji = (emoji: string) => {
     setInput((v) => (v ? v + " " + emoji : emoji));
@@ -88,24 +122,18 @@ export default function Home() {
       const res = await fetch("/api/upload", { method: "POST", body: form });
       const data = await res.json();
       if (data?.url) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "assistant",
-            content: `✅ Document received: <a href="${data.url}" target="_blank" rel="noreferrer">${data.fileName ?? file.name}</a> — you can download it anytime.`,
-          },
-        ]);
+        const msg = `✅ Document received: <a href="${data.url}" target="_blank" rel="noreferrer">${data.fileName ?? file.name}</a> — you can download it anytime.`;
+        setMessages((prev) => [...prev, { role: "assistant", content: msg }]);
+        speakText("Document received. I’ve added a download link for you.");
       } else {
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", content: "Upload completed, but I couldn’t fetch the download link. I’ll still store it." },
-        ]);
+        const msg = "Upload completed, but I couldn’t fetch the download link. I’ll still store it.";
+        setMessages((prev) => [...prev, { role: "assistant", content: msg }]);
+        speakText(msg);
       }
     } catch {
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: "Sorry—upload failed. Please try again." },
-      ]);
+      const msg = "Sorry—upload failed. Please try again.";
+      setMessages((prev) => [...prev, { role: "assistant", content: msg }]);
+      speakText(msg);
     } finally {
       (e.target as HTMLInputElement).value = "";
     }
@@ -150,8 +178,12 @@ export default function Home() {
                 {theme === "dark" ? "☀️ Light" : "🌙 Dark"}
               </button>
 
-              <button className="btn-ghost" title="Voice">
-                🔈 Voice Off
+              <button
+                className="btn-ghost"
+                onClick={() => setVoiceOn(v => !v)}
+                title="Toggle voice"
+              >
+                {voiceOn ? "🔊 Voice On" : "🔈 Voice Off"}
               </button>
             </div>
           </div>
@@ -169,18 +201,7 @@ export default function Home() {
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Quick replies */}
-          <div className="chips">
-            {["I have credit card debts", "Bailiffs worry me", "Court action", "Missed payments"].map(
-              (txt) => (
-                <button key={txt} className="chip" onClick={() => handleQuick(txt)}>
-                  {txt}
-                </button>
-              )
-            )}
-          </div>
-
-          {/* Upload + Emojis */}
+          {/* Upload + Emojis (kept) */}
           <div className="aux-row">
             <label className="upload">
               <span className="upload-btn">📎 Upload docs</span>
