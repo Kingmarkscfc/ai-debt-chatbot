@@ -1,4 +1,4 @@
-iimport Head from "next/head";
+import Head from "next/head";
 import { useEffect, useRef, useState } from "react";
 
 type Msg =
