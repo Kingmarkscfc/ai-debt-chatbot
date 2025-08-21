@@ -1,79 +1,101 @@
+// pages/api/upload.ts
 import type { NextApiRequest, NextApiResponse } from "next";
 import { createClient } from "@supabase/supabase-js";
+
+export const config = {
+  api: { bodyParser: false }, // important for multipart/form-data
+};
 
 const supabase = createClient(
   process.env.SUPABASE_URL || "",
   process.env.SUPABASE_ANON_KEY || ""
 );
 
-export const config = {
-  api: {
-    bodyParser: false, // we'll read the stream via formidable-like approach (FormData from client)
-  },
+type FileInfo = {
+  filename: string;
+  mimeType: string;
+  encoding: string;
 };
 
-async function readFormData(req: NextApiRequest): Promise<{ file: Buffer; filename: string; sessionId?: string } | null> {
-  // Next.js API routes don't parse multipart; but fetch with FormData sends
-  // a stream we can read using 'busboy' or a minimal manual approach. To keep
-  // this self-contained, we'll use a tiny dynamic import of 'busboy'.
-  const { default: Busboy } = await import("busboy");
-  return new Promise((resolve, reject) => {
+function parseMultipart(
+  req: NextApiRequest
+): Promise<{ buffer: Buffer; filename: string; mimeType: string; sessionId?: string }> {
+  return new Promise(async (resolve, reject) => {
+    const { default: Busboy } = await import("busboy");
     const bb = Busboy({ headers: req.headers });
-    let chunks: Buffer[] = [];
+
+    const chunks: Buffer[] = [];
     let filename = "upload.bin";
+    let mimeType = "application/octet-stream";
     let sessionId: string | undefined;
 
-    bb.on("file", (_name, file, info) => {
-      filename = info.filename || filename;
+    bb.on("file", (_name: string, file: NodeJS.ReadableStream, info: FileInfo) => {
+      filename = info?.filename || filename;
+      mimeType = info?.mimeType || mimeType;
+
       file.on("data", (d: Buffer) => chunks.push(d));
+      file.on("error", (err: unknown) => reject(err));
     });
 
-    bb.on("field", (name, val) => {
+    bb.on("field", (name: string, val: string) => {
       if (name === "sessionId") sessionId = val;
     });
 
-    bb.on("close", () => {
-      const buf = Buffer.concat(chunks);
-      resolve({ file: buf, filename, sessionId });
+    bb.on("error", (err: unknown) => reject(err));
+
+    bb.on("finish", () => {
+      const buffer = Buffer.concat(chunks);
+      resolve({ buffer, filename, mimeType, sessionId });
     });
 
-    bb.on("error", reject);
     req.pipe(bb);
   });
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  if (req.method !== "POST") {
+    return res.status(405).json({ ok: false, error: "Method not allowed" });
+  }
 
   try {
-    if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
-      return res.status(500).json({ error: "Missing Supabase env vars" });
+    const { buffer, filename, mimeType, sessionId } = await parseMultipart(req);
+
+    if (!buffer || buffer.length === 0) {
+      return res.status(400).json({ ok: false, error: "No file received" });
     }
 
-    const parsed = await readFormData(req);
-    if (!parsed) return res.status(400).json({ error: "No file" });
+    const safeSession = sessionId || "unknown";
+    const ts = Date.now();
+    const path = `sessions/${safeSession}/${ts}-${filename}`;
 
-    const { file, filename, sessionId } = parsed;
+    // Upload to Supabase Storage
+    const { error: uploadErr } = await supabase.storage
+      .from("uploads")
+      .upload(path, buffer, {
+        contentType: mimeType,
+        upsert: false,
+      });
 
-    const path = `${sessionId || "anonymous"}/${Date.now()}_${filename}`;
-    const { error: upErr } = await supabase.storage.from("documents").upload(path, file, {
-      contentType: "application/octet-stream",
-      upsert: false,
-    });
-    if (upErr) {
-      return res.status(500).json({ error: "Upload failed", details: upErr.message });
+    if (uploadErr) {
+      console.error("Supabase upload error:", uploadErr);
+      return res.status(500).json({ ok: false, error: "Upload failed", details: uploadErr.message });
     }
 
-    const { data: pub } = supabase.storage.from("documents").getPublicUrl(path);
-    const url = pub?.publicUrl;
+    // Public URL (bucket must be public or have a public policy)
+    const { data: pub } = supabase.storage.from("uploads").getPublicUrl(path);
+    const downloadUrl = pub?.publicUrl || null;
 
     return res.status(200).json({
       ok: true,
-      fileName: filename,
-      url: url || null,
+      file: { filename, mimeType, size: buffer.length },
       path,
+      downloadUrl,
+      message: downloadUrl
+        ? "Upload completed."
+        : "Upload completed, but I couldn’t fetch the download link. I’ll still store it.",
     });
-  } catch (e: any) {
-    return res.status(500).json({ error: "Unexpected error", details: e?.message || String(e) });
+  } catch (err: any) {
+    console.error("Upload API error:", err?.message || err);
+    return res.status(500).json({ ok: false, error: "Unexpected error", details: String(err?.message || err) });
   }
 }
