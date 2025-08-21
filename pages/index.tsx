@@ -20,7 +20,6 @@ export default function Home() {
   ]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
-  const [journey, setJourney] = useState(8); // placeholder % until short script lands
   const [language, setLanguage] = useState("English");
   const [sessionId, setSessionId] = useState<string>("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -51,10 +50,7 @@ export default function Home() {
       const data = await res.json();
       const reply: string = data.reply ?? "Sorry, I didn’t catch that.";
       setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
-
-      // very light “journey” nudge (will be replaced by script-driven %)
-      setJourney((p) => Math.min(100, p + 4));
-    } catch (e) {
+    } catch {
       setMessages((prev) => [
         ...prev,
         { role: "assistant", content: "Sorry—something went wrong sending that. Please try again." },
@@ -76,7 +72,6 @@ export default function Home() {
   const handleQuick = (text: string) => sendToChat(text);
 
   const handleEmoji = (emoji: string) => {
-    // append the emoji to the input for the user to see/use
     setInput((v) => (v ? v + " " + emoji : emoji));
   };
 
@@ -97,7 +92,7 @@ export default function Home() {
           ...prev,
           {
             role: "assistant",
-            content: `✅ Document received: [${data.fileName ?? file.name}](${data.url}) — you can download it anytime.`,
+            content: `✅ Document received: <a href="${data.url}" target="_blank" rel="noreferrer">${data.fileName ?? file.name}</a> — you can download it anytime.`,
           },
         ]);
       } else {
@@ -112,7 +107,6 @@ export default function Home() {
         { role: "assistant", content: "Sorry—upload failed. Please try again." },
       ]);
     } finally {
-      // reset file input so same file can be reselected if needed
       (e.target as HTMLInputElement).value = "";
     }
   };
@@ -124,9 +118,7 @@ export default function Home() {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
       </Head>
 
-      {/* App shell keeps us perfectly centered & stable */}
       <div className="app-shell">
-        {/* Chat card = bordered container with column flex to avoid top-left squash */}
         <div className="chat-card">
           {/* Header */}
           <div className="chat-header">
@@ -136,45 +128,35 @@ export default function Home() {
               <span className="online-text">Online</span>
             </div>
 
-            <div className="controls-side">
-              <div className="journey">
-                <div className="journey-label">Journey</div>
-                <div className="journey-bar">
-                  <div className="journey-fill" style={{ width: `${journey}%` }} />
-                </div>
-                <div className="journey-pct">{journey}%</div>
-              </div>
+            <div className="prefs">
+              <select
+                value={language}
+                onChange={(e) => setLanguage(e.target.value)}
+                className="select"
+              >
+                <option>English</option>
+                <option>Español</option>
+                <option>Français</option>
+                <option>Deutsch</option>
+                <option>Polski</option>
+                <option>Română</option>
+              </select>
 
-              <div className="prefs">
-                <select
-                  value={language}
-                  onChange={(e) => setLanguage(e.target.value)}
-                  className="select"
-                >
-                  <option>English</option>
-                  <option>Español</option>
-                  <option>Français</option>
-                  <option>Deutsch</option>
-                  <option>Polski</option>
-                  <option>Română</option>
-                </select>
+              <button
+                className="btn-ghost"
+                onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+                title="Toggle theme"
+              >
+                {theme === "dark" ? "☀️ Light" : "🌙 Dark"}
+              </button>
 
-                <button
-                  className="btn-ghost"
-                  onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
-                  title="Toggle theme"
-                >
-                  {theme === "dark" ? "☀️ Light" : "🌙 Dark"}
-                </button>
-
-                <button className="btn-ghost" title="Voice">
-                  🔈 Voice Off
-                </button>
-              </div>
+              <button className="btn-ghost" title="Voice">
+                🔈 Voice Off
+              </button>
             </div>
           </div>
 
-          {/* Messages area */}
+          {/* Messages */}
           <div className="messages">
             {messages.map((m, i) => (
               <div
@@ -187,7 +169,7 @@ export default function Home() {
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Quick replies (chips) */}
+          {/* Quick replies */}
           <div className="chips">
             {["I have credit card debts", "Bailiffs worry me", "Court action", "Missed payments"].map(
               (txt) => (
@@ -198,7 +180,7 @@ export default function Home() {
             )}
           </div>
 
-          {/* Upload + Emojis row */}
+          {/* Upload + Emojis */}
           <div className="aux-row">
             <label className="upload">
               <span className="upload-btn">📎 Upload docs</span>
@@ -214,7 +196,7 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Input row */}
+          {/* Composer */}
           <div className="composer">
             <input
               className="input"
