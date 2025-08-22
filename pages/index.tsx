@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
-import avatarPhoto from "../assets/advisor-avatar-human.png"; // ✅ bundled with build
+import avatarPhoto from "../assets/advisor-avatar-human.png"; // bundled with the app
 
 type Sender = "user" | "bot";
 type Attachment = { filename: string; url: string; mimeType?: string; size?: number };
@@ -26,7 +26,12 @@ function formatBytes(n?: number) {
 
 function pickUkMaleVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
   if (!voices?.length) return null;
-  const preferred = ["Google UK English Male","Microsoft Ryan Online (Natural) - English (United Kingdom)","Daniel","UK English Male"];
+  const preferred = [
+    "Google UK English Male",
+    "Microsoft Ryan Online (Natural) - English (United Kingdom)",
+    "Daniel",
+    "UK English Male",
+  ];
   for (const name of preferred) { const v = voices.find(vv => vv.name === name); if (v) return v; }
   const enGb = voices.find(v => (v.lang||"").toLowerCase().startsWith("en-gb")); if (enGb) return enGb;
   const enAny = voices.find(v => (v.lang||"").toLowerCase().startsWith("en-")); return enAny || null;
@@ -186,6 +191,7 @@ export default function Home() {
   return (
     <main style={styles.frame}>
       <div style={styles.card}>
+        {/* Header */}
         <div style={styles.header}>
           <div style={styles.brand}>
             <div style={styles.avatarWrap}><Avatar /></div>
@@ -205,11 +211,13 @@ export default function Home() {
           </div>
         </div>
 
+        {/* Messages */}
         <div style={styles.chat}>
           {messages.map((m, i) => {
             const isUser = m.sender === "user";
             return (
               <div key={i} style={{ ...styles.row, ...(isUser ? styles.rowUser : {}) }}>
+                {/* BOT avatar only */}
                 {!isUser && <div style={styles.avatarWrap}><Avatar /></div>}
                 <div style={{ ...styles.bubble, ...(isUser ? styles.bubbleUser : styles.bubbleBot) }}>
                   <div>{m.text}</div>
@@ -224,13 +232,14 @@ export default function Home() {
                     </div>
                   )}
                 </div>
-                {isUser && <div style={styles.avatarWrap}><Avatar /></div>}
+                {/* (User avatar removed) */}
               </div>
             );
           })}
           <div ref={bottomRef} />
         </div>
 
+        {/* Footer */}
         <div style={styles.footer}>
           <input ref={fileInputRef} type="file" hidden onChange={handleFileSelected} />
           <button type="button" style={styles.fileBtn} onClick={handleUploadClick} disabled={uploading}>
