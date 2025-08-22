@@ -1,13 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import Image from "next/image";
+import avatarPhoto from "../public/advisor-avatar-human.png"; // ✅ bundled by Next
 
 type Sender = "user" | "bot";
 type Attachment = { filename: string; url: string; mimeType?: string; size?: number };
 type Message = { sender: Sender; text: string; attachment?: Attachment };
 
 const LANGUAGES = ["English","Spanish","Polish","French","German","Portuguese","Italian","Romanian"];
-
-// cache-bust v=2 so browsers fetch the new file
-const AVATAR_SRC = "/advisor-avatar-human.png?v=2";
 
 function ensureSessionId(): string {
   if (typeof window === "undefined") return Math.random().toString(36).slice(2);
@@ -38,30 +37,14 @@ function pickUkMaleVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice |
   const enAny = voices.find((v) => (v.lang || "").toLowerCase().startsWith("en-")); return enAny || null;
 }
 
-// Minimal avatar that ONLY uses the PNG; on error shows a "Missing" badge
 function Avatar({ size = 40 }: { size?: number }) {
-  const [err, setErr] = useState(false);
-  if (err) {
-    return (
-      <div
-        style={{
-          width: size, height: size, borderRadius: "50%", background: "#eee",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          color: "#555", fontSize: 10, border: "1px solid #ddd"
-        }}
-        title="Missing avatar"
-      >
-        Missing
-      </div>
-    );
-  }
   return (
-    <img
-      src={AVATAR_SRC}
+    <Image
+      src={avatarPhoto}
       alt=""
-      onError={() => setErr(true)}
-      decoding="async"
-      loading="eager"
+      width={size}
+      height={size}
+      priority
       style={{
         width: size,
         height: size,
@@ -153,6 +136,7 @@ export default function Home() {
   };
 
   const handleUploadClick = () => fileInputRef.current?.click();
+
   const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; if (!file) return;
     setUploading(true);
@@ -210,8 +194,7 @@ export default function Home() {
         {/* Header */}
         <div style={styles.header}>
           <div style={styles.brand}>
-            {/* key forces remount when AVATAR_SRC changes */}
-            <div style={styles.avatarWrap}><Avatar key={AVATAR_SRC} /></div>
+            <div style={styles.avatarWrap}><Avatar /></div>
             <span>Debt Advisor</span>
             <span style={styles.onlineDot}>● Online</span>
           </div>
@@ -234,7 +217,7 @@ export default function Home() {
             const isUser = m.sender === "user";
             return (
               <div key={i} style={{ ...styles.row, ...(isUser ? styles.rowUser : {}) }}>
-                {!isUser && <div style={styles.avatarWrap}><Avatar key={`bot-${AVATAR_SRC}`} /></div>}
+                {!isUser && <div style={styles.avatarWrap}><Avatar /></div>}
                 <div style={{ ...styles.bubble, ...(isUser ? styles.bubbleUser : styles.bubbleBot) }}>
                   <div>{m.text}</div>
                   {m.attachment && (
@@ -248,7 +231,7 @@ export default function Home() {
                     </div>
                   )}
                 </div>
-                {isUser && <div style={styles.avatarWrap}><Avatar key={`user-${AVATAR_SRC}`} /></div>}
+                {isUser && <div style={styles.avatarWrap}><Avatar /></div>}
               </div>
             );
           })}
