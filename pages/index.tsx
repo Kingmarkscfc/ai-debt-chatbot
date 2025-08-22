@@ -4,79 +4,45 @@ type Sender = "user" | "bot";
 type Attachment = { filename: string; url: string; mimeType?: string; size?: number };
 type Message = { sender: Sender; text: string; attachment?: Attachment };
 
-const LANGUAGES = ["English", "Spanish", "Polish", "French", "German", "Portuguese", "Italian", "Romanian"];
+const LANGUAGES = ["English","Spanish","Polish","French","German","Portuguese","Italian","Romanian"];
 
-/** Prefer your PNG in /public; then JPG; then earlier PNG name. */
-const AVATAR_CANDIDATES = [
-  "/advisor-avatar.png?v=4",
-  "/advisor-avatar.jpg?v=4",
-  "/avatar-pro-male.png?v=4",
-];
-
-/** Simple inline SVG fallback so you never see broken alt text. */
+// Avatar sources: PNG first, then JPG; then neutral fallback SVG
+const AVATAR_CANDIDATES = ["/advisor-avatar.png?v=5", "/advisor-avatar.jpg?v=5"];
 const FALLBACK_AVATAR =
   "data:image/svg+xml;utf8," +
-  encodeURIComponent(`
-<svg xmlns='http://www.w3.org/2000/svg' width='128' height='128' viewBox='0 0 128 128'>
-  <defs>
-    <linearGradient id='g' x1='0' y1='0' x2='0' y2='1'>
-      <stop offset='0%' stop-color='#e8edf5'/>
-      <stop offset='100%' stop-color='#d7dee9'/>
-    </linearGradient>
-  </defs>
+  encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' width='128' height='128' viewBox='0 0 128 128'>
+  <defs><linearGradient id='g' x1='0' y1='0' x2='0' y2='1'>
+  <stop offset='0%' stop-color='#e8edf5'/><stop offset='100%' stop-color='#d7dee9'/></linearGradient></defs>
   <rect width='128' height='128' fill='url(#g)'/>
-  <g transform='translate(0,6)'>
-    <circle cx='64' cy='42' r='26' fill='#f2c9ab'/>
-    <rect x='28' y='68' width='72' height='38' rx='10' fill='#253447'/>
-    <polygon points='64,70 76,95 52,95' fill='#1e73be'/>
-    <rect x='54' y='62' width='20' height='12' rx='6' fill='#f0c7a8'/>
-    <path d='M38,48 q26,-28 52,0 v-8 q-26,-20 -52,0z' fill='#2b2b2b'/>
-  </g>
-</svg>`);
-
-/** Pick a UK male voice when available. */
-function pickUkMaleVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
-  if (!voices?.length) return null;
-  const preferred = [
-    "Google UK English Male",
-    "Microsoft Ryan Online (Natural) - English (United Kingdom)",
-    "Daniel",
-    "UK English Male",
-  ];
-  for (const name of preferred) {
-    const v = voices.find((vv) => vv.name === name);
-    if (v) return v;
-  }
-  const enGb = voices.find((v) => (v.lang || "").toLowerCase().startsWith("en-gb"));
-  if (enGb) return enGb;
-  const enAny = voices.find((v) => (v.lang || "").toLowerCase().startsWith("en-"));
-  return enAny || null;
-}
+  <g transform='translate(0,6)'><circle cx='64' cy='42' r='26' fill='#f2c9ab'/>
+  <rect x='28' y='68' width='72' height='38' rx='10' fill='#253447'/>
+  <polygon points='64,70 76,95 52,95' fill='#1e73be'/>
+  <rect x='54' y='62' width='20' height='12' rx='6' fill='#f0c7a8'/>
+  <path d='M38,48 q26,-28 52,0 v-8 q-26,-20 -52,0z' fill='#2b2b2b'/></g></svg>`);
 
 function ensureSessionId(): string {
   if (typeof window === "undefined") return Math.random().toString(36).slice(2);
   const key = "da_session_id";
   let sid = localStorage.getItem(key);
-  if (!sid) {
-    sid = Math.random().toString(36).slice(2);
-    localStorage.setItem(key, sid);
-  }
+  if (!sid) { sid = Math.random().toString(36).slice(2); localStorage.setItem(key, sid); }
   return sid;
 }
-
 function formatBytes(n?: number) {
   if (typeof n !== "number") return "";
   if (n < 1024) return `${n} B`;
-  const units = ["KB", "MB", "GB"];
-  let i = -1;
-  do {
-    n /= 1024;
-    i++;
-  } while (n >= 1024 && i < units.length - 1);
+  const units = ["KB","MB","GB"]; let i=-1;
+  do { n /= 1024; i++; } while (n >= 1024 && i < units.length - 1);
   return `${n.toFixed(1)} ${units[i]}`;
 }
+function pickUkMaleVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
+  if (!voices?.length) return null;
+  const preferred = ["Google UK English Male","Microsoft Ryan Online (Natural) - English (United Kingdom)","Daniel","UK English Male"];
+  for (const name of preferred) { const v = voices.find(vv => vv.name === name); if (v) return v; }
+  const enGb = voices.find(v => (v.lang||"").toLowerCase().startsWith("en-gb")); if (enGb) return enGb;
+  const enAny = voices.find(v => (v.lang||"").toLowerCase().startsWith("en-")); return enAny || null;
+}
 
-/** Robust avatar that tries PNG → JPG → previous PNG, then a neutral fallback. */
+// Avatar component with PNG→JPG→fallback
 function Avatar({ size = 40 }: { size?: number }) {
   const [idx, setIdx] = useState(0);
   const src = idx < AVATAR_CANDIDATES.length ? AVATAR_CANDIDATES[idx] : FALLBACK_AVATAR;
@@ -84,17 +50,12 @@ function Avatar({ size = 40 }: { size?: number }) {
     <img
       src={src}
       alt=""
-      onError={() => setIdx((i) => i + 1)}
+      onError={() => setIdx(i => i + 1)}
       decoding="async"
       loading="eager"
       style={{
-        width: size,
-        height: size,
-        display: "block",
-        borderRadius: "999px",
-        objectFit: "cover",
-        background: "#e5e7eb",
-        boxShadow: "0 1px 3px rgba(0,0,0,0.18)",
+        width: size, height: size, display: "block", borderRadius: "999px",
+        objectFit: "cover", background: "#e5e7eb", boxShadow: "0 1px 3px rgba(0,0,0,0.18)"
       }}
     />
   );
@@ -113,34 +74,24 @@ export default function Home() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chosenVoice = useRef<SpeechSynthesisVoice | null>(null);
 
-  // Initial greeting and theme restore
   useEffect(() => {
     const savedTheme = typeof window !== "undefined" ? localStorage.getItem("da_theme") : null;
     if (savedTheme === "dark" || savedTheme === "light") setTheme(savedTheme as "light" | "dark");
-
     setMessages([
       { sender: "bot", text: "Hello! My name’s Mark. What prompted you to seek help with your debts today?" },
       { sender: "bot", text: "🌍 You can change languages any time using the dropdown above." },
     ]);
   }, []);
 
-  // Auto-scroll
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
-  // Prepare voice
   useEffect(() => {
     if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
-    const assign = () => {
-      chosenVoice.current = pickUkMaleVoice(window.speechSynthesis.getVoices());
-    };
+    const assign = () => { chosenVoice.current = pickUkMaleVoice(window.speechSynthesis.getVoices()); };
     const vs = window.speechSynthesis.getVoices();
-    if (vs?.length) assign();
-    else window.speechSynthesis.onvoiceschanged = assign;
+    if (vs?.length) assign(); else window.speechSynthesis.onvoiceschanged = assign;
   }, []);
 
-  // Speak bot replies
   useEffect(() => {
     if (!voiceOn) return;
     if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
@@ -148,42 +99,32 @@ export default function Home() {
     if (!last || last.sender !== "bot") return;
     const u = new SpeechSynthesisUtterance(last.text);
     if (chosenVoice.current) u.voice = chosenVoice.current;
-    u.rate = 1;
-    u.pitch = 1;
-    u.volume = 1;
+    u.rate = 1; u.pitch = 1; u.volume = 1;
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(u);
   }, [messages, voiceOn]);
 
-  // API helper
   const sendToApi = async (text: string, hist: Message[]) => {
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        sessionId,
-        userMessage: text,
-        history: hist.map((m) => m.text),
-        language,
-      }),
+      body: JSON.stringify({ sessionId, userMessage: text, history: hist.map(m => m.text), language }),
     });
     return res.json();
   };
 
   const handleSubmit = async () => {
-    const text = input.trim();
-    if (!text) return;
+    const text = input.trim(); if (!text) return;
     setInput("");
     const userMsg: Message = { sender: "user", text };
     const nextHist = [...messages, userMsg];
     setMessages(nextHist);
-
     try {
       const data = await sendToApi(text, nextHist);
       const reply = (data?.reply as string) || "Thanks — let’s continue.";
-      setMessages((prev) => [...prev, { sender: "bot", text: reply }]);
+      setMessages(prev => [...prev, { sender: "bot", text: reply }]);
     } catch {
-      setMessages((prev) => [...prev, { sender: "bot", text: "⚠️ I couldn’t reach the server just now." }]);
+      setMessages(prev => [...prev, { sender: "bot", text: "⚠️ I couldn’t reach the server just now." }]);
     }
   };
 
@@ -194,205 +135,75 @@ export default function Home() {
     const userMsg: Message = { sender: "user", text: msg };
     const nextHist = [...messages, userMsg];
     setMessages(nextHist);
-    try {
-      await sendToApi(msg, nextHist);
-    } catch {
-      /* no-op */
-    }
+    try { await sendToApi(msg, nextHist); } catch {}
   };
 
-  // Upload
   const handleUploadClick = () => fileInputRef.current?.click();
   const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const file = e.target.files?.[0]; if (!file) return;
     setUploading(true);
     try {
-      const fd = new FormData();
-      fd.append("file", file);
-      fd.append("sessionId", sessionId);
+      const fd = new FormData(); fd.append("file", file); fd.append("sessionId", sessionId);
       const r = await fetch("/api/upload", { method: "POST", body: fd });
       const data = await r.json();
       if (!data?.ok) {
         const msg = `Upload failed — ${data?.details || data?.error || "please try again."}`;
-        setMessages((prev) => [...prev, { sender: "bot", text: msg }]);
-        return;
+        setMessages(prev => [...prev, { sender: "bot", text: msg }]); return;
       }
       const cleanName = data?.file?.filename || file.name;
       const link = data?.downloadUrl || data?.url || "";
-      const attach: Attachment | undefined = link
-        ? { filename: cleanName, url: link, mimeType: data?.file?.mimeType, size: data?.file?.size }
-        : undefined;
-      setMessages((prev) => [
-        ...prev,
-        { sender: "bot", text: link ? `📎 Uploaded: ${cleanName}` : `📎 Uploaded your file (${cleanName}).`, attachment: attach },
-      ]);
+      const attach: Attachment | undefined = link ? { filename: cleanName, url: link, mimeType: data?.file?.mimeType, size: data?.file?.size } : undefined;
+      setMessages(prev => [...prev, { sender: "bot", text: link ? `📎 Uploaded: ${cleanName}` : `📎 Uploaded your file (${cleanName}).`, attachment: attach }]);
     } catch {
-      setMessages((prev) => [...prev, { sender: "bot", text: "Upload failed — network error." }]);
+      setMessages(prev => [...prev, { sender: "bot", text: "Upload failed — network error." }]);
     } finally {
-      setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
+      setUploading(false); if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
   const toggleTheme = () => {
-    setTheme((t) => {
-      const next = t === "dark" ? "light" : "dark";
-      if (typeof window !== "undefined") localStorage.setItem("da_theme", next);
-      return next;
-    });
+    setTheme(t => { const next = t === "dark" ? "light" : "dark"; if (typeof window !== "undefined") localStorage.setItem("da_theme", next); return next; });
   };
 
-  // --- styles
   const isDark = theme === "dark";
   const styles: { [k: string]: React.CSSProperties } = {
-    frame: {
-      maxWidth: 720,
-      margin: "0 auto",
-      padding: 16,
-      fontFamily: "'Segoe UI', Arial, sans-serif",
-      background: isDark ? "#0b1220" : "#f3f4f6",
-      minHeight: "100vh",
-      color: isDark ? "#e5e7eb" : "#111827",
-    },
-    card: {
-      border: isDark ? "1px solid #1f2937" : "1px solid #e5e7eb",
-      borderRadius: 16,
-      background: isDark ? "#111827" : "#ffffff",
-      boxShadow: isDark ? "0 8px 24px rgba(0,0,0,0.45)" : "0 8px 24px rgba(0,0,0,0.06)",
-      overflow: "hidden",
-    },
-    header: {
-      display: "flex",
-      justifyContent: "space-between",
-      alignItems: "center",
-      padding: "12px 16px",
-      borderBottom: isDark ? "1px solid #1f2937" : "1px solid #e5e7eb",
-      background: isDark ? "#0f172a" : "#fafafa",
-    },
+    frame: { maxWidth: 720, margin: "0 auto", padding: 16, fontFamily: "'Segoe UI', Arial, sans-serif", background: isDark ? "#0b1220" : "#f3f4f6", minHeight: "100vh", color: isDark ? "#e5e7eb" : "#111827" },
+    card: { border: isDark ? "1px solid #1f2937" : "1px solid #e5e7eb", borderRadius: 16, background: isDark ? "#111827" : "#ffffff", boxShadow: isDark ? "0 8px 24px rgba(0,0,0,0.45)" : "0 8px 24px rgba(0,0,0,0.06)", overflow: "hidden" },
+    header: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: isDark ? "1px solid #1f2937" : "1px solid #e5e7eb", background: isDark ? "#0f172a" : "#fafafa" },
     brand: { display: "flex", alignItems: "center", gap: 10, fontWeight: 700 },
     onlineDot: { marginLeft: 8, fontSize: 12, color: "#10b981", fontWeight: 600 },
     tools: { display: "flex", alignItems: "center", gap: 8 },
-    select: {
-      padding: "6px 10px",
-      borderRadius: 8,
-      border: isDark ? "1px solid #374151" : "1px solid #d1d5db",
-      background: isDark ? "#111827" : "#fff",
-      color: isDark ? "#e5e7eb" : "#111827",
-    },
-    btn: {
-      padding: "6px 10px",
-      borderRadius: 8,
-      border: isDark ? "1px solid #374151" : "1px solid #d1d5db",
-      background: isDark ? "#111827" : "#fff",
-      color: isDark ? "#e5e7eb" : "#111827",
-      cursor: "pointer",
-    },
-    chat: {
-      height: 520,
-      overflowY: "auto",
-      padding: 16,
-      background: isDark ? "linear-gradient(#0b1220, #0f172a)" : "linear-gradient(#ffffff, #fafafa)",
-      display: "flex",
-      flexDirection: "column",
-      gap: 12,
-    },
+    select: { padding: "6px 10px", borderRadius: 8, border: isDark ? "1px solid #374151" : "1px solid #d1d5db", background: isDark ? "#111827" : "#fff", color: isDark ? "#e5e7eb" : "#111827" },
+    btn: { padding: "6px 10px", borderRadius: 8, border: isDark ? "1px solid #374151" : "1px solid #d1d5db", background: isDark ? "#111827" : "#fff", color: isDark ? "#e5e7eb" : "#111827", cursor: "pointer" },
+    chat: { height: 520, overflowY: "auto", padding: 16, background: isDark ? "linear-gradient(#0b1220, #0f172a)" : "linear-gradient(#ffffff, #fafafa)", display: "flex", flexDirection: "column", gap: 12 },
     row: { display: "flex", alignItems: "flex-start", gap: 10 },
     rowUser: { justifyContent: "flex-end" },
-    avatarWrap: {
-      width: 40,
-      height: 40,
-      borderRadius: "50%",
-      overflow: "hidden",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-    },
-    bubble: {
-      padding: "10px 14px",
-      borderRadius: 14,
-      maxWidth: "70%",
-      lineHeight: 1.45,
-      boxShadow: isDark ? "0 2px 10px rgba(0,0,0,0.5)" : "0 2px 10px rgba(0,0,0,0.06)",
-    },
-    bubbleBot: {
-      background: isDark ? "#1f2937" : "#f3f4f6",
-      color: isDark ? "#e5e7eb" : "#111827",
-      borderTopLeftRadius: 6,
-    },
-    bubbleUser: {
-      background: isDark ? "#1d4ed8" : "#dbeafe",
-      color: isDark ? "#e5e7eb" : "#0f172a",
-      borderTopRightRadius: 6,
-    },
+    avatarWrap: { width: 40, height: 40, borderRadius: "50%", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" },
+    bubble: { padding: "10px 14px", borderRadius: 14, maxWidth: "70%", lineHeight: 1.45, boxShadow: isDark ? "0 2px 10px rgba(0,0,0,0.5)" : "0 2px 10px rgba(0,0,0,0.06)" },
+    bubbleBot: { background: isDark ? "#1f2937" : "#f3f4f6", color: isDark ? "#e5e7eb" : "#111827", borderTopLeftRadius: 6 },
+    bubbleUser: { background: isDark ? "#1d4ed8" : "#dbeafe", color: isDark ? "#e5e7eb" : "#0f172a", borderTopRightRadius: 6 },
     attach: { marginTop: 8 },
-    chip: {
-      display: "inline-flex",
-      alignItems: "center",
-      gap: 8,
-      fontSize: 12,
-      padding: "6px 10px",
-      background: isDark ? "#0b1220" : "#fff",
-      border: isDark ? "1px solid #374151" : "1px solid #e5e7eb",
-      borderRadius: 999,
-    },
-    footer: {
-      display: "flex",
-      alignItems: "center",
-      gap: 8,
-      padding: 12,
-      borderTop: isDark ? "1px solid #1f2937" : "1px solid #e5e7eb",
-      background: isDark ? "#0f172a" : "#fafafa",
-    },
-    fileBtn: {
-      padding: "8px 12px",
-      borderRadius: 8,
-      border: isDark ? "1px solid #374151" : "1px solid #d1d5db",
-      background: isDark ? "#111827" : "#fff",
-      color: isDark ? "#e5e7eb" : "#111827",
-      cursor: "pointer",
-    },
-    input: {
-      flex: 1,
-      padding: "10px 12px",
-      borderRadius: 8,
-      border: isDark ? "1px solid #374151" : "1px solid #d1d5db",
-      fontSize: 16,
-      background: isDark ? "#111827" : "#fff",
-      color: isDark ? "#e5e7eb" : "#111827",
-    },
-    sendBtn: {
-      padding: "10px 14px",
-      borderRadius: 8,
-      border: "none",
-      background: "#16a34a",
-      color: "#fff",
-      cursor: "pointer",
-      fontWeight: 600,
-    },
+    chip: { display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, padding: "6px 10px", background: isDark ? "#0b1220" : "#fff", border: isDark ? "1px solid #374151" : "1px solid #e5e7eb", borderRadius: 999 },
+    footer: { display: "flex", alignItems: "center", gap: 8, padding: 12, borderTop: isDark ? "1px solid #1f2937" : "1px solid #e5e7eb", background: isDark ? "#0f172a" : "#fafafa" },
+    fileBtn: { padding: "8px 12px", borderRadius: 8, border: isDark ? "1px solid #374151" : "1px solid #d1d5db", background: isDark ? "#111827" : "#fff", color: isDark ? "#e5e7eb" : "#111827", cursor: "pointer" },
+    input: { flex: 1, padding: "10px 12px", borderRadius: 8, border: isDark ? "1px solid #374151" : "1px solid #d1d5db", fontSize: 16, background: isDark ? "#111827" : "#fff", color: isDark ? "#e5e7eb" : "#111827" },
+    sendBtn: { padding: "10px 14px", borderRadius: 8, border: "none", background: "#16a34a", color: "#fff", cursor: "pointer", fontWeight: 600 },
   };
 
   return (
     <main style={styles.frame}>
       <div style={styles.card}>
-        {/* Header */}
         <div style={styles.header}>
           <div style={styles.brand}>
-            <div style={styles.avatarWrap}>
-              <Avatar />
-            </div>
+            <div style={styles.avatarWrap}><Avatar /></div>
             <span>Debt Advisor</span>
             <span style={styles.onlineDot}>● Online</span>
           </div>
           <div style={styles.tools}>
             <select style={styles.select} value={language} onChange={handleLanguageChange} title="Change language">
-              {LANGUAGES.map((l) => (
-                <option key={l} value={l}>
-                  {l}
-                </option>
-              ))}
+              {LANGUAGES.map(l => <option key={l} value={l}>{l}</option>)}
             </select>
-            <button type="button" style={styles.btn} onClick={() => setVoiceOn((v) => !v)} title="Toggle voice">
+            <button type="button" style={styles.btn} onClick={() => setVoiceOn(v => !v)} title="Toggle voice">
               {voiceOn ? "🔈 Voice On" : "🔇 Voice Off"}
             </button>
             <button type="button" style={styles.btn} onClick={toggleTheme} title="Toggle theme">
@@ -401,17 +212,12 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Messages */}
         <div style={styles.chat}>
           {messages.map((m, i) => {
             const isUser = m.sender === "user";
             return (
               <div key={i} style={{ ...styles.row, ...(isUser ? styles.rowUser : {}) }}>
-                {!isUser && (
-                  <div style={styles.avatarWrap}>
-                    <Avatar />
-                  </div>
-                )}
+                {!isUser && <div style={styles.avatarWrap}><Avatar /></div>}
                 <div style={{ ...styles.bubble, ...(isUser ? styles.bubbleUser : styles.bubbleBot) }}>
                   <div>{m.text}</div>
                   {m.attachment && (
@@ -419,42 +225,24 @@ export default function Home() {
                       <a href={m.attachment.url} target="_blank" rel="noreferrer" style={styles.chip}>
                         <span>📄</span>
                         <span style={{ fontWeight: 600 }}>{m.attachment.filename}</span>
-                        {typeof m.attachment.size === "number" && (
-                          <span style={{ opacity: 0.7 }}>({formatBytes(m.attachment.size)})</span>
-                        )}
+                        {typeof m.attachment.size === "number" && <span style={{ opacity: 0.7 }}>({formatBytes(m.attachment.size)})</span>}
                         <span style={{ textDecoration: "underline" }}>Download</span>
                       </a>
                     </div>
                   )}
                 </div>
-                {isUser && (
-                  <div style={styles.avatarWrap}>
-                    {/* keep user avatar simple (same shape) */}
-                    <Avatar />
-                  </div>
-                )}
+                {isUser && <div style={styles.avatarWrap}><Avatar /></div>}
               </div>
             );
           })}
           <div ref={bottomRef} />
         </div>
 
-        {/* Footer */}
         <div style={styles.footer}>
           <input ref={fileInputRef} type="file" hidden onChange={handleFileSelected} />
-          <button type="button" style={styles.fileBtn} onClick={handleUploadClick} disabled={uploading}>
-            📎 Upload docs {uploading ? "…" : ""}
-          </button>
-          <input
-            style={styles.input}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
-            placeholder="Type your message…"
-          />
-          <button type="button" style={styles.sendBtn} onClick={handleSubmit}>
-            Send
-          </button>
+          <button type="button" style={styles.fileBtn} onClick={handleUploadClick} disabled={uploading}>📎 Upload docs {uploading ? "…" : ""}</button>
+          <input style={styles.input} value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === "Enter" && handleSubmit()} placeholder="Type your message…" />
+          <button type="button" style={styles.sendBtn} onClick={handleSubmit}>Send</button>
         </div>
       </div>
     </main>
