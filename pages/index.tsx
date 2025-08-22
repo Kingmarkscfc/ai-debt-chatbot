@@ -1,298 +1,299 @@
-import Head from "next/head";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-type ChatMsg = { role: "user" | "assistant" | "system"; content: string };
-type ChatResponse = {
-  reply: string;
-  sessionId: string;
-  stepIndex?: number;
-  totalSteps?: number;
-  quickReplies?: string[];
-};
+type Sender = "user" | "bot";
+type Attachment = { filename: string; url: string; mimeType?: string; size?: number };
+type Message = { sender: Sender; text: string; attachment?: Attachment };
 
-function getOrCreateSessionId(): string {
+function ensureSessionId(): string {
   if (typeof window === "undefined") return Math.random().toString(36).slice(2);
-  let sid = localStorage.getItem("da_session_id");
+  const key = "da_session_id";
+  let sid = localStorage.getItem(key);
   if (!sid) {
     sid = Math.random().toString(36).slice(2);
-    localStorage.setItem("da_session_id", sid);
+    localStorage.setItem(key, sid);
   }
   return sid;
 }
 
-export default function Home() {
-  const [theme, setTheme] = useState<"light" | "dark">("dark");
-  const [lang, setLang] = useState<"en" | "es" | "fr" | "de" | "pl" | "ro">("en");
-  const [messages, setMessages] = useState<ChatMsg[]>([
-    { role: "assistant", content: "Hello! My name’s Mark. What prompted you to seek help with your debts today?" },
-  ]);
-  const [input, setInput] = useState("");
-  const [isTyping, setIsTyping] = useState(false);
-  const [quickReplies, setQuickReplies] = useState<string[]>([]);
-  const [sessionId, setSessionId] = useState<string>("");
-  const [stepIndex, setStepIndex] = useState<number>(0);
-  const [totalSteps, setTotalSteps] = useState<number>(12);
-  const [speaking, setSpeaking] = useState<boolean>(false);
-  const [showEmojis, setShowEmojis] = useState<boolean>(false);
-  const [showSkinTones, setShowSkinTones] = useState<boolean>(false);
+function formatBytes(n?: number) {
+  if (typeof n !== "number") return "";
+  if (n < 1024) return `${n} B`;
+  const units = ["KB", "MB", "GB"];
+  let i = -1;
+  do { n = n / 1024; i++; } while (n >= 1024 && i < units.length - 1);
+  return `${n.toFixed(1)} ${units[i]}`;
+}
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const chatScrollRef = useRef<HTMLDivElement>(null);
-  const voiceRef = useRef<SpeechSynthesisVoice | null>(null);
-
-  useEffect(() => {
-    setSessionId(getOrCreateSessionId());
-  }, []);
-
-  // Choose a professional en-GB voice if available
-  useEffect(() => {
-    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
-    const pickVoice = () => {
-      const list = window.speechSynthesis.getVoices();
-      const prefer = [
-        "Google UK English Female",
-        "Google UK English Male",
-        "en-GB",
-        "Microsoft Sonia Online (Natural) - English (United Kingdom)",
-        "Microsoft Ryan Online (Natural) - English (United Kingdom)",
-      ];
-      const found =
-        list.find(v => prefer.includes(v.name)) ||
-        list.find(v => v.lang?.toLowerCase() === "en-gb") ||
-        list.find(v => v.lang?.toLowerCase().startsWith("en"));
-      voiceRef.current = found || null;
-    };
-    pickVoice();
-    window.speechSynthesis.onvoiceschanged = pickVoice;
-  }, []);
-
-  useEffect(() => {
-    chatScrollRef.current?.scrollTo({ top: chatScrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, isTyping, showEmojis, showSkinTones]);
-
-  // Speak last assistant message in professional English voice
-  useEffect(() => {
-    if (!speaking) return;
-    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
-    const last = [...messages].reverse().find((m) => m.role === "assistant");
-    if (!last) return;
-    const utter = new SpeechSynthesisUtterance(
-      last.content.replace(/<\/?mark>/g, "").replace(/<[^>]+>/g, "")
-    );
-    utter.rate = 1; utter.pitch = 1;
-    if (voiceRef.current) utter.voice = voiceRef.current;
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(utter);
-  }, [messages, speaking]);
-
-  const progressPct = useMemo(() => {
-    const total = totalSteps || 12;
-    const i = stepIndex || 0;
-    return Math.max(0, Math.min(100, Math.round(((i + 1) / total) * 100)));
-  }, [stepIndex, totalSteps]);
-
-  const sendMessage = async (text: string) => {
-    if (!text.trim()) return;
-    const userMessage = text.trim();
-    setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
-    setInput("");
-    setIsTyping(true);
-
-    const res = await fetch("/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: userMessage, sessionId, lang }),
-    });
-    const data: ChatResponse = await res.json();
-
-    setIsTyping(false);
-    if (data.sessionId) setSessionId(data.sessionId);
-    if (typeof data.stepIndex === "number") setStepIndex(data.stepIndex);
-    if (typeof data.totalSteps === "number") setTotalSteps(data.totalSteps);
-    setQuickReplies(data.quickReplies || []);
-    setMessages((prev) => [...prev, { role: "assistant", content: highlightKeywords(data.reply) }]);
-  };
-
-  const handleSend = () => sendMessage(input);
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key === "Enter") handleSend(); };
-  const toggleTheme = () => setTheme((t) => (t === "light" ? "dark" : "light"));
-  const toggleVoice = () => setSpeaking((s) => !s);
-  const toggleEmojis = () => {
-    setShowEmojis(v => !v);
-    setShowSkinTones(false);
-  };
-
-  const handleUploadClick = () => fileInputRef.current?.click();
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]; if (!file) return;
-    const form = new FormData();
-    form.append("file", file);
-    const resp = await fetch("/api/upload", { method: "POST", body: form });
-    const data = await resp.json();
-    const url = data.url as string | undefined;
-
-    // Show a downloadable link directly in chat
-    setMessages((prev) => [
-      ...prev,
-      { role: "user", content: `📎 Uploaded: ${file.name}${url ? ` — <a href="${url}" download>Download</a>` : ""}` },
-    ]);
-    setMessages((prev) => [
-      ...prev,
-      {
-        role: "assistant",
-        content: url
-          ? `✅ Got your document safely. I’ve saved it to your case files. You can also <a href="${url}" download>download it here</a>.`
-          : `⚠️ Upload failed. Please try again.`,
-      },
-    ]);
-  };
-
-  // Minimal, focused emoji set + skin tones for 👍
-  const baseEmojis = ["🙂","🙁","✅","❌","👍"];
-  const skinTones = ["🏻","🏼","🏽","🏾","🏿"];
-  const onEmoji = (e: string) => {
-    if (e === "👍") {
-      setShowSkinTones((s) => !s);
-      return;
-    }
-    setShowSkinTones(false);
-    reactToLast(e);
-    sendMessage(e); // let backend acknowledge emoji
-  };
-  const onThumbWithTone = (tone: string) => {
-    const e = `👍${tone}`;
-    reactToLast(e);
-    setShowSkinTones(false);
-    sendMessage(e);
-  };
-  const reactToLast = (emoji: string) => {
-    setMessages((prev) => {
-      const idx = [...prev].map((m) => m.role).lastIndexOf("assistant");
-      if (idx === -1) return prev;
-      const clone = [...prev];
-      clone[idx] = { ...clone[idx], content: `${clone[idx].content} <span class="emoji-react">${emoji}</span>` };
-      return clone;
-    });
-  };
-
-  function highlightKeywords(s: string) {
-    const terms = ["IVA","DMP","bankruptcy","Debt Relief Order","DRO","bailiffs","credit file","arrears","council tax"];
-    let out = s;
-    terms.forEach((t) => {
-      const re = new RegExp(`\\b(${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})\\b`, "gi");
-      out = out.replace(re, "<mark>$1</mark>");
-    });
-    return out;
+// Pick a UK male voice if possible, else any en-GB/en-*.
+function pickUkMaleVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
+  if (!voices?.length) return null;
+  const preferred = [
+    "Google UK English Male",
+    "Microsoft Ryan Online (Natural) - English (United Kingdom)",
+    "Daniel",
+    "UK English Male",
+  ];
+  for (const name of preferred) {
+    const v = voices.find((vv) => vv.name === name);
+    if (v) return v;
   }
+  const enGb = voices.find((v) => (v.lang || "").toLowerCase().startsWith("en-gb"));
+  if (enGb) return enGb;
+  const enAny = voices.find((v) => (v.lang || "").toLowerCase().startsWith("en-"));
+  return enAny || null;
+}
+
+const LANGUAGES = [
+  "English",
+  "Spanish",
+  "Polish",
+  "French",
+  "German",
+  "Portuguese",
+  "Italian",
+  "Romanian",
+];
+
+export default function Home() {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState("");
+  const [language, setLanguage] = useState<string>("English");
+  const [uploading, setUploading] = useState(false);
+  const [voiceOn, setVoiceOn] = useState(true);
+
+  const sessionId = useMemo(() => ensureSessionId(), []);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const chosenVoice = useRef<SpeechSynthesisVoice | null>(null);
+
+  // Auto-scroll to latest message
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  // Init: greet + tip about language dropdown
+  useEffect(() => {
+    const start = async () => {
+      try {
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId, userMessage: "👋 INITIATE", history: [] }),
+        });
+        const data = await res.json();
+        const greeting = (data?.reply as string) || "Hello! My name’s Mark. How can I help today?";
+        setMessages([
+          { sender: "bot", text: greeting },
+          { sender: "bot", text: "🌍 You can change languages any time using the dropdown above." },
+        ]);
+      } catch {
+        setMessages([{ sender: "bot", text: "⚠️ Error connecting to chatbot." }]);
+      }
+    };
+    start();
+  }, [sessionId]);
+
+  // Prepare speech voice (UK male if available)
+  useEffect(() => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    const assignVoice = () => {
+      const vs = window.speechSynthesis.getVoices();
+      chosenVoice.current = pickUkMaleVoice(vs);
+    };
+    const vs = window.speechSynthesis.getVoices();
+    if (vs?.length) assignVoice();
+    else window.speechSynthesis.onvoiceschanged = assignVoice;
+  }, []);
+
+  // Speak assistant replies
+  useEffect(() => {
+    if (!voiceOn) return;
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    const last = messages[messages.length - 1];
+    if (!last || last.sender !== "bot") return;
+    const u = new SpeechSynthesisUtterance(last.text);
+    if (chosenVoice.current) u.voice = chosenVoice.current;
+    u.rate = 1; u.pitch = 1; u.volume = 1;
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(u);
+  }, [messages, voiceOn]);
+
+  const send = async (text: string) => {
+    const userMsg: Message = { sender: "user", text };
+    setMessages((prev) => [...prev, userMsg]);
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId,
+          userMessage: text,
+          history: messages.map((m) => m.text),
+        }),
+      });
+      const data = await res.json();
+      const botText = (data?.reply as string) || "⚠️ No response from server.";
+      setMessages((prev) => [...prev, { sender: "bot", text: botText }]);
+    } catch {
+      setMessages((prev) => [...prev, { sender: "bot", text: "⚠️ Error connecting to chatbot." }]);
+    }
+  };
+
+  const handleSubmit = async () => {
+    const text = input.trim();
+    if (!text) return;
+    setInput("");
+    await send(text);
+  };
+
+  // Language change: tell backend
+  const handleLanguageChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const selected = e.target.value;
+    setLanguage(selected);
+    await send(`Language: ${selected}`);
+  };
+
+  // Upload handling
+  const handleUploadClick = () => fileInputRef.current?.click();
+
+  const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("sessionId", sessionId);
+      const r = await fetch("/api/upload", { method: "POST", body: fd });
+      const data = await r.json();
+      if (!data?.ok) {
+        setMessages((prev) => [...prev, { sender: "bot", text: "Upload failed — please try again." }]);
+      } else {
+        const cleanName = data?.file?.filename || file.name;
+        const link = data?.downloadUrl || data?.url || "";
+        const msg: Message = {
+          sender: "bot",
+          text: link ? `📎 Uploaded: ${cleanName}` : `📎 Uploaded your file (${cleanName}).`,
+          attachment: link ? { filename: cleanName, url: link, mimeType: data?.file?.mimeType, size: data?.file?.size } : undefined,
+        };
+        setMessages((prev) => [...prev, msg]);
+      }
+    } catch {
+      setMessages((prev) => [...prev, { sender: "bot", text: "Upload failed — network error." }]);
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  // --- Styles (kept simple + professional, no libs) ---
+  const styles: { [k: string]: React.CSSProperties } = {
+    frame: { maxWidth: 720, margin: "0 auto", padding: 16, fontFamily: "'Segoe UI', Arial, sans-serif" },
+    card: {
+      border: "1px solid #e5e7eb",
+      borderRadius: 16,
+      background: "#ffffff",
+      boxShadow: "0 8px 24px rgba(0,0,0,0.06)",
+      overflow: "hidden",
+    },
+    header: {
+      display: "flex", justifyContent: "space-between", alignItems: "center",
+      padding: "12px 16px", borderBottom: "1px solid #e5e7eb", background: "#fafafa",
+    },
+    brand: { display: "flex", alignItems: "center", gap: 8, fontWeight: 700 },
+    tools: { display: "flex", alignItems: "center", gap: 8 },
+    select: { padding: "6px 10px", borderRadius: 8, border: "1px solid #d1d5db", background: "#fff" },
+    voiceBtn: { padding: "6px 10px", borderRadius: 8, border: "1px solid #d1d5db", background: "#fff", cursor: "pointer" },
+    chat: {
+      height: 520, overflowY: "auto", padding: 16,
+      background: "linear-gradient(#ffffff, #fafafa)",
+      display: "flex", flexDirection: "column", gap: 12,
+    },
+    row: { display: "flex", alignItems: "flex-start", gap: 10 },
+    rowUser: { justifyContent: "flex-end" },
+    avatar: {
+      width: 36, height: 36, borderRadius: "50%", display: "flex", alignItems: "center",
+      justifyContent: "center", fontSize: 20, boxShadow: "0 2px 6px rgba(0,0,0,0.1)",
+    },
+    bubble: { padding: "10px 14px", borderRadius: 14, maxWidth: "70%", lineHeight: 1.45, boxShadow: "0 2px 10px rgba(0,0,0,0.06)" },
+    bubbleBot: { background: "#f3f4f6", color: "#111827", borderTopLeftRadius: 6 },
+    bubbleUser: { background: "#dbeafe", color: "#0f172a", borderTopRightRadius: 6 },
+    attach: { marginTop: 8 },
+    chip: {
+      display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, padding: "6px 10px",
+      background: "#fff", border: "1px solid #e5e7eb", borderRadius: 999,
+    },
+    footer: { display: "flex", alignItems: "center", gap: 8, padding: 12, borderTop: "1px solid #e5e7eb", background: "#fafafa" },
+    fileBtn: { padding: "8px 12px", borderRadius: 8, border: "1px solid #d1d5db", background: "#fff", cursor: "pointer" },
+    input: { flex: 1, padding: "10px 12px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: 16 },
+    sendBtn: { padding: "10px 14px", borderRadius: 8, border: "none", background: "#16a34a", color: "#fff", cursor: "pointer", fontWeight: 600 },
+  };
 
   return (
-    <>
-      <Head>
-        <title>Debt Advisor Chat</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-      </Head>
-
-      <main className={`app-shell ${theme === "dark" ? "theme-dark" : "theme-light"}`}>
-        <section className="chat-card compact">
-          <div className="card-header">
-            <div className="brand">Debt Advisor</div>
-            <div className="controls">
-              <select
-                className="lang"
-                value={lang}
-                onChange={(e) => setLang(e.target.value as any)}
-                aria-label="Language"
-                title="Language"
-              >
-                <option value="en">English</option>
-                <option value="es">Español</option>
-                <option value="fr">Français</option>
-                <option value="de">Deutsch</option>
-                <option value="pl">Polski</option>
-                <option value="ro">Română</option>
-              </select>
-              <button className="btn" onClick={toggleVoice} title="Toggle voice">
-                {speaking ? "🔊 Voice On" : "🔈 Voice Off"}
-              </button>
-              <button className="btn" onClick={toggleTheme} title="Toggle theme">
-                {theme === "light" ? "🌙 Dark" : "☀️ Light"}
-              </button>
-            </div>
+    <main style={styles.frame}>
+      <div style={styles.card}>
+        {/* Header */}
+        <div style={styles.header}>
+          <div style={styles.brand}>
+            <span>🤖</span>
+            <span>Debt Advisor</span>
+            <span style={{ marginLeft: 8, fontSize: 12, color: "#10b981", fontWeight: 600 }}>● Online</span>
           </div>
-
-          <div className="progress tiny">
-            <div className="progress-bar">
-              <div className="progress-fill" style={{ width: `${progressPct}%` }} />
-            </div>
-            <div className="progress-inline-label">Journey {progressPct}%</div>
-          </div>
-
-          <div className="chat-scroll" ref={chatScrollRef}>
-            {messages.map((m, i) => (
-              <div key={i} className={`row ${m.role}`}>
-                <div className={`bubble ${m.role}`} dangerouslySetInnerHTML={{ __html: m.content }} />
-              </div>
-            ))}
-            {isTyping && (
-              <div className="row assistant">
-                <div className="bubble assistant typing">
-                  <span className="dot" /><span className="dot" /><span className="dot" />
-                </div>
-              </div>
-            )}
-          </div>
-
-          {!!quickReplies.length && (
-            <div className="chips tight">
-              {quickReplies.slice(0, 6).map((q, i) => (
-                <button key={i} className="chip" onClick={() => sendMessage(q)}>{q}</button>
+          <div style={styles.tools}>
+            <select style={styles.select} value={language} onChange={handleLanguageChange} title="Change language">
+              {LANGUAGES.map((l) => (
+                <option key={l} value={l}>{l}</option>
               ))}
-            </div>
-          )}
-
-          <div className="composer merged">
-            <div className="left-actions">
-              <div className="emoji-box">
-                <button className="icon-btn" onClick={toggleEmojis} title="Emoji reactions">😊 Emojis</button>
-                {showEmojis && (
-                  <div className="emoji-panel">
-                    {baseEmojis.map((e) => (
-                      <button key={e} className="emoji" onClick={() => onEmoji(e)}>{e}</button>
-                    ))}
-                    {showSkinTones && (
-                      <div className="tones-row">
-                        {skinTones.map((t) => (
-                          <button key={t} className="emoji tone" onClick={() => onThumbWithTone(t)}>👍{t}</button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              <button className="upload-btn" onClick={handleUploadClick} title="Upload documents">
-                📎 Upload docs
-              </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                className="hidden-file"
-                onChange={handleFileChange}
-                accept="image/*,.pdf,.jpg,.jpeg,.png"
-              />
-            </div>
-
-            <input
-              className="composer-input"
-              placeholder="Type your message…"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-            />
-            <button className="send-btn" onClick={handleSend}>Send</button>
+            </select>
+            <button style={styles.voiceBtn} onClick={() => setVoiceOn(v => !v)} title="Toggle voice">
+              {voiceOn ? "🔈 Voice On" : "🔇 Voice Off"}
+            </button>
           </div>
-        </section>
-      </main>
-    </>
+        </div>
+
+        {/* Messages */}
+        <div style={styles.chat}>
+          {messages.map((m, i) => {
+            const isUser = m.sender === "user";
+            return (
+              <div key={i} style={{ ...styles.row, ...(isUser ? styles.rowUser : {}) }}>
+                {!isUser && <div style={{ ...styles.avatar, background: "#e5e7eb" }}>🤖</div>}
+                <div style={{ ...styles.bubble, ...(isUser ? styles.bubbleUser : styles.bubbleBot) }}>
+                  <div>{m.text}</div>
+                  {m.attachment && (
+                    <div style={styles.attach}>
+                      <a href={m.attachment.url} target="_blank" rel="noreferrer" style={styles.chip}>
+                        <span>📄</span>
+                        <span style={{ fontWeight: 600 }}>{m.attachment.filename}</span>
+                        {typeof m.attachment.size === "number" && <span style={{ opacity: 0.7 }}>({formatBytes(m.attachment.size)})</span>}
+                        <span style={{ textDecoration: "underline" }}>Download</span>
+                      </a>
+                    </div>
+                  )}
+                </div>
+                {isUser && <div style={{ ...styles.avatar, background: "#3b82f6", color: "#fff" }}>🧑</div>}
+              </div>
+            );
+          })}
+          <div ref={bottomRef} />
+        </div>
+
+        {/* Footer */}
+        <div style={styles.footer}>
+          <input ref={fileInputRef} type="file" hidden onChange={handleFileSelected} />
+          <button style={styles.fileBtn} onClick={handleUploadClick} disabled={uploading}>
+            📎 Upload docs {uploading ? "…" : ""}
+          </button>
+          <input
+            style={styles.input}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+            placeholder="Type your message…"
+          />
+          <button style={styles.sendBtn} onClick={handleSubmit}>Send</button>
+        </div>
+      </div>
+    </main>
   );
 }
