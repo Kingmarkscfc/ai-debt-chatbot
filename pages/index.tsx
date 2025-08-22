@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
-import avatarPhoto from "../public/advisor-avatar-human.png"; // ✅ bundled by Next
 
 type Sender = "user" | "bot";
 type Attachment = { filename: string; url: string; mimeType?: string; size?: number };
 type Message = { sender: Sender; text: string; attachment?: Attachment };
 
 const LANGUAGES = ["English","Spanish","Polish","French","German","Portuguese","Italian","Romanian"];
+const AVATAR_SRC = "/advisor-avatar-human.png?v=3"; // served from /public
 
 function ensureSessionId(): string {
   if (typeof window === "undefined") return Math.random().toString(36).slice(2);
@@ -26,25 +26,36 @@ function formatBytes(n?: number) {
 
 function pickUkMaleVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
   if (!voices?.length) return null;
-  const preferred = [
-    "Google UK English Male",
-    "Microsoft Ryan Online (Natural) - English (United Kingdom)",
-    "Daniel",
-    "UK English Male",
-  ];
-  for (const name of preferred) { const v = voices.find((vv) => vv.name === name); if (v) return v; }
-  const enGb = voices.find((v) => (v.lang || "").toLowerCase().startsWith("en-gb")); if (enGb) return enGb;
-  const enAny = voices.find((v) => (v.lang || "").toLowerCase().startsWith("en-")); return enAny || null;
+  const preferred = ["Google UK English Male","Microsoft Ryan Online (Natural) - English (United Kingdom)","Daniel","UK English Male"];
+  for (const name of preferred) { const v = voices.find(vv => vv.name === name); if (v) return v; }
+  const enGb = voices.find(v => (v.lang||"").toLowerCase().startsWith("en-gb")); if (enGb) return enGb;
+  const enAny = voices.find(v => (v.lang||"").toLowerCase().startsWith("en-")); return enAny || null;
 }
 
 function Avatar({ size = 40 }: { size?: number }) {
+  const [err, setErr] = useState(false);
+  if (err) {
+    return (
+      <div
+        style={{
+          width: size, height: size, borderRadius: "50%", background: "#eee",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          color: "#555", fontSize: 10, border: "1px solid #ddd"
+        }}
+        title="Missing avatar"
+      >
+        Missing
+      </div>
+    );
+  }
   return (
     <Image
-      src={avatarPhoto}
+      src={AVATAR_SRC}
       alt=""
       width={size}
       height={size}
       priority
+      onError={() => setErr(true)}
       style={{
         width: size,
         height: size,
@@ -191,7 +202,6 @@ export default function Home() {
   return (
     <main style={styles.frame}>
       <div style={styles.card}>
-        {/* Header */}
         <div style={styles.header}>
           <div style={styles.brand}>
             <div style={styles.avatarWrap}><Avatar /></div>
@@ -211,7 +221,6 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Messages */}
         <div style={styles.chat}>
           {messages.map((m, i) => {
             const isUser = m.sender === "user";
@@ -238,7 +247,6 @@ export default function Home() {
           <div ref={bottomRef} />
         </div>
 
-        {/* Footer */}
         <div style={styles.footer}>
           <input ref={fileInputRef} type="file" hidden onChange={handleFileSelected} />
           <button type="button" style={styles.fileBtn} onClick={handleUploadClick} disabled={uploading}>
