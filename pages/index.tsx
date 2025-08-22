@@ -6,8 +6,8 @@ type Message = { sender: Sender; text: string; attachment?: Attachment };
 
 const LANGUAGES = ["English","Spanish","Polish","French","German","Portuguese","Italian","Romanian"];
 
-// Hard-point to the new PNG we just placed in /public
-const AVATAR_SRC = "/advisor-avatar-human.png?v=1";
+// cache-bust v=2 so browsers fetch the new file
+const AVATAR_SRC = "/advisor-avatar-human.png?v=2";
 
 function ensureSessionId(): string {
   if (typeof window === "undefined") return Math.random().toString(36).slice(2);
@@ -38,7 +38,7 @@ function pickUkMaleVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice |
   const enAny = voices.find((v) => (v.lang || "").toLowerCase().startsWith("en-")); return enAny || null;
 }
 
-// Minimal avatar: ONLY uses the PNG; if missing, shows a small "Missing" badge
+// Minimal avatar that ONLY uses the PNG; on error shows a "Missing" badge
 function Avatar({ size = 40 }: { size?: number }) {
   const [err, setErr] = useState(false);
   if (err) {
@@ -210,7 +210,8 @@ export default function Home() {
         {/* Header */}
         <div style={styles.header}>
           <div style={styles.brand}>
-            <div style={styles.avatarWrap}><Avatar /></div>
+            {/* key forces remount when AVATAR_SRC changes */}
+            <div style={styles.avatarWrap}><Avatar key={AVATAR_SRC} /></div>
             <span>Debt Advisor</span>
             <span style={styles.onlineDot}>● Online</span>
           </div>
@@ -233,7 +234,7 @@ export default function Home() {
             const isUser = m.sender === "user";
             return (
               <div key={i} style={{ ...styles.row, ...(isUser ? styles.rowUser : {}) }}>
-                {!isUser && <div style={styles.avatarWrap}><Avatar /></div>}
+                {!isUser && <div style={styles.avatarWrap}><Avatar key={`bot-${AVATAR_SRC}`} /></div>}
                 <div style={{ ...styles.bubble, ...(isUser ? styles.bubbleUser : styles.bubbleBot) }}>
                   <div>{m.text}</div>
                   {m.attachment && (
@@ -247,7 +248,7 @@ export default function Home() {
                     </div>
                   )}
                 </div>
-                {isUser && <div style={styles.avatarWrap}><Avatar /></div>}
+                {isUser && <div style={styles.avatarWrap}><Avatar key={`user-${AVATAR_SRC}`} /></div>}
               </div>
             );
           })}
