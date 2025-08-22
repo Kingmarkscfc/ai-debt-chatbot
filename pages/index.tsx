@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
+import avatarPhoto from "../assets/advisor-avatar-human.png"; // ✅ bundled with build
 
 type Sender = "user" | "bot";
 type Attachment = { filename: string; url: string; mimeType?: string; size?: number };
 type Message = { sender: Sender; text: string; attachment?: Attachment };
 
 const LANGUAGES = ["English","Spanish","Polish","French","German","Portuguese","Italian","Romanian"];
-const AVATAR_SRC = "/advisor-avatar-human.png?v=3"; // served from /public
 
 function ensureSessionId(): string {
   if (typeof window === "undefined") return Math.random().toString(36).slice(2);
@@ -33,29 +33,13 @@ function pickUkMaleVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice |
 }
 
 function Avatar({ size = 40 }: { size?: number }) {
-  const [err, setErr] = useState(false);
-  if (err) {
-    return (
-      <div
-        style={{
-          width: size, height: size, borderRadius: "50%", background: "#eee",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          color: "#555", fontSize: 10, border: "1px solid #ddd"
-        }}
-        title="Missing avatar"
-      >
-        Missing
-      </div>
-    );
-  }
   return (
     <Image
-      src={AVATAR_SRC}
+      src={avatarPhoto}
       alt=""
       width={size}
       height={size}
       priority
-      onError={() => setErr(true)}
       style={{
         width: size,
         height: size,
