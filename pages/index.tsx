@@ -6,19 +6,8 @@ type Message = { sender: Sender; text: string; attachment?: Attachment };
 
 const LANGUAGES = ["English","Spanish","Polish","French","German","Portuguese","Italian","Romanian"];
 
-// Avatar sources: PNG first, then JPG; then neutral fallback SVG
-const AVATAR_CANDIDATES = ["/advisor-avatar.png?v=5", "/advisor-avatar.jpg?v=5"];
-const FALLBACK_AVATAR =
-  "data:image/svg+xml;utf8," +
-  encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' width='128' height='128' viewBox='0 0 128 128'>
-  <defs><linearGradient id='g' x1='0' y1='0' x2='0' y2='1'>
-  <stop offset='0%' stop-color='#e8edf5'/><stop offset='100%' stop-color='#d7dee9'/></linearGradient></defs>
-  <rect width='128' height='128' fill='url(#g)'/>
-  <g transform='translate(0,6)'><circle cx='64' cy='42' r='26' fill='#f2c9ab'/>
-  <rect x='28' y='68' width='72' height='38' rx='10' fill='#253447'/>
-  <polygon points='64,70 76,95 52,95' fill='#1e73be'/>
-  <rect x='54' y='62' width='20' height='12' rx='6' fill='#f0c7a8'/>
-  <path d='M38,48 q26,-28 52,0 v-8 q-26,-20 -52,0z' fill='#2b2b2b'/></g></svg>`);
+// Hard-point to the new PNG we just placed in /public
+const AVATAR_SRC = "/advisor-avatar-human.png?v=1";
 
 function ensureSessionId(): string {
   if (typeof window === "undefined") return Math.random().toString(36).slice(2);
@@ -27,6 +16,7 @@ function ensureSessionId(): string {
   if (!sid) { sid = Math.random().toString(36).slice(2); localStorage.setItem(key, sid); }
   return sid;
 }
+
 function formatBytes(n?: number) {
   if (typeof n !== "number") return "";
   if (n < 1024) return `${n} B`;
@@ -34,28 +24,52 @@ function formatBytes(n?: number) {
   do { n /= 1024; i++; } while (n >= 1024 && i < units.length - 1);
   return `${n.toFixed(1)} ${units[i]}`;
 }
+
 function pickUkMaleVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
   if (!voices?.length) return null;
-  const preferred = ["Google UK English Male","Microsoft Ryan Online (Natural) - English (United Kingdom)","Daniel","UK English Male"];
-  for (const name of preferred) { const v = voices.find(vv => vv.name === name); if (v) return v; }
-  const enGb = voices.find(v => (v.lang||"").toLowerCase().startsWith("en-gb")); if (enGb) return enGb;
-  const enAny = voices.find(v => (v.lang||"").toLowerCase().startsWith("en-")); return enAny || null;
+  const preferred = [
+    "Google UK English Male",
+    "Microsoft Ryan Online (Natural) - English (United Kingdom)",
+    "Daniel",
+    "UK English Male",
+  ];
+  for (const name of preferred) { const v = voices.find((vv) => vv.name === name); if (v) return v; }
+  const enGb = voices.find((v) => (v.lang || "").toLowerCase().startsWith("en-gb")); if (enGb) return enGb;
+  const enAny = voices.find((v) => (v.lang || "").toLowerCase().startsWith("en-")); return enAny || null;
 }
 
-// Avatar component with PNG→JPG→fallback
+// Minimal avatar: ONLY uses the PNG; if missing, shows a small "Missing" badge
 function Avatar({ size = 40 }: { size?: number }) {
-  const [idx, setIdx] = useState(0);
-  const src = idx < AVATAR_CANDIDATES.length ? AVATAR_CANDIDATES[idx] : FALLBACK_AVATAR;
+  const [err, setErr] = useState(false);
+  if (err) {
+    return (
+      <div
+        style={{
+          width: size, height: size, borderRadius: "50%", background: "#eee",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          color: "#555", fontSize: 10, border: "1px solid #ddd"
+        }}
+        title="Missing avatar"
+      >
+        Missing
+      </div>
+    );
+  }
   return (
     <img
-      src={src}
+      src={AVATAR_SRC}
       alt=""
-      onError={() => setIdx(i => i + 1)}
+      onError={() => setErr(true)}
       decoding="async"
       loading="eager"
       style={{
-        width: size, height: size, display: "block", borderRadius: "999px",
-        objectFit: "cover", background: "#e5e7eb", boxShadow: "0 1px 3px rgba(0,0,0,0.18)"
+        width: size,
+        height: size,
+        display: "block",
+        borderRadius: "999px",
+        objectFit: "cover",
+        background: "#e5e7eb",
+        boxShadow: "0 1px 3px rgba(0,0,0,0.18)",
       }}
     />
   );
@@ -193,6 +207,7 @@ export default function Home() {
   return (
     <main style={styles.frame}>
       <div style={styles.card}>
+        {/* Header */}
         <div style={styles.header}>
           <div style={styles.brand}>
             <div style={styles.avatarWrap}><Avatar /></div>
@@ -212,6 +227,7 @@ export default function Home() {
           </div>
         </div>
 
+        {/* Messages */}
         <div style={styles.chat}>
           {messages.map((m, i) => {
             const isUser = m.sender === "user";
@@ -238,10 +254,19 @@ export default function Home() {
           <div ref={bottomRef} />
         </div>
 
+        {/* Footer */}
         <div style={styles.footer}>
           <input ref={fileInputRef} type="file" hidden onChange={handleFileSelected} />
-          <button type="button" style={styles.fileBtn} onClick={handleUploadClick} disabled={uploading}>📎 Upload docs {uploading ? "…" : ""}</button>
-          <input style={styles.input} value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === "Enter" && handleSubmit()} placeholder="Type your message…" />
+          <button type="button" style={styles.fileBtn} onClick={handleUploadClick} disabled={uploading}>
+            📎 Upload docs {uploading ? "…" : ""}
+          </button>
+          <input
+            style={styles.input}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+            placeholder="Type your message…"
+          />
           <button type="button" style={styles.sendBtn} onClick={handleSubmit}>Send</button>
         </div>
       </div>
