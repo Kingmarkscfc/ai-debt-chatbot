@@ -51,7 +51,7 @@ export default function Home() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chosenVoice = useRef<SpeechSynthesisVoice | null>(null);
 
-  // --- initial greeting (force your exact first line, no backend dependency)
+  // --- initial greeting (force your exact first line)
   useEffect(() => {
     const savedTheme = typeof window !== "undefined" ? localStorage.getItem("da_theme") : null;
     if (savedTheme === "dark" || savedTheme === "light") setTheme(savedTheme as "light" | "dark");
@@ -121,12 +121,12 @@ export default function Home() {
   const handleLanguageChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
     const selected = e.target.value;
     setLanguage(selected);
-    // Let the backend know, but don’t block UI
+    // Tell backend, but don’t block UI
     const msg = `Language: ${selected}`;
     const userMsg: Message = { sender: "user", text: msg };
     const nextHist = [...messages, userMsg];
     setMessages(nextHist);
-    try { await sendToApi(msg, nextHist); } catch { /* ignore */ }
+    try { await sendToApi(msg, nextHist); } catch { /* no-op */ }
   };
 
   const handleUploadClick = () => { fileInputRef.current?.click(); };
@@ -145,7 +145,8 @@ export default function Home() {
       const data = await r.json();
 
       if (!data?.ok) {
-        setMessages((prev) => [...prev, { sender: "bot", text: "Upload failed — please try again." }]);
+        const msg = `Upload failed — ${data?.details || data?.error || "please try again."}`;
+        setMessages((prev) => [...prev, { sender: "bot", text: msg }]);
         return;
       }
 
@@ -176,7 +177,7 @@ export default function Home() {
     });
   };
 
-  // --- styles (simple + consistent)
+  // --- styles
   const isDark = theme === "dark";
   const styles: { [k: string]: React.CSSProperties } = {
     frame: { maxWidth: 720, margin: "0 auto", padding: 16, fontFamily: "'Segoe UI', Arial, sans-serif",
@@ -193,7 +194,8 @@ export default function Home() {
       padding: "12px 16px", borderBottom: isDark ? "1px solid #1f2937" : "1px solid #e5e7eb",
       background: isDark ? "#0f172a" : "#fafafa",
     },
-    brand: { display: "flex", alignItems: "center", gap: 8, fontWeight: 700 },
+    brand: { display: "flex", alignItems: "center", gap: 10, fontWeight: 700 },
+    avatarImg: { width: 32, height: 32, borderRadius: "999px", objectFit: "cover", boxShadow: isDark ? "0 1px 3px rgba(0,0,0,0.6)" : "0 1px 3px rgba(0,0,0,0.2)" },
     onlineDot: { marginLeft: 8, fontSize: 12, color: "#10b981", fontWeight: 600 },
     tools: { display: "flex", alignItems: "center", gap: 8 },
     select: {
@@ -214,6 +216,7 @@ export default function Home() {
     avatar: {
       width: 36, height: 36, borderRadius: "50%", display: "flex", alignItems: "center",
       justifyContent: "center", fontSize: 20, boxShadow: isDark ? "0 2px 6px rgba(0,0,0,0.6)" : "0 2px 6px rgba(0,0,0,0.1)",
+      overflow: "hidden"
     },
     bubble: {
       padding: "10px 14px", borderRadius: 14, maxWidth: "70%", lineHeight: 1.45,
@@ -245,7 +248,9 @@ export default function Home() {
         {/* Header */}
         <div style={styles.header}>
           <div style={styles.brand}>
-            <span>👨</span>
+            <div style={styles.avatar}>
+              <img src="/advisor-avatar.jpg" alt="Advisor avatar" style={styles.avatarImg as any} />
+            </div>
             <span>Debt Advisor</span>
             <span style={styles.onlineDot}>● Online</span>
           </div>
@@ -268,7 +273,11 @@ export default function Home() {
             const isUser = m.sender === "user";
             return (
               <div key={i} style={{ ...styles.row, ...(isUser ? styles.rowUser : {}) }}>
-                {!isUser && <div style={{ ...styles.avatar, background: isDark ? "#1f2937" : "#e5e7eb" }}>👨</div>}
+                {!isUser && (
+                  <div style={styles.avatar}>
+                    <img src="/advisor-avatar.jpg" alt="Advisor avatar" style={styles.avatarImg as any} />
+                  </div>
+                )}
                 <div style={{ ...styles.bubble, ...(isUser ? styles.bubbleUser : styles.bubbleBot) }}>
                   <div>{m.text}</div>
                   {m.attachment && (
@@ -282,7 +291,11 @@ export default function Home() {
                     </div>
                   )}
                 </div>
-                {isUser && <div style={{ ...styles.avatar, background: "#3b82f6", color: "#fff" }}>🧑</div>}
+                {isUser && (
+                  <div style={{ ...styles.avatar, background: "#3b82f6" }}>
+                    <span style={{ color: "#fff" }}>🧑</span>
+                  </div>
+                )}
               </div>
             );
           })}
