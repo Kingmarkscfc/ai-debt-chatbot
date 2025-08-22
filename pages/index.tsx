@@ -24,7 +24,7 @@ function formatBytes(n?: number) {
   return `${n.toFixed(1)} ${units[i]}`;
 }
 
-// Remove UUIDs, long hashes, timestamps, underscores/dashes; title-case; keep extension
+// Smarter tidy: remove GUIDs / hexy chunks / long numbers, but keep plausible years and short numbers (e.g., "2025 8")
 function prettyFilename(name: string): string {
   try {
     if (!name) return "";
@@ -32,31 +32,54 @@ function prettyFilename(name: string): string {
     let base = dot > 0 ? name.slice(0, dot) : name;
     const ext = dot > -1 ? name.slice(dot).toLowerCase() : "";
 
-    // Replace separators with space
+    // Standardize separators to spaces
     base = base.replace(/[_\-\.]+/g, " ");
 
-    // Strip GUID like 8-4-4-4-12 hex groups
+    // Remove classic GUIDs: 8-4-4-4-12
     base = base.replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, " ");
-    // Strip long hex/ids (16+ chars) and long pure numbers (8+)
-    base = base.replace(/\b[0-9a-f]{16,}\b/gi, " ");
-    base = base.replace(/\b\d{8,}\b/g, " ");
 
-    // Collapse whitespace
-    base = base.replace(/\s{2,}/g, " ").trim();
+    // Token-based cleanup for spaced hex/number chunks
+    const tokens = base.split(/\s+/).filter(Boolean);
+    const cleaned: string[] = [];
+    let hexOrLongCount = 0;
 
-    // Title case (keep small words lower unless first)
+    for (const t of tokens) {
+      const lower = t.toLowerCase();
+      const isDigits = /^\d+$/.test(lower);
+      const isHexy = /^[0-9a-f]+$/i.test(lower); // hex-ish (allows digits only too)
+      const len = lower.length;
+
+      // Keep short numbers (1-3), e.g., "8" or "Q1"
+      if (isDigits && len <= 3) { cleaned.push(t); continue; }
+
+      // Keep plausible years 1900..2099
+      if (isDigits && len === 4) {
+        const num = parseInt(lower, 10);
+        if (num >= 1900 && num <= 2099) { cleaned.push(t); continue; }
+      }
+
+      // Mark hexy/digit tokens 4-12 chars as junk candidates
+      if ((isHexy || isDigits) && len >= 4 && len <= 12) { hexOrLongCount++; continue; }
+
+      // Long hashes (>=13) dump
+      if ((isHexy || isDigits) && len >= 13) { hexOrLongCount++; continue; }
+
+      cleaned.push(t);
+    }
+
+    // If we removed too much and name got empty, fall back to original base
+    let title = (cleaned.join(" ").replace(/\s{2,}/g, " ").trim()) || base.trim();
+
+    // Title-case with small-words rule
     const small = new Set(["and","or","of","the","a","an","to","in","on","for","with","at","by","from"]);
-    let words = base.split(" ").map((w, i) => {
+    title = title.split(" ").map((w, i) => {
       const lower = w.toLowerCase();
       if (i !== 0 && small.has(lower)) return lower;
       return w.charAt(0).toUpperCase() + lower.slice(1);
-    });
-    base = words.join(" ");
+    }).join(" ");
 
-    // Ensure something remains
-    if (!base) base = "Document";
-
-    return `${base}${ext}`;
+    if (!title) title = "Document";
+    return `${title}${ext}`;
   } catch {
     return name;
   }
@@ -186,6 +209,8 @@ export default function Home() {
 
   const handleUploadClick = () => fileInputRef.current?.click();
 
+  const alreadyPosted = (url: string) => messages.some(m => m.attachment?.url === url);
+
   const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; if (!file) return;
     setUploading(true);
@@ -200,11 +225,19 @@ export default function Home() {
       const original = data?.file?.filename || file.name;
       const display = prettyFilename(original);
       const link = data?.downloadUrl || data?.url || "";
-      const attach: Attachment | undefined = link ? { filename: original, url: link, mimeType: data?.file?.mimeType, size: data?.file?.size } : undefined;
-      setMessages(prev => [
-        ...prev,
-        { sender: "bot", text: link ? `📎 Uploaded: ${display}` : `📎 Uploaded your file (${display}).`, attachment: attach }
-      ]);
+
+      if (!link || alreadyPosted(link)) {
+        // Avoid duplicates entirely
+        return;
+      }
+
+      const attach: Attachment = { filename: original, url: link, mimeType: data?.file?.mimeType, size: data?.file?.size };
+
+      // ✅ CHIP ONLY: no extra "Uploaded ..." line
+      setMessages(prev => [...prev, { sender: "bot", text: "", attachment: attach }]);
+
+      // Optional follow-up text (commented out to keep it single-chip)
+      // setMessages(prev => [...prev, { sender: "bot", text: `Received ${display}.` }]);
     } catch {
       setMessages(prev => [...prev, { sender: "bot", text: "Upload failed — network error." }]);
     } finally {
@@ -276,7 +309,8 @@ export default function Home() {
                 {/* BOT avatar only */}
                 {!isUser && <div style={styles.avatarWrap}><Avatar /></div>}
                 <div style={{ ...styles.bubble, ...(isUser ? styles.bubbleUser : styles.bubbleBot) }}>
-                  <div>{m.text}</div>
+                  {/* Only render text if present (prevents blank "Uploaded ..." lines) */}
+                  {m.text ? <div>{m.text}</div> : null}
                   {att && (
                     <div style={styles.attach}>
                       <a
