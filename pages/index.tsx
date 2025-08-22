@@ -24,17 +24,53 @@ function formatBytes(n?: number) {
   return `${n.toFixed(1)} ${units[i]}`;
 }
 
-function pickUkMaleVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
-  if (!voices?.length) return null;
-  const preferred = [
-    "Google UK English Male",
-    "Microsoft Ryan Online (Natural) - English (United Kingdom)",
-    "Daniel",
-    "UK English Male",
-  ];
-  for (const name of preferred) { const v = voices.find(vv => vv.name === name); if (v) return v; }
-  const enGb = voices.find(v => (v.lang||"").toLowerCase().startsWith("en-gb")); if (enGb) return enGb;
-  const enAny = voices.find(v => (v.lang||"").toLowerCase().startsWith("en-")); return enAny || null;
+// Remove UUIDs, long hashes, timestamps, underscores/dashes; title-case; keep extension
+function prettyFilename(name: string): string {
+  try {
+    if (!name) return "";
+    const dot = name.lastIndexOf(".");
+    let base = dot > 0 ? name.slice(0, dot) : name;
+    const ext = dot > -1 ? name.slice(dot).toLowerCase() : "";
+
+    // Replace separators with space
+    base = base.replace(/[_\-\.]+/g, " ");
+
+    // Strip GUID like 8-4-4-4-12 hex groups
+    base = base.replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, " ");
+    // Strip long hex/ids (16+ chars) and long pure numbers (8+)
+    base = base.replace(/\b[0-9a-f]{16,}\b/gi, " ");
+    base = base.replace(/\b\d{8,}\b/g, " ");
+
+    // Collapse whitespace
+    base = base.replace(/\s{2,}/g, " ").trim();
+
+    // Title case (keep small words lower unless first)
+    const small = new Set(["and","or","of","the","a","an","to","in","on","for","with","at","by","from"]);
+    let words = base.split(" ").map((w, i) => {
+      const lower = w.toLowerCase();
+      if (i !== 0 && small.has(lower)) return lower;
+      return w.charAt(0).toUpperCase() + lower.slice(1);
+    });
+    base = words.join(" ");
+
+    // Ensure something remains
+    if (!base) base = "Document";
+
+    return `${base}${ext}`;
+  } catch {
+    return name;
+  }
+}
+
+function fileEmoji(filename?: string, mimeType?: string) {
+  const ext = (filename || "").toLowerCase().split(".").pop() || "";
+  if (mimeType?.startsWith("image/") || ["png","jpg","jpeg","gif","webp","bmp","tiff","svg"].includes(ext)) return "🖼️";
+  if (ext === "pdf" || mimeType === "application/pdf") return "📄";
+  if (["doc","docx","odt","rtf","pages"].includes(ext)) return "📝";
+  if (["xls","xlsx","ods","csv","tsv","numbers"].includes(ext)) return "📊";
+  if (["ppt","pptx","key","odp"].includes(ext)) return "📽️";
+  if (["zip","rar","7z","gz","tar"].includes(ext)) return "🗜️";
+  return "📎";
 }
 
 function Avatar({ size = 40 }: { size?: number }) {
@@ -81,6 +117,19 @@ export default function Home() {
   }, []);
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+
+  function pickUkMaleVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
+    if (!voices?.length) return null;
+    const preferred = [
+      "Google UK English Male",
+      "Microsoft Ryan Online (Natural) - English (United Kingdom)",
+      "Daniel",
+      "UK English Male",
+    ];
+    for (const name of preferred) { const v = voices.find(vv => vv.name === name); if (v) return v; }
+    const enGb = voices.find(v => (v.lang||"").toLowerCase().startsWith("en-gb")); if (enGb) return enGb;
+    const enAny = voices.find(v => (v.lang||"").toLowerCase().startsWith("en-")); return enAny || null;
+  }
 
   useEffect(() => {
     if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
@@ -148,10 +197,14 @@ export default function Home() {
         const msg = `Upload failed — ${data?.details || data?.error || "please try again."}`;
         setMessages(prev => [...prev, { sender: "bot", text: msg }]); return;
       }
-      const cleanName = data?.file?.filename || file.name;
+      const original = data?.file?.filename || file.name;
+      const display = prettyFilename(original);
       const link = data?.downloadUrl || data?.url || "";
-      const attach: Attachment | undefined = link ? { filename: cleanName, url: link, mimeType: data?.file?.mimeType, size: data?.file?.size } : undefined;
-      setMessages(prev => [...prev, { sender: "bot", text: link ? `📎 Uploaded: ${cleanName}` : `📎 Uploaded your file (${cleanName}).`, attachment: attach }]);
+      const attach: Attachment | undefined = link ? { filename: original, url: link, mimeType: data?.file?.mimeType, size: data?.file?.size } : undefined;
+      setMessages(prev => [
+        ...prev,
+        { sender: "bot", text: link ? `📎 Uploaded: ${display}` : `📎 Uploaded your file (${display}).`, attachment: attach }
+      ]);
     } catch {
       setMessages(prev => [...prev, { sender: "bot", text: "Upload failed — network error." }]);
     } finally {
@@ -215,19 +268,29 @@ export default function Home() {
         <div style={styles.chat}>
           {messages.map((m, i) => {
             const isUser = m.sender === "user";
+            const att = m.attachment;
+            const pretty = att ? prettyFilename(att.filename) : "";
+            const icon = att ? fileEmoji(att.filename, att.mimeType) : "";
             return (
               <div key={i} style={{ ...styles.row, ...(isUser ? styles.rowUser : {}) }}>
                 {/* BOT avatar only */}
                 {!isUser && <div style={styles.avatarWrap}><Avatar /></div>}
                 <div style={{ ...styles.bubble, ...(isUser ? styles.bubbleUser : styles.bubbleBot) }}>
                   <div>{m.text}</div>
-                  {m.attachment && (
+                  {att && (
                     <div style={styles.attach}>
-                      <a href={m.attachment.url} target="_blank" rel="noreferrer" style={styles.chip}>
-                        <span>📄</span>
-                        <span style={{ fontWeight: 600 }}>{m.attachment.filename}</span>
-                        {typeof m.attachment.size === "number" && <span style={{ opacity: 0.7 }}>({formatBytes(m.attachment.size)})</span>}
-                        <span style={{ textDecoration: "underline" }}>Download</span>
+                      <a
+                        href={att.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        download={pretty || att.filename}
+                        style={styles.chip}
+                        title={pretty}
+                      >
+                        <span>{icon}</span>
+                        <span style={{ fontWeight: 600 }}>{pretty}</span>
+                        {typeof att.size === "number" && <span style={{ opacity: 0.7 }}>({formatBytes(att.size)})</span>}
+                        <span style={{ textDecoration: "underline" }}>Download ⬇️</span>
                       </a>
                     </div>
                   )}
