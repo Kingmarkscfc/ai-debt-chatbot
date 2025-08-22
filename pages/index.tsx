@@ -4,12 +4,16 @@ type Sender = "user" | "bot";
 type Attachment = { filename: string; url: string; mimeType?: string; size?: number };
 type Message = { sender: Sender; text: string; attachment?: Attachment };
 
-const LANGUAGES = ["English","Spanish","Polish","French","German","Portuguese","Italian","Romanian"];
+const LANGUAGES = ["English", "Spanish", "Polish", "French", "German", "Portuguese", "Italian", "Romanian"];
 
-// Serve from /public; ?v=3 busts cache after asset moves/replacements
-const AVATAR_SRC = "/advisor-avatar.jpg?v=3";
+/** Prefer your PNG in /public; then JPG; then earlier PNG name. */
+const AVATAR_CANDIDATES = [
+  "/advisor-avatar.png?v=4",
+  "/advisor-avatar.jpg?v=4",
+  "/avatar-pro-male.png?v=4",
+];
 
-// Minimal inline SVG fallback (round neutral avatar)
+/** Simple inline SVG fallback so you never see broken alt text. */
 const FALLBACK_AVATAR =
   "data:image/svg+xml;utf8," +
   encodeURIComponent(`
@@ -30,23 +34,7 @@ const FALLBACK_AVATAR =
   </g>
 </svg>`);
 
-function ensureSessionId(): string {
-  if (typeof window === "undefined") return Math.random().toString(36).slice(2);
-  const key = "da_session_id";
-  let sid = localStorage.getItem(key);
-  if (!sid) { sid = Math.random().toString(36).slice(2); localStorage.setItem(key, sid); }
-  return sid;
-}
-
-function formatBytes(n?: number) {
-  if (typeof n !== "number") return "";
-  if (n < 1024) return `${n} B`;
-  const units = ["KB","MB","GB"]; let i=-1;
-  do { n /= 1024; i++; } while (n >= 1024 && i < units.length - 1);
-  return `${n.toFixed(1)} ${units[i]}`;
-}
-
-// Prefer a UK male TTS voice; fallback to any en-GB/en-*
+/** Pick a UK male voice when available. */
 function pickUkMaleVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
   if (!voices?.length) return null;
   const preferred = [
@@ -55,19 +43,48 @@ function pickUkMaleVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice |
     "Daniel",
     "UK English Male",
   ];
-  for (const name of preferred) { const v = voices.find((vv) => vv.name === name); if (v) return v; }
-  const enGb = voices.find((v) => (v.lang || "").toLowerCase().startsWith("en-gb")); if (enGb) return enGb;
-  const enAny = voices.find((v) => (v.lang || "").toLowerCase().startsWith("en-")); return enAny || null;
+  for (const name of preferred) {
+    const v = voices.find((vv) => vv.name === name);
+    if (v) return v;
+  }
+  const enGb = voices.find((v) => (v.lang || "").toLowerCase().startsWith("en-gb"));
+  if (enGb) return enGb;
+  const enAny = voices.find((v) => (v.lang || "").toLowerCase().startsWith("en-"));
+  return enAny || null;
 }
 
-// ---- Avatar component with robust fallback ----
+function ensureSessionId(): string {
+  if (typeof window === "undefined") return Math.random().toString(36).slice(2);
+  const key = "da_session_id";
+  let sid = localStorage.getItem(key);
+  if (!sid) {
+    sid = Math.random().toString(36).slice(2);
+    localStorage.setItem(key, sid);
+  }
+  return sid;
+}
+
+function formatBytes(n?: number) {
+  if (typeof n !== "number") return "";
+  if (n < 1024) return `${n} B`;
+  const units = ["KB", "MB", "GB"];
+  let i = -1;
+  do {
+    n /= 1024;
+    i++;
+  } while (n >= 1024 && i < units.length - 1);
+  return `${n.toFixed(1)} ${units[i]}`;
+}
+
+/** Robust avatar that tries PNG → JPG → previous PNG, then a neutral fallback. */
 function Avatar({ size = 40 }: { size?: number }) {
-  const [src, setSrc] = useState<string>(AVATAR_SRC);
+  const [idx, setIdx] = useState(0);
+  const src = idx < AVATAR_CANDIDATES.length ? AVATAR_CANDIDATES[idx] : FALLBACK_AVATAR;
   return (
     <img
       src={src}
-      alt="" // ensure no alt text shows up if image fails
-      onError={() => setSrc(FALLBACK_AVATAR)}
+      alt=""
+      onError={() => setIdx((i) => i + 1)}
       decoding="async"
       loading="eager"
       style={{
@@ -96,7 +113,7 @@ export default function Home() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chosenVoice = useRef<SpeechSynthesisVoice | null>(null);
 
-  // Initial UI state + greeting
+  // Initial greeting and theme restore
   useEffect(() => {
     const savedTheme = typeof window !== "undefined" ? localStorage.getItem("da_theme") : null;
     if (savedTheme === "dark" || savedTheme === "light") setTheme(savedTheme as "light" | "dark");
@@ -108,14 +125,19 @@ export default function Home() {
   }, []);
 
   // Auto-scroll
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
 
-  // TTS voice
+  // Prepare voice
   useEffect(() => {
     if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
-    const assign = () => { chosenVoice.current = pickUkMaleVoice(window.speechSynthesis.getVoices()); };
+    const assign = () => {
+      chosenVoice.current = pickUkMaleVoice(window.speechSynthesis.getVoices());
+    };
     const vs = window.speechSynthesis.getVoices();
-    if (vs?.length) assign(); else window.speechSynthesis.onvoiceschanged = assign;
+    if (vs?.length) assign();
+    else window.speechSynthesis.onvoiceschanged = assign;
   }, []);
 
   // Speak bot replies
@@ -126,7 +148,9 @@ export default function Home() {
     if (!last || last.sender !== "bot") return;
     const u = new SpeechSynthesisUtterance(last.text);
     if (chosenVoice.current) u.voice = chosenVoice.current;
-    u.rate = 1; u.pitch = 1; u.volume = 1;
+    u.rate = 1;
+    u.pitch = 1;
+    u.volume = 1;
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(u);
   }, [messages, voiceOn]);
@@ -170,7 +194,11 @@ export default function Home() {
     const userMsg: Message = { sender: "user", text: msg };
     const nextHist = [...messages, userMsg];
     setMessages(nextHist);
-    try { await sendToApi(msg, nextHist); } catch { /* no-op */ }
+    try {
+      await sendToApi(msg, nextHist);
+    } catch {
+      /* no-op */
+    }
   };
 
   // Upload
@@ -215,11 +243,18 @@ export default function Home() {
     });
   };
 
-  // Styles
+  // --- styles
   const isDark = theme === "dark";
   const styles: { [k: string]: React.CSSProperties } = {
-    frame: { maxWidth: 720, margin: "0 auto", padding: 16, fontFamily: "'Segoe UI', Arial, sans-serif",
-             background: isDark ? "#0b1220" : "#f3f4f6", minHeight: "100vh", color: isDark ? "#e5e7eb" : "#111827" },
+    frame: {
+      maxWidth: 720,
+      margin: "0 auto",
+      padding: 16,
+      fontFamily: "'Segoe UI', Arial, sans-serif",
+      background: isDark ? "#0b1220" : "#f3f4f6",
+      minHeight: "100vh",
+      color: isDark ? "#e5e7eb" : "#111827",
+    },
     card: {
       border: isDark ? "1px solid #1f2937" : "1px solid #e5e7eb",
       borderRadius: 16,
@@ -228,54 +263,113 @@ export default function Home() {
       overflow: "hidden",
     },
     header: {
-      display: "flex", justifyContent: "space-between", alignItems: "center",
-      padding: "12px 16px", borderBottom: isDark ? "1px solid #1f2937" : "1px solid #e5e7eb",
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      padding: "12px 16px",
+      borderBottom: isDark ? "1px solid #1f2937" : "1px solid #e5e7eb",
       background: isDark ? "#0f172a" : "#fafafa",
     },
     brand: { display: "flex", alignItems: "center", gap: 10, fontWeight: 700 },
     onlineDot: { marginLeft: 8, fontSize: 12, color: "#10b981", fontWeight: 600 },
     tools: { display: "flex", alignItems: "center", gap: 8 },
     select: {
-      padding: "6px 10px", borderRadius: 8, border: isDark ? "1px solid #374151" : "1px solid #d1d5db",
-      background: isDark ? "#111827" : "#fff", color: isDark ? "#e5e7eb" : "#111827"
+      padding: "6px 10px",
+      borderRadius: 8,
+      border: isDark ? "1px solid #374151" : "1px solid #d1d5db",
+      background: isDark ? "#111827" : "#fff",
+      color: isDark ? "#e5e7eb" : "#111827",
     },
     btn: {
-      padding: "6px 10px", borderRadius: 8, border: isDark ? "1px solid #374151" : "1px solid #d1d5db",
-      background: isDark ? "#111827" : "#fff", color: isDark ? "#e5e7eb" : "#111827", cursor: "pointer"
+      padding: "6px 10px",
+      borderRadius: 8,
+      border: isDark ? "1px solid #374151" : "1px solid #d1d5db",
+      background: isDark ? "#111827" : "#fff",
+      color: isDark ? "#e5e7eb" : "#111827",
+      cursor: "pointer",
     },
     chat: {
-      height: 520, overflowY: "auto", padding: 16,
+      height: 520,
+      overflowY: "auto",
+      padding: 16,
       background: isDark ? "linear-gradient(#0b1220, #0f172a)" : "linear-gradient(#ffffff, #fafafa)",
-      display: "flex", flexDirection: "column", gap: 12,
+      display: "flex",
+      flexDirection: "column",
+      gap: 12,
     },
     row: { display: "flex", alignItems: "flex-start", gap: 10 },
     rowUser: { justifyContent: "flex-end" },
     avatarWrap: {
-      width: 40, height: 40, borderRadius: "50%", overflow: "hidden",
-      display: "flex", alignItems: "center", justifyContent: "center"
+      width: 40,
+      height: 40,
+      borderRadius: "50%",
+      overflow: "hidden",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
     },
     bubble: {
-      padding: "10px 14px", borderRadius: 14, maxWidth: "70%", lineHeight: 1.45,
-      boxShadow: isDark ? "0 2px 10px rgba(0,0,0,0.5)" : "0 2px 10px rgba(0,0,0,0.06)"
+      padding: "10px 14px",
+      borderRadius: 14,
+      maxWidth: "70%",
+      lineHeight: 1.45,
+      boxShadow: isDark ? "0 2px 10px rgba(0,0,0,0.5)" : "0 2px 10px rgba(0,0,0,0.06)",
     },
-    bubbleBot: { background: isDark ? "#1f2937" : "#f3f4f6", color: isDark ? "#e5e7eb" : "#111827", borderTopLeftRadius: 6 },
-    bubbleUser: { background: isDark ? "#1d4ed8" : "#dbeafe", color: isDark ? "#e5e7eb" : "#0f172a", borderTopRightRadius: 6 },
+    bubbleBot: {
+      background: isDark ? "#1f2937" : "#f3f4f6",
+      color: isDark ? "#e5e7eb" : "#111827",
+      borderTopLeftRadius: 6,
+    },
+    bubbleUser: {
+      background: isDark ? "#1d4ed8" : "#dbeafe",
+      color: isDark ? "#e5e7eb" : "#0f172a",
+      borderTopRightRadius: 6,
+    },
     attach: { marginTop: 8 },
     chip: {
-      display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, padding: "6px 10px",
-      background: isDark ? "#0b1220" : "#fff", border: isDark ? "1px solid #374151" : "1px solid #e5e7eb", borderRadius: 999
+      display: "inline-flex",
+      alignItems: "center",
+      gap: 8,
+      fontSize: 12,
+      padding: "6px 10px",
+      background: isDark ? "#0b1220" : "#fff",
+      border: isDark ? "1px solid #374151" : "1px solid #e5e7eb",
+      borderRadius: 999,
     },
     footer: {
-      display: "flex", alignItems: "center", gap: 8, padding: 12,
-      borderTop: isDark ? "1px solid #1f2937" : "1px solid #e5e7eb", background: isDark ? "#0f172a" : "#fafafa"
+      display: "flex",
+      alignItems: "center",
+      gap: 8,
+      padding: 12,
+      borderTop: isDark ? "1px solid #1f2937" : "1px solid #e5e7eb",
+      background: isDark ? "#0f172a" : "#fafafa",
     },
-    fileBtn: { padding: "8px 12px", borderRadius: 8, border: isDark ? "1px solid #374151" : "1px solid #d1d5db",
-               background: isDark ? "#111827" : "#fff", color: isDark ? "#e5e7eb" : "#111827", cursor: "pointer" },
+    fileBtn: {
+      padding: "8px 12px",
+      borderRadius: 8,
+      border: isDark ? "1px solid #374151" : "1px solid #d1d5db",
+      background: isDark ? "#111827" : "#fff",
+      color: isDark ? "#e5e7eb" : "#111827",
+      cursor: "pointer",
+    },
     input: {
-      flex: 1, padding: "10px 12px", borderRadius: 8, border: isDark ? "1px solid #374151" : "1px solid #d1d5db",
-      fontSize: 16, background: isDark ? "#111827" : "#fff", color: isDark ? "#e5e7eb" : "#111827"
+      flex: 1,
+      padding: "10px 12px",
+      borderRadius: 8,
+      border: isDark ? "1px solid #374151" : "1px solid #d1d5db",
+      fontSize: 16,
+      background: isDark ? "#111827" : "#fff",
+      color: isDark ? "#e5e7eb" : "#111827",
     },
-    sendBtn: { padding: "10px 14px", borderRadius: 8, border: "none", background: "#16a34a", color: "#fff", cursor: "pointer", fontWeight: 600 },
+    sendBtn: {
+      padding: "10px 14px",
+      borderRadius: 8,
+      border: "none",
+      background: "#16a34a",
+      color: "#fff",
+      cursor: "pointer",
+      fontWeight: 600,
+    },
   };
 
   return (
@@ -284,15 +378,21 @@ export default function Home() {
         {/* Header */}
         <div style={styles.header}>
           <div style={styles.brand}>
-            <div style={styles.avatarWrap}><Avatar /></div>
+            <div style={styles.avatarWrap}>
+              <Avatar />
+            </div>
             <span>Debt Advisor</span>
             <span style={styles.onlineDot}>● Online</span>
           </div>
           <div style={styles.tools}>
             <select style={styles.select} value={language} onChange={handleLanguageChange} title="Change language">
-              {LANGUAGES.map((l) => <option key={l} value={l}>{l}</option>)}
+              {LANGUAGES.map((l) => (
+                <option key={l} value={l}>
+                  {l}
+                </option>
+              ))}
             </select>
-            <button type="button" style={styles.btn} onClick={() => setVoiceOn(v => !v)} title="Toggle voice">
+            <button type="button" style={styles.btn} onClick={() => setVoiceOn((v) => !v)} title="Toggle voice">
               {voiceOn ? "🔈 Voice On" : "🔇 Voice Off"}
             </button>
             <button type="button" style={styles.btn} onClick={toggleTheme} title="Toggle theme">
@@ -307,7 +407,11 @@ export default function Home() {
             const isUser = m.sender === "user";
             return (
               <div key={i} style={{ ...styles.row, ...(isUser ? styles.rowUser : {}) }}>
-                {!isUser && <div style={styles.avatarWrap}><Avatar /></div>}
+                {!isUser && (
+                  <div style={styles.avatarWrap}>
+                    <Avatar />
+                  </div>
+                )}
                 <div style={{ ...styles.bubble, ...(isUser ? styles.bubbleUser : styles.bubbleBot) }}>
                   <div>{m.text}</div>
                   {m.attachment && (
@@ -315,7 +419,9 @@ export default function Home() {
                       <a href={m.attachment.url} target="_blank" rel="noreferrer" style={styles.chip}>
                         <span>📄</span>
                         <span style={{ fontWeight: 600 }}>{m.attachment.filename}</span>
-                        {typeof m.attachment.size === "number" && <span style={{ opacity: 0.7 }}>({formatBytes(m.attachment.size)})</span>}
+                        {typeof m.attachment.size === "number" && (
+                          <span style={{ opacity: 0.7 }}>({formatBytes(m.attachment.size)})</span>
+                        )}
                         <span style={{ textDecoration: "underline" }}>Download</span>
                       </a>
                     </div>
@@ -323,6 +429,7 @@ export default function Home() {
                 </div>
                 {isUser && (
                   <div style={styles.avatarWrap}>
+                    {/* keep user avatar simple (same shape) */}
                     <Avatar />
                   </div>
                 )}
@@ -345,7 +452,9 @@ export default function Home() {
             onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
             placeholder="Type your message…"
           />
-          <button type="button" style={styles.sendBtn} onClick={handleSubmit}>Send</button>
+          <button type="button" style={styles.sendBtn} onClick={handleSubmit}>
+            Send
+          </button>
         </div>
       </div>
     </main>
