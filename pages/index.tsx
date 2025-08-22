@@ -4,27 +4,25 @@ type Sender = "user" | "bot";
 type Attachment = { filename: string; url: string; mimeType?: string; size?: number };
 type Message = { sender: Sender; text: string; attachment?: Attachment };
 
+const LANGUAGES = ["English","Spanish","Polish","French","German","Portuguese","Italian","Romanian"];
+
 function ensureSessionId(): string {
   if (typeof window === "undefined") return Math.random().toString(36).slice(2);
   const key = "da_session_id";
   let sid = localStorage.getItem(key);
-  if (!sid) {
-    sid = Math.random().toString(36).slice(2);
-    localStorage.setItem(key, sid);
-  }
+  if (!sid) { sid = Math.random().toString(36).slice(2); localStorage.setItem(key, sid); }
   return sid;
 }
 
 function formatBytes(n?: number) {
   if (typeof n !== "number") return "";
   if (n < 1024) return `${n} B`;
-  const units = ["KB", "MB", "GB"];
-  let i = -1;
-  do { n = n / 1024; i++; } while (n >= 1024 && i < units.length - 1);
+  const units = ["KB","MB","GB"]; let i=-1;
+  do { n /= 1024; i++; } while (n >= 1024 && i < units.length - 1);
   return `${n.toFixed(1)} ${units[i]}`;
 }
 
-// Pick a UK male voice if possible, else any en-GB/en-*.
+// Prefer a UK male TTS voice; fallback to any en-GB/en-*
 function pickUkMaleVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
   if (!voices?.length) return null;
   const preferred = [
@@ -33,79 +31,49 @@ function pickUkMaleVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice |
     "Daniel",
     "UK English Male",
   ];
-  for (const name of preferred) {
-    const v = voices.find((vv) => vv.name === name);
-    if (v) return v;
-  }
-  const enGb = voices.find((v) => (v.lang || "").toLowerCase().startsWith("en-gb"));
-  if (enGb) return enGb;
-  const enAny = voices.find((v) => (v.lang || "").toLowerCase().startsWith("en-"));
-  return enAny || null;
+  for (const name of preferred) { const v = voices.find((vv) => vv.name === name); if (v) return v; }
+  const enGb = voices.find((v) => (v.lang || "").toLowerCase().startsWith("en-gb")); if (enGb) return enGb;
+  const enAny = voices.find((v) => (v.lang || "").toLowerCase().startsWith("en-")); return enAny || null;
 }
 
-const LANGUAGES = [
-  "English",
-  "Spanish",
-  "Polish",
-  "French",
-  "German",
-  "Portuguese",
-  "Italian",
-  "Romanian",
-];
-
 export default function Home() {
+  // --- UI state
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [language, setLanguage] = useState<string>("English");
   const [uploading, setUploading] = useState(false);
   const [voiceOn, setVoiceOn] = useState(true);
+  const [theme, setTheme] = useState<"light" | "dark">("light");
 
+  // --- refs
   const sessionId = useMemo(() => ensureSessionId(), []);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chosenVoice = useRef<SpeechSynthesisVoice | null>(null);
 
-  // Auto-scroll to latest message
+  // --- initial greeting (force your exact first line, no backend dependency)
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    const savedTheme = typeof window !== "undefined" ? localStorage.getItem("da_theme") : null;
+    if (savedTheme === "dark" || savedTheme === "light") setTheme(savedTheme as "light" | "dark");
 
-  // Init: greet + tip about language dropdown
-  useEffect(() => {
-    const start = async () => {
-      try {
-        const res = await fetch("/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sessionId, userMessage: "👋 INITIATE", history: [] }),
-        });
-        const data = await res.json();
-        const greeting = (data?.reply as string) || "Hello! My name’s Mark. How can I help today?";
-        setMessages([
-          { sender: "bot", text: greeting },
-          { sender: "bot", text: "🌍 You can change languages any time using the dropdown above." },
-        ]);
-      } catch {
-        setMessages([{ sender: "bot", text: "⚠️ Error connecting to chatbot." }]);
-      }
-    };
-    start();
-  }, [sessionId]);
-
-  // Prepare speech voice (UK male if available)
-  useEffect(() => {
-    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
-    const assignVoice = () => {
-      const vs = window.speechSynthesis.getVoices();
-      chosenVoice.current = pickUkMaleVoice(vs);
-    };
-    const vs = window.speechSynthesis.getVoices();
-    if (vs?.length) assignVoice();
-    else window.speechSynthesis.onvoiceschanged = assignVoice;
+    setMessages([
+      { sender: "bot", text: "Hello! My name’s Mark. What prompted you to seek help with your debts today?" },
+      { sender: "bot", text: "🌍 You can change languages any time using the dropdown above." },
+    ]);
   }, []);
 
-  // Speak assistant replies
+  // --- auto-scroll
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+
+  // --- prep speech voice
+  useEffect(() => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    const assign = () => { chosenVoice.current = pickUkMaleVoice(window.speechSynthesis.getVoices()); };
+    const vs = window.speechSynthesis.getVoices();
+    if (vs?.length) assign(); else window.speechSynthesis.onvoiceschanged = assign;
+  }, []);
+
+  // --- speak assistant replies
   useEffect(() => {
     if (!voiceOn) return;
     if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
@@ -118,66 +86,80 @@ export default function Home() {
     window.speechSynthesis.speak(u);
   }, [messages, voiceOn]);
 
-  const send = async (text: string) => {
-    const userMsg: Message = { sender: "user", text };
-    setMessages((prev) => [...prev, userMsg]);
-    try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionId,
-          userMessage: text,
-          history: messages.map((m) => m.text),
-        }),
-      });
-      const data = await res.json();
-      const botText = (data?.reply as string) || "⚠️ No response from server.";
-      setMessages((prev) => [...prev, { sender: "bot", text: botText }]);
-    } catch {
-      setMessages((prev) => [...prev, { sender: "bot", text: "⚠️ Error connecting to chatbot." }]);
-    }
+  // --- helpers
+  const sendToApi = async (text: string, hist: Message[]) => {
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionId,
+        userMessage: text,
+        history: hist.map((m) => m.text),
+        language,
+      }),
+    });
+    return res.json();
   };
 
   const handleSubmit = async () => {
     const text = input.trim();
     if (!text) return;
     setInput("");
-    await send(text);
+    const userMsg: Message = { sender: "user", text };
+    const nextHist = [...messages, userMsg];
+    setMessages(nextHist);
+
+    try {
+      const data = await sendToApi(text, nextHist);
+      const reply = (data?.reply as string) || "Thanks — let’s continue.";
+      setMessages((prev) => [...prev, { sender: "bot", text: reply }]);
+    } catch {
+      setMessages((prev) => [...prev, { sender: "bot", text: "⚠️ I couldn’t reach the server just now." }]);
+    }
   };
 
-  // Language change: tell backend
   const handleLanguageChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
     const selected = e.target.value;
     setLanguage(selected);
-    await send(`Language: ${selected}`);
+    // Let the backend know, but don’t block UI
+    const msg = `Language: ${selected}`;
+    const userMsg: Message = { sender: "user", text: msg };
+    const nextHist = [...messages, userMsg];
+    setMessages(nextHist);
+    try { await sendToApi(msg, nextHist); } catch { /* ignore */ }
   };
 
-  // Upload handling
-  const handleUploadClick = () => fileInputRef.current?.click();
+  const handleUploadClick = () => { fileInputRef.current?.click(); };
 
   const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setUploading(true);
+
     try {
       const fd = new FormData();
       fd.append("file", file);
       fd.append("sessionId", sessionId);
+
       const r = await fetch("/api/upload", { method: "POST", body: fd });
       const data = await r.json();
+
       if (!data?.ok) {
         setMessages((prev) => [...prev, { sender: "bot", text: "Upload failed — please try again." }]);
-      } else {
-        const cleanName = data?.file?.filename || file.name;
-        const link = data?.downloadUrl || data?.url || "";
-        const msg: Message = {
-          sender: "bot",
-          text: link ? `📎 Uploaded: ${cleanName}` : `📎 Uploaded your file (${cleanName}).`,
-          attachment: link ? { filename: cleanName, url: link, mimeType: data?.file?.mimeType, size: data?.file?.size } : undefined,
-        };
-        setMessages((prev) => [...prev, msg]);
+        return;
       }
+
+      const cleanName = data?.file?.filename || file.name;
+      const link = data?.downloadUrl || data?.url || "";
+
+      const attach: Attachment | undefined = link
+        ? { filename: cleanName, url: link, mimeType: data?.file?.mimeType, size: data?.file?.size }
+        : undefined;
+
+      setMessages((prev) => [
+        ...prev,
+        { sender: "bot", text: link ? `📎 Uploaded: ${cleanName}` : `📎 Uploaded your file (${cleanName}).`, attachment: attach },
+      ]);
     } catch {
       setMessages((prev) => [...prev, { sender: "bot", text: "Upload failed — network error." }]);
     } finally {
@@ -186,46 +168,74 @@ export default function Home() {
     }
   };
 
-  // --- Styles (kept simple + professional, no libs) ---
+  const toggleTheme = () => {
+    setTheme((t) => {
+      const next = t === "dark" ? "light" : "dark";
+      if (typeof window !== "undefined") localStorage.setItem("da_theme", next);
+      return next;
+    });
+  };
+
+  // --- styles (simple + consistent)
+  const isDark = theme === "dark";
   const styles: { [k: string]: React.CSSProperties } = {
-    frame: { maxWidth: 720, margin: "0 auto", padding: 16, fontFamily: "'Segoe UI', Arial, sans-serif" },
+    frame: { maxWidth: 720, margin: "0 auto", padding: 16, fontFamily: "'Segoe UI', Arial, sans-serif",
+             background: isDark ? "#0b1220" : "#f3f4f6", minHeight: "100vh", color: isDark ? "#e5e7eb" : "#111827" },
     card: {
-      border: "1px solid #e5e7eb",
+      border: isDark ? "1px solid #1f2937" : "1px solid #e5e7eb",
       borderRadius: 16,
-      background: "#ffffff",
-      boxShadow: "0 8px 24px rgba(0,0,0,0.06)",
+      background: isDark ? "#111827" : "#ffffff",
+      boxShadow: isDark ? "0 8px 24px rgba(0,0,0,0.45)" : "0 8px 24px rgba(0,0,0,0.06)",
       overflow: "hidden",
     },
     header: {
       display: "flex", justifyContent: "space-between", alignItems: "center",
-      padding: "12px 16px", borderBottom: "1px solid #e5e7eb", background: "#fafafa",
+      padding: "12px 16px", borderBottom: isDark ? "1px solid #1f2937" : "1px solid #e5e7eb",
+      background: isDark ? "#0f172a" : "#fafafa",
     },
     brand: { display: "flex", alignItems: "center", gap: 8, fontWeight: 700 },
+    onlineDot: { marginLeft: 8, fontSize: 12, color: "#10b981", fontWeight: 600 },
     tools: { display: "flex", alignItems: "center", gap: 8 },
-    select: { padding: "6px 10px", borderRadius: 8, border: "1px solid #d1d5db", background: "#fff" },
-    voiceBtn: { padding: "6px 10px", borderRadius: 8, border: "1px solid #d1d5db", background: "#fff", cursor: "pointer" },
+    select: {
+      padding: "6px 10px", borderRadius: 8, border: isDark ? "1px solid #374151" : "1px solid #d1d5db",
+      background: isDark ? "#111827" : "#fff", color: isDark ? "#e5e7eb" : "#111827"
+    },
+    btn: {
+      padding: "6px 10px", borderRadius: 8, border: isDark ? "1px solid #374151" : "1px solid #d1d5db",
+      background: isDark ? "#111827" : "#fff", color: isDark ? "#e5e7eb" : "#111827", cursor: "pointer"
+    },
     chat: {
       height: 520, overflowY: "auto", padding: 16,
-      background: "linear-gradient(#ffffff, #fafafa)",
+      background: isDark ? "linear-gradient(#0b1220, #0f172a)" : "linear-gradient(#ffffff, #fafafa)",
       display: "flex", flexDirection: "column", gap: 12,
     },
     row: { display: "flex", alignItems: "flex-start", gap: 10 },
     rowUser: { justifyContent: "flex-end" },
     avatar: {
       width: 36, height: 36, borderRadius: "50%", display: "flex", alignItems: "center",
-      justifyContent: "center", fontSize: 20, boxShadow: "0 2px 6px rgba(0,0,0,0.1)",
+      justifyContent: "center", fontSize: 20, boxShadow: isDark ? "0 2px 6px rgba(0,0,0,0.6)" : "0 2px 6px rgba(0,0,0,0.1)",
     },
-    bubble: { padding: "10px 14px", borderRadius: 14, maxWidth: "70%", lineHeight: 1.45, boxShadow: "0 2px 10px rgba(0,0,0,0.06)" },
-    bubbleBot: { background: "#f3f4f6", color: "#111827", borderTopLeftRadius: 6 },
-    bubbleUser: { background: "#dbeafe", color: "#0f172a", borderTopRightRadius: 6 },
+    bubble: {
+      padding: "10px 14px", borderRadius: 14, maxWidth: "70%", lineHeight: 1.45,
+      boxShadow: isDark ? "0 2px 10px rgba(0,0,0,0.5)" : "0 2px 10px rgba(0,0,0,0.06)"
+    },
+    bubbleBot: { background: isDark ? "#1f2937" : "#f3f4f6", color: isDark ? "#e5e7eb" : "#111827", borderTopLeftRadius: 6 },
+    bubbleUser: { background: isDark ? "#1d4ed8" : "#dbeafe", color: isDark ? "#e5e7eb" : "#0f172a", borderTopRightRadius: 6 },
     attach: { marginTop: 8 },
     chip: {
       display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, padding: "6px 10px",
-      background: "#fff", border: "1px solid #e5e7eb", borderRadius: 999,
+      background: isDark ? "#0b1220" : "#fff", border: isDark ? "1px solid #374151" : "1px solid #e5e7eb", borderRadius: 999
     },
-    footer: { display: "flex", alignItems: "center", gap: 8, padding: 12, borderTop: "1px solid #e5e7eb", background: "#fafafa" },
-    fileBtn: { padding: "8px 12px", borderRadius: 8, border: "1px solid #d1d5db", background: "#fff", cursor: "pointer" },
-    input: { flex: 1, padding: "10px 12px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: 16 },
+    footer: {
+      display: "flex", alignItems: "center", gap: 8, padding: 12,
+      borderTop: isDark ? "1px solid #1f2937" : "1px solid #e5e7eb", background: isDark ? "#0f172a" : "#fafafa"
+    },
+    fileBtn: { padding: "8px 12px", borderRadius: 8, border: isDark ? "1px solid #374151" : "1px solid #d1d5db",
+               background: isDark ? "#111827" : "#fff", color: isDark ? "#e5e7eb" : "#111827", cursor: "pointer" },
+    input: {
+      flex: 1, padding: "10px 12px", borderRadius: 8, border: isDark ? "1px solid #374151" : "1px solid #d1d5db",
+      fontSize: 16, background: isDark ? "#111827" : "#fff", color: isDark ? "#e5e7eb" : "#111827"
+    },
     sendBtn: { padding: "10px 14px", borderRadius: 8, border: "none", background: "#16a34a", color: "#fff", cursor: "pointer", fontWeight: 600 },
   };
 
@@ -235,18 +245,19 @@ export default function Home() {
         {/* Header */}
         <div style={styles.header}>
           <div style={styles.brand}>
-            <span>🤖</span>
+            <span>👨</span>
             <span>Debt Advisor</span>
-            <span style={{ marginLeft: 8, fontSize: 12, color: "#10b981", fontWeight: 600 }}>● Online</span>
+            <span style={styles.onlineDot}>● Online</span>
           </div>
           <div style={styles.tools}>
             <select style={styles.select} value={language} onChange={handleLanguageChange} title="Change language">
-              {LANGUAGES.map((l) => (
-                <option key={l} value={l}>{l}</option>
-              ))}
+              {LANGUAGES.map((l) => <option key={l} value={l}>{l}</option>)}
             </select>
-            <button style={styles.voiceBtn} onClick={() => setVoiceOn(v => !v)} title="Toggle voice">
+            <button type="button" style={styles.btn} onClick={() => setVoiceOn(v => !v)} title="Toggle voice">
               {voiceOn ? "🔈 Voice On" : "🔇 Voice Off"}
+            </button>
+            <button type="button" style={styles.btn} onClick={toggleTheme} title="Toggle theme">
+              {theme === "dark" ? "☀️ Light" : "🌙 Dark"}
             </button>
           </div>
         </div>
@@ -257,7 +268,7 @@ export default function Home() {
             const isUser = m.sender === "user";
             return (
               <div key={i} style={{ ...styles.row, ...(isUser ? styles.rowUser : {}) }}>
-                {!isUser && <div style={{ ...styles.avatar, background: "#e5e7eb" }}>🤖</div>}
+                {!isUser && <div style={{ ...styles.avatar, background: isDark ? "#1f2937" : "#e5e7eb" }}>👨</div>}
                 <div style={{ ...styles.bubble, ...(isUser ? styles.bubbleUser : styles.bubbleBot) }}>
                   <div>{m.text}</div>
                   {m.attachment && (
@@ -281,7 +292,7 @@ export default function Home() {
         {/* Footer */}
         <div style={styles.footer}>
           <input ref={fileInputRef} type="file" hidden onChange={handleFileSelected} />
-          <button style={styles.fileBtn} onClick={handleUploadClick} disabled={uploading}>
+          <button type="button" style={styles.fileBtn} onClick={handleUploadClick} disabled={uploading}>
             📎 Upload docs {uploading ? "…" : ""}
           </button>
           <input
@@ -291,7 +302,7 @@ export default function Home() {
             onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
             placeholder="Type your message…"
           />
-          <button style={styles.sendBtn} onClick={handleSubmit}>Send</button>
+          <button type="button" style={styles.sendBtn} onClick={handleSubmit}>Send</button>
         </div>
       </div>
     </main>
