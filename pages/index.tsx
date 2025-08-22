@@ -6,6 +6,30 @@ type Message = { sender: Sender; text: string; attachment?: Attachment };
 
 const LANGUAGES = ["English","Spanish","Polish","French","German","Portuguese","Italian","Romanian"];
 
+// Serve from /public; ?v=3 busts cache after asset moves/replacements
+const AVATAR_SRC = "/advisor-avatar.jpg?v=3";
+
+// Minimal inline SVG fallback (round neutral avatar)
+const FALLBACK_AVATAR =
+  "data:image/svg+xml;utf8," +
+  encodeURIComponent(`
+<svg xmlns='http://www.w3.org/2000/svg' width='128' height='128' viewBox='0 0 128 128'>
+  <defs>
+    <linearGradient id='g' x1='0' y1='0' x2='0' y2='1'>
+      <stop offset='0%' stop-color='#e8edf5'/>
+      <stop offset='100%' stop-color='#d7dee9'/>
+    </linearGradient>
+  </defs>
+  <rect width='128' height='128' fill='url(#g)'/>
+  <g transform='translate(0,6)'>
+    <circle cx='64' cy='42' r='26' fill='#f2c9ab'/>
+    <rect x='28' y='68' width='72' height='38' rx='10' fill='#253447'/>
+    <polygon points='64,70 76,95 52,95' fill='#1e73be'/>
+    <rect x='54' y='62' width='20' height='12' rx='6' fill='#f0c7a8'/>
+    <path d='M38,48 q26,-28 52,0 v-8 q-26,-20 -52,0z' fill='#2b2b2b'/>
+  </g>
+</svg>`);
+
 function ensureSessionId(): string {
   if (typeof window === "undefined") return Math.random().toString(36).slice(2);
   const key = "da_session_id";
@@ -36,8 +60,30 @@ function pickUkMaleVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice |
   const enAny = voices.find((v) => (v.lang || "").toLowerCase().startsWith("en-")); return enAny || null;
 }
 
+// ---- Avatar component with robust fallback ----
+function Avatar({ size = 40 }: { size?: number }) {
+  const [src, setSrc] = useState<string>(AVATAR_SRC);
+  return (
+    <img
+      src={src}
+      alt="" // ensure no alt text shows up if image fails
+      onError={() => setSrc(FALLBACK_AVATAR)}
+      decoding="async"
+      loading="eager"
+      style={{
+        width: size,
+        height: size,
+        display: "block",
+        borderRadius: "999px",
+        objectFit: "cover",
+        background: "#e5e7eb",
+        boxShadow: "0 1px 3px rgba(0,0,0,0.18)",
+      }}
+    />
+  );
+}
+
 export default function Home() {
-  // --- UI state
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [language, setLanguage] = useState<string>("English");
@@ -45,13 +91,12 @@ export default function Home() {
   const [voiceOn, setVoiceOn] = useState(true);
   const [theme, setTheme] = useState<"light" | "dark">("light");
 
-  // --- refs
   const sessionId = useMemo(() => ensureSessionId(), []);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chosenVoice = useRef<SpeechSynthesisVoice | null>(null);
 
-  // --- initial greeting (force your exact first line)
+  // Initial UI state + greeting
   useEffect(() => {
     const savedTheme = typeof window !== "undefined" ? localStorage.getItem("da_theme") : null;
     if (savedTheme === "dark" || savedTheme === "light") setTheme(savedTheme as "light" | "dark");
@@ -62,10 +107,10 @@ export default function Home() {
     ]);
   }, []);
 
-  // --- auto-scroll
+  // Auto-scroll
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
-  // --- prep speech voice
+  // TTS voice
   useEffect(() => {
     if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
     const assign = () => { chosenVoice.current = pickUkMaleVoice(window.speechSynthesis.getVoices()); };
@@ -73,7 +118,7 @@ export default function Home() {
     if (vs?.length) assign(); else window.speechSynthesis.onvoiceschanged = assign;
   }, []);
 
-  // --- speak assistant replies
+  // Speak bot replies
   useEffect(() => {
     if (!voiceOn) return;
     if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
@@ -86,7 +131,7 @@ export default function Home() {
     window.speechSynthesis.speak(u);
   }, [messages, voiceOn]);
 
-  // --- helpers
+  // API helper
   const sendToApi = async (text: string, hist: Message[]) => {
     const res = await fetch("/api/chat", {
       method: "POST",
@@ -121,7 +166,6 @@ export default function Home() {
   const handleLanguageChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
     const selected = e.target.value;
     setLanguage(selected);
-    // Tell backend, but don’t block UI
     const msg = `Language: ${selected}`;
     const userMsg: Message = { sender: "user", text: msg };
     const nextHist = [...messages, userMsg];
@@ -129,34 +173,28 @@ export default function Home() {
     try { await sendToApi(msg, nextHist); } catch { /* no-op */ }
   };
 
-  const handleUploadClick = () => { fileInputRef.current?.click(); };
-
+  // Upload
+  const handleUploadClick = () => fileInputRef.current?.click();
   const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setUploading(true);
-
     try {
       const fd = new FormData();
       fd.append("file", file);
       fd.append("sessionId", sessionId);
-
       const r = await fetch("/api/upload", { method: "POST", body: fd });
       const data = await r.json();
-
       if (!data?.ok) {
         const msg = `Upload failed — ${data?.details || data?.error || "please try again."}`;
         setMessages((prev) => [...prev, { sender: "bot", text: msg }]);
         return;
       }
-
       const cleanName = data?.file?.filename || file.name;
       const link = data?.downloadUrl || data?.url || "";
-
       const attach: Attachment | undefined = link
         ? { filename: cleanName, url: link, mimeType: data?.file?.mimeType, size: data?.file?.size }
         : undefined;
-
       setMessages((prev) => [
         ...prev,
         { sender: "bot", text: link ? `📎 Uploaded: ${cleanName}` : `📎 Uploaded your file (${cleanName}).`, attachment: attach },
@@ -177,7 +215,7 @@ export default function Home() {
     });
   };
 
-  // --- styles
+  // Styles
   const isDark = theme === "dark";
   const styles: { [k: string]: React.CSSProperties } = {
     frame: { maxWidth: 720, margin: "0 auto", padding: 16, fontFamily: "'Segoe UI', Arial, sans-serif",
@@ -195,7 +233,6 @@ export default function Home() {
       background: isDark ? "#0f172a" : "#fafafa",
     },
     brand: { display: "flex", alignItems: "center", gap: 10, fontWeight: 700 },
-    avatarImg: { width: 32, height: 32, borderRadius: "999px", objectFit: "cover", boxShadow: isDark ? "0 1px 3px rgba(0,0,0,0.6)" : "0 1px 3px rgba(0,0,0,0.2)" },
     onlineDot: { marginLeft: 8, fontSize: 12, color: "#10b981", fontWeight: 600 },
     tools: { display: "flex", alignItems: "center", gap: 8 },
     select: {
@@ -213,10 +250,9 @@ export default function Home() {
     },
     row: { display: "flex", alignItems: "flex-start", gap: 10 },
     rowUser: { justifyContent: "flex-end" },
-    avatar: {
-      width: 36, height: 36, borderRadius: "50%", display: "flex", alignItems: "center",
-      justifyContent: "center", fontSize: 20, boxShadow: isDark ? "0 2px 6px rgba(0,0,0,0.6)" : "0 2px 6px rgba(0,0,0,0.1)",
-      overflow: "hidden"
+    avatarWrap: {
+      width: 40, height: 40, borderRadius: "50%", overflow: "hidden",
+      display: "flex", alignItems: "center", justifyContent: "center"
     },
     bubble: {
       padding: "10px 14px", borderRadius: 14, maxWidth: "70%", lineHeight: 1.45,
@@ -248,9 +284,7 @@ export default function Home() {
         {/* Header */}
         <div style={styles.header}>
           <div style={styles.brand}>
-            <div style={styles.avatar}>
-              <img src="/advisor-avatar.jpg" alt="Advisor avatar" style={styles.avatarImg as any} />
-            </div>
+            <div style={styles.avatarWrap}><Avatar /></div>
             <span>Debt Advisor</span>
             <span style={styles.onlineDot}>● Online</span>
           </div>
@@ -273,11 +307,7 @@ export default function Home() {
             const isUser = m.sender === "user";
             return (
               <div key={i} style={{ ...styles.row, ...(isUser ? styles.rowUser : {}) }}>
-                {!isUser && (
-                  <div style={styles.avatar}>
-                    <img src="/advisor-avatar.jpg" alt="Advisor avatar" style={styles.avatarImg as any} />
-                  </div>
-                )}
+                {!isUser && <div style={styles.avatarWrap}><Avatar /></div>}
                 <div style={{ ...styles.bubble, ...(isUser ? styles.bubbleUser : styles.bubbleBot) }}>
                   <div>{m.text}</div>
                   {m.attachment && (
@@ -292,8 +322,8 @@ export default function Home() {
                   )}
                 </div>
                 {isUser && (
-                  <div style={{ ...styles.avatar, background: "#3b82f6" }}>
-                    <span style={{ color: "#fff" }}>🧑</span>
+                  <div style={styles.avatarWrap}>
+                    <Avatar />
                   </div>
                 )}
               </div>
