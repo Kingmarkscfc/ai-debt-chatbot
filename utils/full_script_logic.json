@@ -1,135 +1,81 @@
 {
+  "endId": "wrap_up",
   "steps": [
     {
+      "id": "intro",
       "prompt": "Hello! My name’s Mark. What prompted you to seek help with your debts today?",
-      "keywords": [
-        "debts",
-        "credit card",
-        "loan",
-        "arrears",
-        "overdraft",
-        "store card",
-        "catalogue",
-        "ccj",
-        "bailiff",
-        "mortgage",
-        "rent"
-      ]
+      "next": "ask_name"
     },
     {
-      "prompt": "Thank you for sharing that. What would you say is your main concern right now—bailiffs, interest building up, missed payments, or court action?",
-      "keywords": [
-        "bailiff",
-        "interest",
-        "missed payment",
-        "court",
-        "repossession",
-        "ccj",
-        "charging order",
-        "warrant"
-      ]
+      "id": "ask_name",
+      "prompt": "Great, I look forward to helping you to clear off your debts. Can you let me know who I’m speaking to?",
+      "keywords": [],
+      "next": "fact_find"
     },
     {
-      "prompt": "Thanks for sharing. Roughly how much do you owe in total across all debts?",
-      "keywords": [
-        "£",
-        "pound",
-        "thousand",
-        "hundred",
-        "0",
-        "1",
-        "2",
-        "3",
-        "4",
-        "5",
-        "6",
-        "7",
-        "8",
-        "9"
-      ]
+      "id": "fact_find",
+      "prompt": "Just so I can point you in the right direction, what would you say your main concern is with the debts?",
+      "keywords": [],
+      "next": "portal_intro"
     },
     {
-      "prompt": "Are any of your debts in joint names with anybody else?",
-      "keywords": [
-        "yes",
-        "no",
-        "joint",
-        "partner",
-        "husband",
-        "wife",
-        "spouse"
-      ]
+      "id": "portal_intro",
+      "prompt": "Don’t worry {name}, we’re going to help you with your debts today. First, let’s set up your secure client portal where you can add your details, upload documents and track progress.",
+      "keywords": ["ok","yes","continue","set up","portal","ready"],
+      "next": "portal_login"
     },
     {
-      "prompt": "Is anybody a guarantor for any of your debts or are you a guarantor for anyone else?",
-      "keywords": [
-        "yes",
-        "no",
-        "guarantor"
-      ]
+      "id": "portal_login",
+      "prompt": "Please enter your email address and create a 4-digit PIN to log in to your secure client portal. There’s a ‘Forgot PIN’ option that sends a reset email.",
+      "keywords": ["done","submitted","logged in","created","registered","signed in","sign in","login","log in"],
+      "next": "regulatory"
     },
     {
-      "prompt": "Got it. What is your current monthly income after tax?",
-      "keywords": [
-        "£",
-        "pound",
-        "salary",
-        "wage",
-        "income",
-        "earn",
-        "per month",
-        "weekly",
-        "yearly"
-      ]
+      "id": "regulatory",
+      "prompt": "I just need to make you aware there’s no obligation to act on today’s advice. Free debt help is available at moneyhelper.org.uk.",
+      "keywords": ["ok","understood","thanks","continue","proceed","yes"],
+      "next": "employment_status"
     },
     {
-      "prompt": "Thank you. And roughly what are your total monthly household expenses?",
-      "keywords": [
-        "£",
-        "pound",
-        "rent",
-        "mortgage",
-        "bills",
-        "food",
-        "council tax",
-        "utilities"
-      ]
+      "id": "employment_status",
+      "prompt": "What’s your current employment status — employed, self-employed, unemployed/on benefits, pension/retired, or mixed?",
+      "keywords": ["employed","self","self-employed","unemployed","benefit","pension","retired","mixed","both","part-time","full-time"],
+      "next": "docs_router"
     },
     {
-      "prompt": "Understood. Are you currently up to date with your priority bills like rent, mortgage, and council tax?",
-      "keywords": [
-        "yes",
-        "no",
-        "arrears",
-        "behind",
-        "up to date"
-      ]
+      "id": "docs_router",
+      "prompt": "Thanks. I’ll tailor the document list based on what you’ve just told me.",
+      "keywords": ["ok","yes","continue","ready"],
+      "next": "docs_employed"
     },
     {
-      "prompt": "Thanks for clarifying. Have you received any default notices, court claims, or bailiff letters recently?",
-      "keywords": [
-        "yes",
-        "no",
-        "default",
-        "court",
-        "bailiff",
-        "ccj",
-        "letter"
-      ]
+      "id": "docs_employed",
+      "prompt": "Please upload: • Proof of ID (passport/driving licence or birth certificate) • Last 3 months **bank statements** (each account) • Last **3 payslips** (12 weeks if paid weekly) • Any creditor statements/letters • If you receive benefits, your latest UC statement • Car finance/HP docs if applicable.",
+      "keywords": ["uploaded","attached","done","later","busy","ok","will do"],
+      "next": "busy_or_wrap"
     },
     {
-      "prompt": "Based on what you’ve told me so far, I can explain the different debt solutions available to you in the UK. Shall we go through them one by one?",
-      "keywords": [
-        "yes",
-        "no",
-        "ok",
-        "sure",
-        "go ahead"
-      ]
+      "id": "docs_self",
+      "prompt": "Please upload: • Proof of ID • Last 3 months **bank statements** (each account) • Latest **SA302** and **tax year overview** (or most recent tax return) • Any creditor statements/letters • If you receive benefits, your latest UC statement • Car finance/HP docs if applicable.",
+      "keywords": ["uploaded","attached","done","later","busy","ok","will do"],
+      "next": "busy_or_wrap"
     },
     {
-      "prompt": "Great — let's start with self-help options and work through loans, DRO, bankruptcy, DMP, and finally IVA so you can make an informed choice.",
-      "keywords": []
+      "id": "docs_benefits_or_other",
+      "prompt": "Please upload: • Proof of ID • Last 3 months **bank statements** (each account) • Latest **benefit statements** (e.g., full UC breakdown for 12 months + current month) • Any creditor statements/letters • Car finance/HP docs if applicable.",
+      "keywords": ["uploaded","attached","done","later","busy","ok","will do"],
+      "next": "busy_or_wrap"
+    },
+    {
+      "id": "busy_or_wrap",
+      "prompt": "If you’re busy, you can come back later—the chat and portal are saved. Otherwise, shall I confirm next steps?",
+      "yesNext": "wrap_up",
+      "noNext": "wrap_up"
+    },
+    {
+      "id": "wrap_up",
+      "prompt": "Thanks — our assessment team will contact you shortly and start working on your case. Please check your client portal daily for progress. It’s been lovely speaking with you today — if you’ve any questions, leave them in the portal. Have a great day!",
+      "next": null
     }
   ]
 }

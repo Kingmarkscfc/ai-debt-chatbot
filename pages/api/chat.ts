@@ -1,137 +1,188 @@
+// pages/api/chat.ts
+import type { NextApiRequest, NextApiResponse } from "next";
 import { createClient } from "@supabase/supabase-js";
 import { v4 as uuidv4 } from "uuid";
-import fullScriptLogic from "../../utils/full_script_logic.json";
-import type { NextApiRequest, NextApiResponse } from "next";
-import { ChatCompletionMessageParam } from "openai/resources";
 import OpenAI from "openai";
+import script from "../../utils/full_script_logic.json";
+
+type Role = "user" | "assistant";
+type ChatMsg = { role: Role; content: string };
+type Step = { id: string; prompt: string; keywords?: string[]; next?: string | null; yesNext?: string | null; noNext?: string | null; };
+type Script = { steps: Step[]; endId: string };
+
+const BOT_NAME = "Mark";
+const INTRO_ID = "intro";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const supabase = createClient(process.env.SUPABASE_URL || "", process.env.SUPABASE_ANON_KEY || "");
 
-const supabase = createClient(
-  process.env.SUPABASE_URL || "",
-  process.env.SUPABASE_ANON_KEY || ""
-);
-
-const fallbackHumour = [
-  "That’s a plot twist I didn’t see coming… but let’s stick to your debts, yeah?",
-  "I’m flattered you think I can do that — let’s get you debt-free instead!",
-  "All good! Let’s keep momentum and focus on your finances."
-];
-
-type Step = { prompt: string; keywords?: string[] };
-type Script = { steps: Step[] };
-
-function nextStepIndex(history: ChatCompletionMessageParam[]) {
-  const assistantCount = history.filter(m => m.role === "assistant").length;
-  // first assistant message is intro; next is step 1, etc.
-  return Math.min(assistantCount, (fullScriptLogic as Script).steps.length - 1);
-}
-
-function matchedKeywords(user: string, expected: string[] = []) {
-  if (!expected.length) return true;
-  const msg = user.toLowerCase();
-  return expected.some(k => msg.includes(k.toLowerCase()));
-}
-
-function isEmojiOnly(msg: string) {
-  const trimmed = msg.trim();
-  return /^([🙂🙁✅❌]|👍🏻|👍🏼|👍🏽|👍🏾|👍🏿|👍)$/.test(trimmed);
-}
-
-function emojiReply(msg: string) {
-  switch (msg.trim()) {
-    case "🙂": return "Noted! Glad you’re feeling positive. Shall we continue?";
-    case "🙁": return "I hear you. Let’s tackle this step by step — you’re not alone.";
-    case "✅": return "Perfect — marked as done. Next bit:";
-    case "❌": return "No worries — we can revisit that later. What would you like to change?";
-    default:
-      if (/^👍/.test(msg)) return "Appreciated! I’ll keep things moving. 👍";
-      return "Got it.";
+function norm(s: string) { return (s || "").toLowerCase().trim(); }
+function stepMap(s: Script) { const m = new Map<string, Step>(); s.steps.forEach(st => m.set(st.id, st)); return m; }
+function lastAskedStepId(history: ChatMsg[], s: Script): string | null {
+  const prompts = new Map(s.steps.map(st => [st.prompt, st.id]));
+  for (let i = history.length - 1; i >= 0; i--) {
+    const m = history[i];
+    if (m.role === "assistant" && typeof m.content === "string") {
+      const id = prompts.get(m.content);
+      if (id) return id;
+    }
   }
+  return null;
+}
+function matchedKeywords(user: string, expected: string[] = []) {
+  if (!expected?.length) return true;
+  const u = norm(user);
+  return expected.some(k => u.includes(k.toLowerCase()));
+}
+function isEmojiOnly(msg: string) {
+  const t = msg.trim();
+  return /^([🙂🙁✅❌]|👍🏻|👍🏼|👍🏽|👍🏾|👍🏿|👍)$/.test(t);
+}
+function quickEmojiReply(msg: string) {
+  switch (msg.trim()) {
+    case "🙂": return "Noted — shall we continue?";
+    case "🙁": return "I hear you — we’ll take it step by step.";
+    case "✅": return "Great — marking that as done.";
+    case "❌": return "No problem — we can revisit that later.";
+    default: if (/^👍/.test(msg)) return "👍 Thanks — moving on."; return "Got it.";
+  }
+}
+function extractName(s: string) {
+  const t = s.trim();
+  const m = t.match(/^([A-Za-z][A-Za-z' -]{1,30})/);
+  return m ? m[1].trim() : t.split(" ")[0]?.trim();
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).end();
 
+  const sessionId = (req.body.sessionId || "").toString() || uuidv4();
+  const userMessage = (req.body.userMessage || req.body.message || "").toString().trim();
+  const s = script as Script;
+  const map = stepMap(s);
+
   try {
-    const userMessage = (req.body.message || "").toString().trim();
-    if (!userMessage) return res.status(400).json({ reply: "Invalid message." });
-
-    const sessionId = req.body.sessionId || uuidv4();
-    const lang = (req.body.lang || "en") as string;
-
-    let { data: historyData } = await supabase
+    const { data: row } = await supabase
       .from("chat_history")
-      .select("messages")
+      .select("messages, display_name, profile")
       .eq("session_id", sessionId)
       .single();
 
-    let history: ChatCompletionMessageParam[] = historyData?.messages || [];
+    let history: ChatMsg[] = (row?.messages as ChatMsg[]) || [];
+    let displayName: string | undefined = row?.display_name || undefined;
+    let profile: any = row?.profile || {}; // we’ll store { employment: "employed" | "self" | "benefits" }
 
-    // On brand-new sessions, push intro
+    // New session → emit intro
     if (!history.length) {
-      const first = (fullScriptLogic as Script).steps[0]?.prompt ||
-        "Hello! I’m Mark. What prompted you to seek help with your debts today?";
-      history = [{ role: "assistant", content: first }];
-      await supabase.from("chat_history").upsert({ session_id: sessionId, messages: history });
-      return res.status(200).json({ reply: first, sessionId, stepIndex: 0, totalSteps: (fullScriptLogic as Script).steps.length });
+      const intro = map.get(INTRO_ID)?.prompt || `Hello! My name’s ${BOT_NAME}. What prompted you to seek help with your debts today?`;
+      history = [{ role: "assistant", content: intro }];
+      await supabase.from("chat_history").upsert({ session_id: sessionId, messages: history, display_name: displayName, profile });
+      return res.status(200).json({ ok: true, reply: intro, sessionId, stepId: INTRO_ID });
     }
 
-    // Append user message
+    if (!userMessage) return res.status(400).json({ ok: false, reply: "Invalid message." });
+
     history.push({ role: "user", content: userMessage });
 
-    // Handle emoji-only messages quickly (no LLM call)
+    // Emoji fast-path
     if (isEmojiOnly(userMessage)) {
-      const reply = emojiReply(userMessage);
-      history.push({ role: "assistant", content: reply });
-      await supabase.from("chat_history").upsert({ session_id: sessionId, messages: history });
-      return res.status(200).json({ reply, sessionId, stepIndex: nextStepIndex(history), totalSteps: (fullScriptLogic as Script).steps.length });
+      const r = quickEmojiReply(userMessage);
+      history.push({ role: "assistant", content: r });
+      await supabase.from("chat_history").upsert({ session_id: sessionId, messages: history, display_name: displayName, profile });
+      return res.status(200).json({ ok: true, reply: r, sessionId });
     }
 
-    // Work out current step + keywords
-    const stepIdx = nextStepIndex(history);
-    const script = (fullScriptLogic as Script);
-    const step = script.steps[stepIdx] || script.steps[script.steps.length - 1];
-
-    // Decide to progress or nudge
-    let reply = "";
-    if (matchedKeywords(userMessage, step.keywords || [])) {
-      const nextIdx = Math.min(stepIdx + 1, script.steps.length - 1);
-      reply = script.steps[nextIdx]?.prompt || step.prompt;
-      history.push({ role: "assistant", content: reply });
-      await supabase.from("chat_history").upsert({ session_id: sessionId, messages: history });
-      return res.status(200).json({
-        reply,
-        sessionId,
-        stepIndex: nextIdx,
-        totalSteps: script.steps.length,
-        quickReplies: ["Yes","No","Not sure","Continue","Go back"]
-      });
-    } else {
-      // Gentle nudge back with minimal LLM help for tone
-      const systemPrompt =
-        "You are Mark, a professional UK debt advisor. The user went off-script; gently steer them back to the current question. Keep it one short sentence.";
-      const completion = await openai.chat.completions.create({
-        model: history.length > 12 ? "gpt-4o" : "gpt-3.5-turbo",
-        temperature: 0.4,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: `Current question: "${step.prompt}". User said: "${userMessage}". Reply briefly and steer back.` }
-        ]
-      });
-      reply = completion.choices[0].message.content?.trim() || fallbackHumour[Math.floor(Math.random()*fallbackHumour.length)];
-      history.push({ role: "assistant", content: reply });
-      await supabase.from("chat_history").upsert({ session_id: sessionId, messages: history });
-      return res.status(200).json({
-        reply,
-        sessionId,
-        stepIndex: stepIdx,
-        totalSteps: script.steps.length,
-        quickReplies: ["Repeat question","Continue","Help"]
-      });
+    // Capture name after ask_name
+    const lastId = lastAskedStepId(history, s) || INTRO_ID;
+    if (lastId === "ask_name" && !displayName) {
+      const name = extractName(userMessage);
+      if (name) displayName = name;
     }
+
+    // Simple yes/no intent
+    const u = norm(userMessage);
+    const saidYes = /\b(yes|yeah|yep|ok|sure|correct|continue|proceed)\b/.test(u);
+    const saidNo = /\b(no|nope|nah|stop|don\'t|do not)\b/.test(u);
+
+    // Capture employment on that step
+    if (lastId === "employment_status") {
+      if (/\bself\b|\bself-?employ/.test(u)) profile.employment = "self";
+      else if (/\bemploy/.test(u)) profile.employment = "employed";
+      else if (/\bbenefit|\bunemploy|\bpension|\bretired|\bmixed|\bboth/.test(u)) profile.employment = "benefits";
+      else profile.employment = "other";
+    }
+
+    // Decide next step (includes keyword matches)
+    const current = map.get(lastId) || map.get(INTRO_ID)!;
+    let nextId: string | null = null;
+
+    if (saidYes && current.yesNext) nextId = current.yesNext;
+    else if (saidNo && current.noNext) nextId = current.noNext;
+    else if (lastId === "docs_router") {
+      // Route based on profile.employment
+      const emp = profile.employment || "employed";
+      nextId = emp === "self" ? "docs_self"
+        : emp === "benefits" ? "docs_benefits_or_other"
+        : "docs_employed";
+    } else if (matchedKeywords(userMessage, current.keywords)) {
+      nextId = current.next || s.endId;
+    } else if (/\b(continue|next)\b/.test(u)) {
+      nextId = current.next || s.endId;
+    }
+
+    if (!nextId) {
+      // brief nudge (no loops)
+      const sys = `You are ${BOT_NAME}, a professional UK debt advisor. Gently steer back to the current question in one short British English sentence.`;
+      try {
+        const completion = await openai.chat.completions.create({
+          model: "gpt-4o-mini",
+          temperature: 0.4,
+          messages: [
+            { role: "system", content: sys },
+            { role: "user", content: `Current question: "${current.prompt}". User said: "${userMessage}". Reply briefly and steer back.` }
+          ]
+        });
+        const r = completion.choices[0]?.message?.content?.trim()
+          || "All good — could you answer that last question so I can advise properly?";
+        history.push({ role: "assistant", content: r });
+        await supabase.from("chat_history").upsert({ session_id: sessionId, messages: history, display_name: displayName, profile });
+        return res.status(200).json({ ok: true, reply: r, sessionId });
+      } catch {
+        const r = "No worries — could you answer that last question so I can advise properly?";
+        history.push({ role: "assistant", content: r });
+        await supabase.from("chat_history").upsert({ session_id: sessionId, messages: history, display_name: displayName, profile });
+        return res.status(200).json({ ok: true, reply: r, sessionId });
+      }
+    }
+
+    if (nextId === s.endId) {
+      const r = map.get(s.endId)?.prompt || "Thanks — that’s everything I need for now.";
+      history.push({ role: "assistant", content: r });
+      await supabase.from("chat_history").upsert({ session_id: sessionId, messages: history, display_name: displayName, profile });
+      return res.status(200).json({ ok: true, reply: r, sessionId, done: true });
+    }
+
+    // personalise {name}
+    let nextPrompt = (map.get(nextId)?.prompt || "").replace("{name}", displayName || "there");
+    if (!nextPrompt) nextPrompt = map.get(INTRO_ID)?.prompt || "";
+
+    // open portal only when we hit portal_login
+    const openPortal = (nextId === "portal_login");
+
+    // avoid repeating the same assistant line
+    const lastA = [...history].reverse().find(m => m.role === "assistant");
+    if (!lastA || lastA.content !== nextPrompt) history.push({ role: "assistant", content: nextPrompt });
+
+    await supabase.from("chat_history").upsert({
+      session_id: sessionId,
+      messages: history,
+      display_name: displayName,
+      profile
+    });
+
+    return res.status(200).json({ ok: true, reply: nextPrompt, sessionId, stepId: nextId, openPortal, displayName });
   } catch (err: any) {
-    console.error("❌ Error in chat.ts:", err.message || err);
-    return res.status(500).json({ reply: "Sorry, something went wrong on my end. Please try again." });
+    console.error("❌ chat.ts error:", err?.message || err);
+    return res.status(500).json({ ok: false, reply: "Sorry, something went wrong on my end. Please try again." });
   }
 }
