@@ -1,8 +1,6 @@
-import type { NextApiRequest, NextApiResponse } from "next";
 import { createClient } from "@supabase/supabase-js";
 import { scryptSync, timingSafeEqual } from "crypto";
 
-import type { NextApiRequest, NextApiResponse } from "next";
 import { createClient } from "@supabase/supabase-js";
 import { scryptSync, timingSafeEqual } from "crypto";
 
@@ -17,7 +15,7 @@ function verify(pin: string, stored: string) {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+export default async function handler(req: any, res: any) {
   if (req.method !== "POST") return res.status(405).end();
   const { email, pin } = req.body || {};
   if (!email || !pin) return res.status(400).json({ ok:false, error:"Missing credentials" });

@@ -1,4 +1,3 @@
-import type { NextApiRequest, NextApiResponse } from "next";
 import { createClient } from "@supabase/supabase-js";
 import { randomBytes, scryptSync } from "crypto";
 
@@ -10,7 +9,7 @@ function hashPin(pin: string) {
   return `scrypt$${salt}$${hash}`;
 }
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+export default async function handler(req: any, res: any) {
   if (req.method !== "POST") return res.status(405).end();
   const { email, pin, sessionId, displayName } = req.body || {};
   if (!email || !/^[^@]+@[^@]+$/.test(email) || !/^\d{4}$/.test(pin)) {
