@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import avatarPhoto from "../assets/advisor-avatar-human.png"; // bundled
+
 type Sender = "user" | "bot";
 type Attachment = { filename: string; url: string; mimeType?: string; size?: number };
 type Message = { sender: Sender; text: string; attachment?: Attachment };
@@ -149,12 +150,20 @@ function PortalPanel({
           <input placeholder="Email address" value={email} onChange={e=>setEmail(e.target.value)}
             style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
           {(mode==="register" || mode==="login") && (
-            <input placeholder={mode==="register"?"Create 4-digit PIN":"4-digit PIN"} value={pin} onChange={e=>setPin(e.target.value.replace(/\D/g,"")).slice(0,4)}
-              style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
+            <input
+              placeholder={mode==="register"?"Create 4-digit PIN":"4-digit PIN"}
+              value={pin}
+              onChange={(e)=>setPin(e.target.value.replace(/\D/g,"").slice(0,4))}
+              style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}}
+            />
           )}
           {mode==="register" && (
-            <input placeholder="Confirm 4-digit PIN" value={pin2} onChange={e=>setPin2(e.target.value.replace(/\D/g,"")).slice(0,4)}
-              style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
+            <input
+              placeholder="Confirm 4-digit PIN"
+              value={pin2}
+              onChange={(e)=>setPin2(e.target.value.replace(/\D/g,"").slice(0,4))}
+              style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}}
+            />
           )}
 
           {mode==="register" && <button onClick={handleRegister} style={{padding:"10px 12px", borderRadius:8, background:"#16a34a", color:"#fff", border:"none", cursor:"pointer"}}>Create Portal</button>}
