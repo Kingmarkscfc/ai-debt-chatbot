@@ -1,3 +1,4 @@
+// pages/api/portal/register.ts
 import { createClient } from "@supabase/supabase-js";
 import { randomBytes, scryptSync } from "crypto";
 

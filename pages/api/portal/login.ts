@@ -1,14 +1,14 @@
-import { createClient } from "@supabase/supabase-js";
-import { scryptSync, timingSafeEqual } from "crypto";
-
+// pages/api/portal/login.ts
+// (no NextApiRequest imports to avoid type collisions on Vercel)
 import { createClient } from "@supabase/supabase-js";
 import { scryptSync, timingSafeEqual } from "crypto";
 
 const supabase = createClient(process.env.SUPABASE_URL || "", process.env.SUPABASE_ANON_KEY || "");
 
 function verify(pin: string, stored: string) {
-  const [algo, salt, hex] = stored.split("$");
-  if (algo !== "scrypt") return false;
+  const parts = (stored || "").split("$");
+  if (parts.length !== 3 || parts[0] !== "scrypt") return false;
+  const [, salt, hex] = parts;
   const hash = scryptSync(pin, salt, 32).toString("hex");
   const a = Buffer.from(hash, "hex");
   const b = Buffer.from(hex, "hex");
