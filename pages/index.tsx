@@ -68,66 +68,179 @@ function Avatar({ size = 40 }: { size?: number }) {
   );
 }
 
-/* ------------ Client Portal Panel (register/login + uploads) ------------ */
+/* ----------------------- Portal Profile UI ----------------------- */
+type MoneyRow = { id: string; label: string; amount: string };
+type Profile = {
+  full_name: string;
+  phone: string;
+  address1: string;
+  address2: string;
+  city: string;
+  postcode: string;
+  incomes: MoneyRow[];
+  expenses: MoneyRow[];
+};
+
+function currencyToNumber(v: string) {
+  const n = parseFloat((v || "").replace(/[^\d.]/g, ""));
+  return isNaN(n) ? 0 : n;
+}
+function sumRows(rows: MoneyRow[]) {
+  return rows.reduce((acc, r) => acc + currencyToNumber(r.amount), 0);
+}
+
+/* ------------ Client Portal Panel (auth + profile) ------------ */
 function PortalPanel({
-  sessionId, visible, onClose, displayName
-}: { sessionId: string; visible: boolean; onClose: () => void; displayName?: string; }) {
-  const [mode, setMode] = useState<"login" | "register" | "forgot">("register");
+  sessionId, visible, onClose, onDisplayName
+}: { sessionId: string; visible: boolean; onClose: () => void; onDisplayName: (name?: string)=>void; }) {
+  const [mode, setMode] = useState<"login" | "register" | "forgot" | "profile">("register");
   const [email, setEmail] = useState("");
   const [pin, setPin] = useState("");
   const [pin2, setPin2] = useState("");
   const [notice, setNotice] = useState<string>("");
 
+  // Profile state
+  const [profile, setProfile] = useState<Profile>({
+    full_name: "", phone: "", address1: "", address2: "", city: "", postcode: "",
+    incomes: [
+      { id: cryptoRandomId(), label: "Salary", amount: "" },
+      { id: cryptoRandomId(), label: "Benefits", amount: "" }
+    ],
+    expenses: [
+      { id: cryptoRandomId(), label: "Rent/Mortgage", amount: "" },
+      { id: cryptoRandomId(), label: "Utilities", amount: "" },
+      { id: cryptoRandomId(), label: "Food", amount: "" },
+      { id: cryptoRandomId(), label: "Transport", amount: "" }
+    ]
+  });
+  const totalIncome = sumRows(profile.incomes);
+  const totalExpense = sumRows(profile.expenses);
+  const surplus = totalIncome - totalExpense;
+
+  // compute simple tasks
+  const tasks = [
+    { id:"name",    label:"Add your full name",                done: !!profile.full_name.trim() },
+    { id:"phone",   label:"Add a contact phone",               done: !!profile.phone.trim() },
+    { id:"addr",    label:"Add your address & postcode",       done: !!(profile.address1.trim() && profile.postcode.trim()) },
+    { id:"income",  label:"Enter at least one income",         done: totalIncome > 0 },
+    { id:"expense", label:"Enter at least one monthly expense",done: totalExpense > 0 },
+    // documents are uploaded via chat footer — we can add a dynamic task once we track doc count server-side
+  ];
+  const tasksOutstanding = tasks.filter(t => !t.done).length;
+
   useEffect(() => {
     if (!visible) return;
-    setNotice(""); setMode("register");
+    setNotice("");
+    setMode("register");
   }, [visible]);
 
   const validatePin = (p: string) => /^\d{4}$/.test(p);
+  const normalizeEmail = (e: string) => (e || "").trim().toLowerCase();
 
   const handleRegister = async () => {
+    const em = normalizeEmail(email);
     if (!validatePin(pin) || pin !== pin2) { setNotice("PIN must be 4 digits and match."); return; }
-    if (!email.includes("@")) { setNotice("Enter a valid email."); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) { setNotice("Enter a valid email."); return; }
     try {
-      const r = await fetch("/api/portal/register",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email,pin,sessionId,displayName})});
+      const r = await fetch("/api/portal/register",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email: em, pin, sessionId})});
       const j = await r.json();
-      setNotice(j?.ok ? "Portal created — you are logged in." : (j?.error || "Could not register."));
+      if (j?.ok) {
+        setNotice("Portal created — you are logged in.");
+        onDisplayName(j?.displayName);
+        // create a blank profile record immediately, then load it
+        await fetch("/api/portal/profile", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ email: em, sessionId, profile }) });
+        setMode("profile");
+        await loadProfile(em);
+      } else {
+        setNotice(j?.error || "Could not register.");
+      }
     } catch { setNotice("Network error."); }
   };
   const handleLogin = async () => {
+    const em = normalizeEmail(email);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em) || !validatePin(pin)) { setNotice("Check email and 4-digit PIN."); return; }
     try {
-      const r = await fetch("/api/portal/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email,pin})});
+      const r = await fetch("/api/portal/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email: em, pin})});
       const j = await r.json();
-      setNotice(j?.ok ? "Logged in." : (j?.error || "Login failed."));
+      if (j?.ok) {
+        setNotice("Logged in.");
+        onDisplayName(j?.displayName || undefined);
+        setMode("profile");
+        // ensure a profile record exists, then load
+        await fetch("/api/portal/profile", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ email: em, sessionId, profile }) });
+        await loadProfile(em);
+      } else {
+        setNotice(j?.error || "Login failed.");
+      }
     } catch { setNotice("Network error."); }
   };
   const handleForgot = async () => {
+    const em = normalizeEmail(email);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) { setNotice("Enter a valid email."); return; }
     try {
-      const r = await fetch("/api/portal/request-reset",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email})});
+      const r = await fetch("/api/portal/request-reset",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email: em})});
       const j = await r.json();
       setNotice(j?.ok ? "Reset link sent to your email." : (j?.error || "Could not send reset link."));
     } catch { setNotice("Network error."); }
   };
 
-  const [uploading, setUploading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]; if (!file) return;
-    setUploading(true);
+  async function loadProfile(em: string) {
     try {
-      const fd = new FormData(); fd.append("file", file); fd.append("sessionId", sessionId);
-      const r = await fetch("/api/upload", { method: "POST", body: fd });
-      const data = await r.json();
-      if (!data?.ok) { setNotice(`Upload failed — ${data?.details || data?.error}`); return; }
-      setNotice(`Uploaded: ${prettyFilename(data?.file?.filename || file.name)}`);
-    } catch { setNotice("Upload failed — network error."); }
-    finally { setUploading(false); if (fileInputRef.current) fileInputRef.current.value=""; }
-  };
+      const r = await fetch(`/api/portal/profile?email=${encodeURIComponent(em)}`);
+      const j = await r.json();
+      if (j?.ok && j.profile) {
+        setProfile({
+          full_name: j.profile.full_name || "",
+          phone: j.profile.phone || "",
+          address1: j.profile.address1 || "",
+          address2: j.profile.address2 || "",
+          city: j.profile.city || "",
+          postcode: j.profile.postcode || "",
+          incomes: Array.isArray(j.profile.incomes) ? j.profile.incomes : [],
+          expenses: Array.isArray(j.profile.expenses) ? j.profile.expenses : []
+        });
+      }
+    } catch { /* ignore */ }
+  }
+
+  async function saveProfile() {
+    const em = normalizeEmail(email);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) { setNotice("Enter a valid email."); return; }
+    try {
+      const r = await fetch("/api/portal/profile", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ email: em, sessionId, profile })
+      });
+      const j = await r.json();
+      setNotice(j?.ok ? "✅ Profile saved." : (j?.error || "Could not save profile."));
+    } catch { setNotice("Network error while saving."); }
+  }
+
+  function updateRow(kind: "incomes"|"expenses", id: string, patch: Partial<MoneyRow>) {
+    setProfile(p => ({
+      ...p,
+      [kind]: p[kind].map(r => r.id===id ? { ...r, ...patch } : r)
+    }));
+  }
+  function addRow(kind: "incomes"|"expenses") {
+    setProfile(p => ({
+      ...p,
+      [kind]: [...p[kind], { id: cryptoRandomId(), label: "", amount: "" }]
+    }));
+  }
+  function removeRow(kind: "incomes"|"expenses", id: string) {
+    setProfile(p => ({
+      ...p,
+      [kind]: p[kind].filter(r => r.id !== id)
+    }));
+  }
 
   const isVisible = visible ? 1 : 0;
+
   return (
     <div style={{
-      position:"fixed", top:0, right:0, height:"100vh", width: isVisible? 420: 0, transition:"width .3s ease",
+      position:"fixed", top:0, right:0, height:"100vh", width: isVisible? 480: 0, transition:"width .3s ease",
       background:"linear-gradient(135deg,#0b1220,#111827)", color:"#e5e7eb", boxShadow:"-12px 0 32px rgba(0,0,0,.45)", overflow:"hidden", zIndex:60
     }}>
       <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", padding:"14px 16px", borderBottom:"1px solid #1f2937"}}>
@@ -136,59 +249,152 @@ function PortalPanel({
       </div>
 
       <div style={{padding:16, display: isVisible? "block":"none"}}>
-        <div style={{fontSize:12, opacity:.8, marginBottom:10}}>
-          {displayName ? `Hi ${displayName}, ` : ""}set up your portal to add details & upload proofs. A 4-digit PIN keeps it quick.
-        </div>
+        {mode !== "profile" && (
+          <>
+            <div style={{fontSize:12, opacity:.8, marginBottom:10}}>
+              {/* requested copy */}
+              Please set up your client portal so you can view and save your progress.
+            </div>
 
-        <div style={{display:"flex", gap:8, marginBottom:12}}>
-          <button onClick={()=>setMode("register")} style={{padding:"6px 10px", borderRadius:8, border:"1px solid #374151", background: mode==="register"?"#1f2937":"transparent", color:"#e5e7eb"}}>Register</button>
-          <button onClick={()=>setMode("login")} style={{padding:"6px 10px", borderRadius:8, border:"1px solid #374151", background: mode==="login"?"#1f2937":"transparent", color:"#e5e7eb"}}>Login</button>
-          <button onClick={()=>setMode("forgot")} style={{padding:"6px 10px", borderRadius:8, border:"1px solid #374151", background: mode==="forgot"?"#1f2937":"transparent", color:"#e5e7eb"}}>Forgot PIN</button>
-        </div>
+            <div style={{display:"flex", gap:8, marginBottom:12}}>
+              <button onClick={()=>setMode("register")} style={{padding:"6px 10px", borderRadius:8, border:"1px solid #374151", background: mode==="register"?"#1f2937":"transparent", color:"#e5e7eb"}}>Register</button>
+              <button onClick={()=>setMode("login")} style={{padding:"6px 10px", borderRadius:8, border:"1px solid #374151", background: mode==="login"?"#1f2937":"transparent", color:"#e5e7eb"}}>Login</button>
+              <button onClick={()=>setMode("forgot")} style={{padding:"6px 10px", borderRadius:8, border:"1px solid #374151", background: mode==="forgot"?"#1f2937":"transparent", color:"#e5e7eb"}}>Forgot PIN</button>
+            </div>
 
-        <div style={{display:"grid", gap:10}}>
-          <input placeholder="Email address" value={email} onChange={e=>setEmail(e.target.value)}
-            style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
-          {(mode==="register" || mode==="login") && (
-            <input
-              placeholder={mode==="register"?"Create 4-digit PIN":"4-digit PIN"}
-              value={pin}
-              onChange={(e)=>setPin(e.target.value.replace(/\D/g,"").slice(0,4))}
-              style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}}
-            />
-          )}
-          {mode==="register" && (
-            <input
-              placeholder="Confirm 4-digit PIN"
-              value={pin2}
-              onChange={(e)=>setPin2(e.target.value.replace(/\D/g,"").slice(0,4))}
-              style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}}
-            />
-          )}
+            <div style={{display:"grid", gap:10}}>
+              <input placeholder="Email address" value={email} onChange={e=>setEmail(e.target.value)}
+                style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
 
-          {mode==="register" && <button onClick={handleRegister} style={{padding:"10px 12px", borderRadius:8, background:"#16a34a", color:"#fff", border:"none", cursor:"pointer"}}>Create Portal</button>}
-          {mode==="login" && <button onClick={handleLogin} style={{padding:"10px 12px", borderRadius:8, background:"#16a34a", color:"#fff", border:"none", cursor:"pointer"}}>Log In</button>}
-          {mode==="forgot" && <button onClick={handleForgot} style={{padding:"10px 12px", borderRadius:8, background:"#16a34a", color:"#fff", border:"none", cursor:"pointer"}}>Send Reset Email</button>}
+              {(mode==="register" || mode==="login") && (
+                <input
+                  placeholder={mode==="register"?"Create 4-digit PIN":"4-digit PIN"}
+                  value={pin}
+                  onChange={(e)=>setPin(e.target.value.replace(/\D/g,"").slice(0,4))}
+                  maxLength={4}
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  autoComplete="one-time-code"
+                  style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}}
+                />
+              )}
 
-          {notice && <div style={{fontSize:12, color:"#a7f3d0"}}>{notice}</div>}
-        </div>
+              {mode==="register" && (
+                <input
+                  placeholder="Confirm 4-digit PIN"
+                  value={pin2}
+                  onChange={(e)=>setPin2(e.target.value.replace(/\D/g,"").slice(0,4))}
+                  maxLength={4}
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  autoComplete="one-time-code"
+                  style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}}
+                />
+              )}
 
-        <hr style={{borderColor:"#1f2937", margin:"16px 0"}} />
-        <div style={{fontWeight:700, marginBottom:8}}>Upload documents</div>
-        <input type="file" hidden ref={fileInputRef} onChange={handleFileSelected} />
-        <button onClick={()=>fileInputRef.current?.click()} disabled={uploading}
-          style={{padding:"8px 12px", borderRadius:8, border:"1px solid #374151", color:"#e5e7eb", background:"transparent", cursor:"pointer"}}>
-          📎 Upload docs {uploading ? "…" : ""}
-        </button>
+              {mode==="register" && <button onClick={handleRegister} style={{padding:"10px 12px", borderRadius:8, background:"#16a34a", color:"#fff", border:"none", cursor:"pointer"}}>Create Portal</button>}
+              {mode==="login" && <button onClick={handleLogin} style={{padding:"10px 12px", borderRadius:8, background:"#16a34a", color:"#fff", border:"none", cursor:"pointer"}}>Log In</button>}
+              {mode==="forgot" && <button onClick={handleForgot} style={{padding:"10px 12px", borderRadius:8, background:"#16a34a", color:"#fff", border:"none", cursor:"pointer"}}>Send Reset Email</button>}
 
-        <div style={{marginTop:16, fontSize:12, opacity:.8}}>
-          • ID • Bank Statements (3m) • Payslips (3m / 12w) or SA302 • UC statements • Car finance docs • Creditor letters.
-        </div>
+              {notice && <div style={{fontSize:12, color:"#a7f3d0"}}>{notice}</div>}
+            </div>
+          </>
+        )}
+
+        {mode === "profile" && (
+          <div style={{display:"grid", gap:12}}>
+            {/* Outstanding tasks */}
+            <div style={{display:"flex", alignItems:"center", justifyContent:"space-between"}}>
+              <div style={{fontWeight:700}}>Outstanding tasks</div>
+              <div style={{
+                padding:"2px 8px", borderRadius:12,
+                background: tasksOutstanding ? "#f59e0b" : "#065f46",
+                color:"#fff", fontSize:12, fontWeight:700
+              }}>
+                {tasksOutstanding ? `${tasksOutstanding} to do` : "All done"}
+              </div>
+            </div>
+            <ul style={{listStyle:"none", padding:0, margin:0, display:"grid", gap:6}}>
+              {tasks.map(t=>(
+                <li key={t.id} style={{
+                  display:"flex", alignItems:"center", justifyContent:"space-between",
+                  padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220"
+                }}>
+                  <span style={{opacity: t.done ? .7 : 1}}>
+                    {t.done ? "✅" : "⏳"} {t.label}
+                  </span>
+                </li>
+              ))}
+            </ul>
+
+            <hr style={{borderColor:"#1f2937"}} />
+
+            <div style={{fontWeight:700, marginBottom:4}}>Your details</div>
+            <input placeholder="Full name" value={profile.full_name} onChange={e=>setProfile(p=>({...p, full_name:e.target.value}))}
+              style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
+            <input placeholder="Phone" value={profile.phone} onChange={e=>setProfile(p=>({...p, phone:e.target.value}))}
+              style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
+            <input placeholder="Address line 1" value={profile.address1} onChange={e=>setProfile(p=>({...p, address1:e.target.value}))}
+              style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
+            <input placeholder="Address line 2 (optional)" value={profile.address2} onChange={e=>setProfile(p=>({...p, address2:e.target.value}))}
+              style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
+            <div style={{display:"flex", gap:8}}>
+              <input placeholder="City" value={profile.city} onChange={e=>setProfile(p=>({...p, city:e.target.value}))}
+                style={{flex:1, padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
+              <input placeholder="Postcode" value={profile.postcode} onChange={e=>setProfile(p=>({...p, postcode:e.target.value}))}
+                style={{width:140, padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
+            </div>
+
+            <div style={{display:"grid", gap:8, marginTop:8}}>
+              <div style={{fontWeight:700}}>Income</div>
+              {profile.incomes.map(row=>(
+                <div key={row.id} style={{display:"flex", gap:8}}>
+                  <input placeholder="Label" value={row.label} onChange={e=>updateRow("incomes", row.id, {label:e.target.value})}
+                    style={{flex:1, padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
+                  <input placeholder="Amount / month" value={row.amount} onChange={e=>updateRow("incomes", row.id, {amount:e.target.value})}
+                    inputMode="decimal" style={{width:160, padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
+                  <button onClick={()=>removeRow("incomes", row.id)} style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb"}}>✕</button>
+                </div>
+              ))}
+              <button onClick={()=>addRow("incomes")} style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb"}}>+ Add income</button>
+              <div style={{textAlign:"right", opacity:.9}}>Total income: £{totalIncome.toFixed(2)}</div>
+            </div>
+
+            <div style={{display:"grid", gap:8}}>
+              <div style={{fontWeight:700}}>Expenditure</div>
+              {profile.expenses.map(row=>(
+                <div key={row.id} style={{display:"flex", gap:8}}>
+                  <input placeholder="Label" value={row.label} onChange={e=>updateRow("expenses", row.id, {label:e.target.value})}
+                    style={{flex:1, padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
+                  <input placeholder="Amount / month" value={row.amount} onChange={e=>updateRow("expenses", row.id, {amount:e.target.value})}
+                    inputMode="decimal" style={{width:160, padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
+                  <button onClick={()=>removeRow("expenses", row.id)} style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb"}}>✕</button>
+                </div>
+              ))}
+              <button onClick={()=>addRow("expenses")} style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb"}}>+ Add expense</button>
+              <div style={{textAlign:"right", opacity:.9}}>Total expenses: £{totalExpense.toFixed(2)}</div>
+            </div>
+
+            <div style={{marginTop:4, textAlign:"right", fontWeight:700}}>
+              Surplus: <span style={{color: surplus>=0 ? "#34d399" : "#f87171"}}>£{surplus.toFixed(2)}</span>
+            </div>
+
+            <button onClick={saveProfile} style={{marginTop:8, padding:"10px 12px", borderRadius:8, background:"#16a34a", color:"#fff", border:"none", cursor:"pointer"}}>Save Profile</button>
+            {notice && <div style={{fontSize:12, color:"#a7f3d0"}}>{notice}</div>}
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
+/* ------------------------- Helpers ------------------------- */
+function cryptoRandomId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return (crypto as any).randomUUID();
+  return Math.random().toString(36).slice(2);
+}
+
+/* --------------------------- Page --------------------------- */
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -201,6 +407,39 @@ export default function Home() {
   const sessionId = useMemo(() => ensureSessionId(), []);
   const bottomRef = useRef<HTMLDivElement>(null);
   const chosenVoice = useRef<SpeechSynthesisVoice | null>(null);
+
+  // Chat footer upload state/handlers
+  const chatFileInputRef = useRef<HTMLInputElement>(null);
+  const [chatUploading, setChatUploading] = useState(false);
+
+  const handleChatUploadClick = () => chatFileInputRef.current?.click();
+  const handleChatFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    setChatUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("sessionId", sessionId);
+      const r = await fetch("/api/upload", { method: "POST", body: fd });
+      const data = await r.json();
+      if (!data?.ok) {
+        setMessages(prev => [...prev, { sender: "bot", text: "Upload failed — please try again." }]);
+        return;
+      }
+      const cleanName = prettyFilename(data?.file?.filename || file.name);
+      const link = data?.downloadUrl || "";
+      const attachment: Attachment | undefined = link
+        ? { filename: cleanName, url: link, mimeType: data?.file?.mimeType, size: data?.file?.size }
+        : undefined;
+      // Show a single tidy chip message (no duplicate text)
+      setMessages(prev => [...prev, { sender: "bot", text: "", attachment }]);
+    } catch {
+      setMessages(prev => [...prev, { sender: "bot", text: "Upload failed — network error." }]);
+    } finally {
+      setChatUploading(false);
+      if (chatFileInputRef.current) chatFileInputRef.current.value = "";
+    }
+  };
 
   useEffect(() => {
     const savedTheme = typeof window !== "undefined" ? localStorage.getItem("da_theme") : null;
@@ -223,7 +462,7 @@ export default function Home() {
     if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
     const last = messages[messages.length-1];
     if (!last || last.sender !== "bot") return;
-    const u = new SpeechSynthesisUtterance(last.text);
+    const u = new SpeechSynthesisUtterance(last.text || "File uploaded.");
     if (chosenVoice.current) u.voice = chosenVoice.current;
     u.rate = 1; u.pitch = 1; u.volume = 1;
     (window as any).speechSynthesis.cancel();
@@ -261,7 +500,7 @@ export default function Home() {
   };
 
   const isDark = theme === "dark";
-  const styles: { [k: string]: React.CSSProperties } = {
+  const styles: any = {
     frame: { display:"grid", gridTemplateColumns:"1fr auto", gap:0, maxWidth: 1100, margin:"0 auto", padding: 16, fontFamily: "'Segoe UI', Arial, sans-serif", background: isDark?"#0b1220":"#f3f4f6", minHeight:"100vh", color: isDark?"#e5e7eb":"#111827" },
     card: { border: isDark?"1px solid #1f2937":"1px solid #e5e7eb", borderRadius: 16, background: isDark?"#111827":"#ffffff", boxShadow: isDark?"0 8px 24px rgba(0,0,0,0.45)":"0 8px 24px rgba(0,0,0,0.06)", overflow:"hidden", width: showPortal ? 640 : 720, transition:"width .3s ease" },
     header: { display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 16px", borderBottom: isDark?"1px solid #1f2937":"1px solid #e5e7eb", background: isDark?"#0f172a":"#fafafa" },
@@ -341,12 +580,23 @@ export default function Home() {
             value={input} onChange={(e)=>setInput(e.target.value)} onKeyDown={(e)=>e.key==="Enter" && handleSubmit()}
             placeholder="Type your message…"
           />
+          {/* Chat footer upload */}
+          <input type="file" hidden ref={chatFileInputRef} onChange={handleChatFileSelected} />
+          <button type="button" onClick={handleChatUploadClick} disabled={chatUploading}
+            style={{padding:"10px 12px", borderRadius:8, border: isDark?"1px solid #374151":"1px solid #d1d5db", background: isDark?"#111827":"#fff", color: isDark?"#e5e7eb":"#111827", cursor:"pointer"}}>
+            📎 Upload {chatUploading ? "…" : ""}
+          </button>
           <button type="button" onClick={handleSubmit} style={{padding:"10px 14px", borderRadius:8, border:"none", background:"#16a34a", color:"#fff", cursor:"pointer", fontWeight:600}}>Send</button>
         </div>
       </div>
 
       {/* Slide-in Portal */}
-      <PortalPanel sessionId={sessionId} visible={showPortal} onClose={()=>setShowPortal(false)} displayName={displayName}/>
+      <PortalPanel
+        sessionId={sessionId}
+        visible={showPortal}
+        onClose={()=>setShowPortal(false)}
+        onDisplayName={(name)=>setDisplayName(name)}
+      />
     </main>
   );
 }
