@@ -89,7 +89,7 @@ function sumRows(rows: MoneyRow[]) {
   return rows.reduce((acc, r) => acc + currencyToNumber(r.amount), 0);
 }
 
-/* ------------ Client Portal Panel (auth + profile) ------------ */
+/* ------------ Client Portal (FULL-SCREEN OVERLAY) ------------ */
 function PortalPanel({
   sessionId, visible, onClose, onDisplayName
 }: { sessionId: string; visible: boolean; onClose: () => void; onDisplayName: (name?: string)=>void; }) {
@@ -124,15 +124,29 @@ function PortalPanel({
     { id:"addr",    label:"Add your address & postcode",       done: !!(profile.address1.trim() && profile.postcode.trim()) },
     { id:"income",  label:"Enter at least one income",         done: totalIncome > 0 },
     { id:"expense", label:"Enter at least one monthly expense",done: totalExpense > 0 },
-    // documents are uploaded via chat footer — we can add a dynamic task once we track doc count server-side
   ];
   const tasksOutstanding = tasks.filter(t => !t.done).length;
 
   useEffect(() => {
-    if (!visible) return;
-    setNotice("");
-    setMode("register");
+    if (visible) {
+      setNotice("");
+      setMode("register");
+      // prevent background scroll while portal is open
+      const prev = document.body.style.overflow;
+      document.body.style.overflow = "hidden";
+      return () => { document.body.style.overflow = prev; };
+    }
   }, [visible]);
+
+  // allow Escape to close
+  useEffect(() => {
+    if (!visible) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [visible, onClose]);
 
   const validatePin = (p: string) => /^\d{4}$/.test(p);
   const normalizeEmail = (e: string) => (e || "").trim().toLowerCase();
@@ -147,7 +161,6 @@ function PortalPanel({
       if (j?.ok) {
         setNotice("Portal created — you are logged in.");
         onDisplayName(j?.displayName);
-        // create a blank profile record immediately, then load it
         await fetch("/api/portal/profile", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ email: em, sessionId, profile }) });
         setMode("profile");
         await loadProfile(em);
@@ -166,7 +179,6 @@ function PortalPanel({
         setNotice("Logged in.");
         onDisplayName(j?.displayName || undefined);
         setMode("profile");
-        // ensure a profile record exists, then load
         await fetch("/api/portal/profile", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ email: em, sessionId, profile }) });
         await loadProfile(em);
       } else {
@@ -236,153 +248,189 @@ function PortalPanel({
     }));
   }
 
-  const isVisible = visible ? 1 : 0;
-
+  // full-screen overlay container
   return (
-    <div style={{
-      position:"fixed", top:0, right:0, height:"100vh", width: isVisible? 480: 0, transition:"width .3s ease",
-      background:"linear-gradient(135deg,#0b1220,#111827)", color:"#e5e7eb", boxShadow:"-12px 0 32px rgba(0,0,0,.45)", overflow:"hidden", zIndex:60
-    }}>
-      <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", padding:"14px 16px", borderBottom:"1px solid #1f2937"}}>
-        <div style={{fontWeight:700}}>Client Portal</div>
-        <button onClick={onClose} style={{background:"transparent", border:"1px solid #374151", color:"#e5e7eb", borderRadius:8, padding:"6px 10px", cursor:"pointer"}}>Close</button>
+    <div
+      aria-hidden={!visible}
+      style={{
+        position:"fixed", inset:0, zIndex:60,
+        pointerEvents: visible ? "auto" : "none",
+        opacity: visible ? 1 : 0,
+        transition:"opacity .25s ease",
+        display:"grid",
+        gridTemplateRows:"auto 1fr",
+        background:"rgba(0,0,0,0.5)"
+      }}
+    >
+      {/* top bar */}
+      <div
+        style={{
+          backdropFilter:"blur(6px)",
+          background:"linear-gradient(180deg, rgba(16,24,40,0.95), rgba(16,24,40,0.85))",
+          borderBottom:"1px solid #1f2937",
+          color:"#e5e7eb",
+          display:"flex",
+          alignItems:"center",
+          justifyContent:"space-between",
+          padding:"10px 14px"
+        }}
+      >
+        <div style={{display:"flex", alignItems:"center", gap:10}}>
+          <button onClick={onClose} style={{padding:"6px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb", cursor:"pointer"}}>
+            ← Back to Chat
+          </button>
+          <strong>Client Portal</strong>
+        </div>
+        {mode !== "profile" && (
+          <div style={{fontSize:12, opacity:.85}}>Please set up your client portal so you can view and save your progress.</div>
+        )}
       </div>
 
-      <div style={{padding:16, display: isVisible? "block":"none"}}>
-        {mode !== "profile" && (
-          <>
-            <div style={{fontSize:12, opacity:.8, marginBottom:10}}>
-              {/* requested copy */}
-              Please set up your client portal so you can view and save your progress.
-            </div>
+      {/* scrollable portal content */}
+      <div style={{overflowY:"auto"}}>
+        <div style={{
+          maxWidth: 980, margin:"18px auto", padding:"16px",
+          background:"linear-gradient(135deg,#0b1220,#111827)", color:"#e5e7eb",
+          border:"1px solid #1f2937", borderRadius:16, boxShadow:"0 10px 30px rgba(0,0,0,0.45)"
+        }}>
+          {mode !== "profile" && (
+            <>
+              <div style={{display:"flex", gap:8, marginBottom:12}}>
+                <button onClick={()=>setMode("register")} style={{padding:"6px 10px", borderRadius:8, border:"1px solid #374151", background: mode==="register"?"#1f2937":"transparent", color:"#e5e7eb"}}>Register</button>
+                <button onClick={()=>setMode("login")} style={{padding:"6px 10px", borderRadius:8, border:"1px solid #374151", background: mode==="login"?"#1f2937":"transparent", color:"#e5e7eb"}}>Login</button>
+                <button onClick={()=>setMode("forgot")} style={{padding:"6px 10px", borderRadius:8, border:"1px solid #374151", background: mode==="forgot"?"#1f2937":"transparent", color:"#e5e7eb"}}>Forgot PIN</button>
+              </div>
 
-            <div style={{display:"flex", gap:8, marginBottom:12}}>
-              <button onClick={()=>setMode("register")} style={{padding:"6px 10px", borderRadius:8, border:"1px solid #374151", background: mode==="register"?"#1f2937":"transparent", color:"#e5e7eb"}}>Register</button>
-              <button onClick={()=>setMode("login")} style={{padding:"6px 10px", borderRadius:8, border:"1px solid #374151", background: mode==="login"?"#1f2937":"transparent", color:"#e5e7eb"}}>Login</button>
-              <button onClick={()=>setMode("forgot")} style={{padding:"6px 10px", borderRadius:8, border:"1px solid #374151", background: mode==="forgot"?"#1f2937":"transparent", color:"#e5e7eb"}}>Forgot PIN</button>
-            </div>
+              <div style={{display:"grid", gap:10, maxWidth:520}}>
+                <input placeholder="Email address" value={email} onChange={e=>setEmail(e.target.value)}
+                  style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
 
-            <div style={{display:"grid", gap:10}}>
-              <input placeholder="Email address" value={email} onChange={e=>setEmail(e.target.value)}
-                style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
+                {(mode==="register" || mode==="login") && (
+                  <input
+                    placeholder={mode==="register"?"Create 4-digit PIN":"4-digit PIN"}
+                    value={pin}
+                    onChange={(e)=>setPin(e.target.value.replace(/\D/g,"").slice(0,4))}
+                    maxLength={4}
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    autoComplete="one-time-code"
+                    style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}}
+                  />
+                )}
 
-              {(mode==="register" || mode==="login") && (
-                <input
-                  placeholder={mode==="register"?"Create 4-digit PIN":"4-digit PIN"}
-                  value={pin}
-                  onChange={(e)=>setPin(e.target.value.replace(/\D/g,"").slice(0,4))}
-                  maxLength={4}
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  autoComplete="one-time-code"
-                  style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}}
-                />
-              )}
+                {mode==="register" && (
+                  <input
+                    placeholder="Confirm 4-digit PIN"
+                    value={pin2}
+                    onChange={(e)=>setPin2(e.target.value.replace(/\D/g,"").slice(0,4))}
+                    maxLength={4}
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    autoComplete="one-time-code"
+                    style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}}
+                  />
+                )}
 
-              {mode==="register" && (
-                <input
-                  placeholder="Confirm 4-digit PIN"
-                  value={pin2}
-                  onChange={(e)=>setPin2(e.target.value.replace(/\D/g,"").slice(0,4))}
-                  maxLength={4}
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  autoComplete="one-time-code"
-                  style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}}
-                />
-              )}
+                {mode==="register" && <button onClick={handleRegister} style={{padding:"10px 12px", borderRadius:8, background:"#16a34a", color:"#fff", border:"none", cursor:"pointer"}}>Create Portal</button>}
+                {mode==="login" && <button onClick={handleLogin} style={{padding:"10px 12px", borderRadius:8, background:"#16a34a", color:"#fff", border:"none", cursor:"pointer"}}>Log In</button>}
+                {mode==="forgot" && <button onClick={handleForgot} style={{padding:"10px 12px", borderRadius:8, background:"#16a34a", color:"#fff", border:"none", cursor:"pointer"}}>Send Reset Email</button>}
 
-              {mode==="register" && <button onClick={handleRegister} style={{padding:"10px 12px", borderRadius:8, background:"#16a34a", color:"#fff", border:"none", cursor:"pointer"}}>Create Portal</button>}
-              {mode==="login" && <button onClick={handleLogin} style={{padding:"10px 12px", borderRadius:8, background:"#16a34a", color:"#fff", border:"none", cursor:"pointer"}}>Log In</button>}
-              {mode==="forgot" && <button onClick={handleForgot} style={{padding:"10px 12px", borderRadius:8, background:"#16a34a", color:"#fff", border:"none", cursor:"pointer"}}>Send Reset Email</button>}
+                {notice && <div style={{fontSize:12, color:"#a7f3d0"}}>{notice}</div>}
+              </div>
+            </>
+          )}
 
+          {mode === "profile" && (
+            <div style={{display:"grid", gap:14}}>
+              {/* Outstanding tasks */}
+              <div style={{display:"flex", alignItems:"center", justifyContent:"space-between"}}>
+                <div style={{fontWeight:700}}>Outstanding tasks</div>
+                <div style={{
+                  padding:"2px 8px", borderRadius:12,
+                  background: tasksOutstanding ? "#f59e0b" : "#065f46",
+                  color:"#fff", fontSize:12, fontWeight:700
+                }}>
+                  {tasksOutstanding ? `${tasksOutstanding} to do` : "All done"}
+                </div>
+              </div>
+              <ul style={{listStyle:"none", padding:0, margin:0, display:"grid", gap:6}}>
+                {tasks.map(t=>(
+                  <li key={t.id} style={{
+                    display:"flex", alignItems:"center", justifyContent:"space-between",
+                    padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220"
+                  }}>
+                    <span style={{opacity: t.done ? .7 : 1}}>
+                      {t.done ? "✅" : "⏳"} {t.label}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+
+              <hr style={{borderColor:"#1f2937"}} />
+
+              <div style={{display:"grid", gap:10}}>
+                <div style={{fontWeight:700, marginBottom:4}}>Your details</div>
+                <div style={{display:"grid", gap:10, gridTemplateColumns:"1fr 1fr", maxWidth: "100%"}}>
+                  <input placeholder="Full name" value={profile.full_name} onChange={e=>setProfile(p=>({...p, full_name:e.target.value}))}
+                    style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb", gridColumn:"1 / span 2"}} />
+                  <input placeholder="Phone" value={profile.phone} onChange={e=>setProfile(p=>({...p, phone:e.target.value}))}
+                    style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
+                  <input placeholder="Postcode" value={profile.postcode} onChange={e=>setProfile(p=>({...p, postcode:e.target.value}))}
+                    style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
+                  <input placeholder="Address line 1" value={profile.address1} onChange={e=>setProfile(p=>({...p, address1:e.target.value}))}
+                    style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb", gridColumn:"1 / span 2"}} />
+                  <input placeholder="Address line 2 (optional)" value={profile.address2} onChange={e=>setProfile(p=>({...p, address2:e.target.value}))}
+                    style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb", gridColumn:"1 / span 2"}} />
+                  <input placeholder="City" value={profile.city} onChange={e=>setProfile(p=>({...p, city:e.target.value}))}
+                    style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb", gridColumn:"1 / span 2"}} />
+                </div>
+              </div>
+
+              {/* Income */}
+              <div style={{display:"grid", gap:8, marginTop:8}}>
+                <div style={{fontWeight:700}}>Income</div>
+                {profile.incomes.map(row=>(
+                  <div key={row.id} style={{display:"grid", gridTemplateColumns:"1fr 160px 40px", gap:8}}>
+                    <input placeholder="Label" value={row.label} onChange={e=>updateRow("incomes", row.id, {label:e.target.value})}
+                      style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
+                    <input placeholder="Amount / month" value={row.amount} onChange={e=>updateRow("incomes", row.id, {amount:e.target.value})}
+                      inputMode="decimal" style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
+                    <button onClick={()=>removeRow("incomes", row.id)} style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb"}}>✕</button>
+                  </div>
+                ))}
+                <button onClick={()=>addRow("incomes")} style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb"}}>+ Add income</button>
+                <div style={{textAlign:"right", opacity:.9}}>Total income: £{totalIncome.toFixed(2)}</div>
+              </div>
+
+              {/* Expenditure */}
+              <div style={{display:"grid", gap:8}}>
+                <div style={{fontWeight:700}}>Expenditure</div>
+                {profile.expenses.map(row=>(
+                  <div key={row.id} style={{display:"grid", gridTemplateColumns:"1fr 160px 40px", gap:8}}>
+                    <input placeholder="Label" value={row.label} onChange={e=>updateRow("expenses", row.id, {label:e.target.value})}
+                      style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
+                    <input placeholder="Amount / month" value={row.amount} onChange={e=>updateRow("expenses", row.id, {amount:e.target.value})}
+                      inputMode="decimal" style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
+                    <button onClick={()=>removeRow("expenses", row.id)} style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb"}}>✕</button>
+                  </div>
+                ))}
+                <button onClick={()=>addRow("expenses")} style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb"}}>+ Add expense</button>
+                <div style={{textAlign:"right", opacity:.9}}>Total expenses: £{totalExpense.toFixed(2)}</div>
+              </div>
+
+              {/* Surplus + Save */}
+              <div style={{marginTop:4, textAlign:"right", fontWeight:700}}>
+                Surplus: <span style={{color: surplus>=0 ? "#34d399" : "#f87171"}}>£{surplus.toFixed(2)}</span>
+              </div>
+
+              <button onClick={saveProfile} style={{marginTop:8, padding:"10px 12px", borderRadius:8, background:"#16a34a", color:"#fff", border:"none", cursor:"pointer"}}>Save Profile</button>
               {notice && <div style={{fontSize:12, color:"#a7f3d0"}}>{notice}</div>}
             </div>
-          </>
-        )}
+          )}
+        </div>
 
-        {mode === "profile" && (
-          <div style={{display:"grid", gap:12}}>
-            {/* Outstanding tasks */}
-            <div style={{display:"flex", alignItems:"center", justifyContent:"space-between"}}>
-              <div style={{fontWeight:700}}>Outstanding tasks</div>
-              <div style={{
-                padding:"2px 8px", borderRadius:12,
-                background: tasksOutstanding ? "#f59e0b" : "#065f46",
-                color:"#fff", fontSize:12, fontWeight:700
-              }}>
-                {tasksOutstanding ? `${tasksOutstanding} to do` : "All done"}
-              </div>
-            </div>
-            <ul style={{listStyle:"none", padding:0, margin:0, display:"grid", gap:6}}>
-              {tasks.map(t=>(
-                <li key={t.id} style={{
-                  display:"flex", alignItems:"center", justifyContent:"space-between",
-                  padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220"
-                }}>
-                  <span style={{opacity: t.done ? .7 : 1}}>
-                    {t.done ? "✅" : "⏳"} {t.label}
-                  </span>
-                </li>
-              ))}
-            </ul>
-
-            <hr style={{borderColor:"#1f2937"}} />
-
-            <div style={{fontWeight:700, marginBottom:4}}>Your details</div>
-            <input placeholder="Full name" value={profile.full_name} onChange={e=>setProfile(p=>({...p, full_name:e.target.value}))}
-              style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
-            <input placeholder="Phone" value={profile.phone} onChange={e=>setProfile(p=>({...p, phone:e.target.value}))}
-              style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
-            <input placeholder="Address line 1" value={profile.address1} onChange={e=>setProfile(p=>({...p, address1:e.target.value}))}
-              style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
-            <input placeholder="Address line 2 (optional)" value={profile.address2} onChange={e=>setProfile(p=>({...p, address2:e.target.value}))}
-              style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
-            <div style={{display:"flex", gap:8}}>
-              <input placeholder="City" value={profile.city} onChange={e=>setProfile(p=>({...p, city:e.target.value}))}
-                style={{flex:1, padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
-              <input placeholder="Postcode" value={profile.postcode} onChange={e=>setProfile(p=>({...p, postcode:e.target.value}))}
-                style={{width:140, padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
-            </div>
-
-            <div style={{display:"grid", gap:8, marginTop:8}}>
-              <div style={{fontWeight:700}}>Income</div>
-              {profile.incomes.map(row=>(
-                <div key={row.id} style={{display:"flex", gap:8}}>
-                  <input placeholder="Label" value={row.label} onChange={e=>updateRow("incomes", row.id, {label:e.target.value})}
-                    style={{flex:1, padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
-                  <input placeholder="Amount / month" value={row.amount} onChange={e=>updateRow("incomes", row.id, {amount:e.target.value})}
-                    inputMode="decimal" style={{width:160, padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
-                  <button onClick={()=>removeRow("incomes", row.id)} style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb"}}>✕</button>
-                </div>
-              ))}
-              <button onClick={()=>addRow("incomes")} style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb"}}>+ Add income</button>
-              <div style={{textAlign:"right", opacity:.9}}>Total income: £{totalIncome.toFixed(2)}</div>
-            </div>
-
-            <div style={{display:"grid", gap:8}}>
-              <div style={{fontWeight:700}}>Expenditure</div>
-              {profile.expenses.map(row=>(
-                <div key={row.id} style={{display:"flex", gap:8}}>
-                  <input placeholder="Label" value={row.label} onChange={e=>updateRow("expenses", row.id, {label:e.target.value})}
-                    style={{flex:1, padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
-                  <input placeholder="Amount / month" value={row.amount} onChange={e=>updateRow("expenses", row.id, {amount:e.target.value})}
-                    inputMode="decimal" style={{width:160, padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
-                  <button onClick={()=>removeRow("expenses", row.id)} style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb"}}>✕</button>
-                </div>
-              ))}
-              <button onClick={()=>addRow("expenses")} style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb"}}>+ Add expense</button>
-              <div style={{textAlign:"right", opacity:.9}}>Total expenses: £{totalExpense.toFixed(2)}</div>
-            </div>
-
-            <div style={{marginTop:4, textAlign:"right", fontWeight:700}}>
-              Surplus: <span style={{color: surplus>=0 ? "#34d399" : "#f87171"}}>£{surplus.toFixed(2)}</span>
-            </div>
-
-            <button onClick={saveProfile} style={{marginTop:8, padding:"10px 12px", borderRadius:8, background:"#16a34a", color:"#fff", border:"none", cursor:"pointer"}}>Save Profile</button>
-            {notice && <div style={{fontSize:12, color:"#a7f3d0"}}>{notice}</div>}
-          </div>
-        )}
+        {/* bottom safe area for mobile */}
+        <div style={{height:24}} />
       </div>
     </div>
   );
@@ -501,8 +549,8 @@ export default function Home() {
 
   const isDark = theme === "dark";
   const styles: any = {
-    frame: { display:"grid", gridTemplateColumns:"1fr auto", gap:0, maxWidth: 1100, margin:"0 auto", padding: 16, fontFamily: "'Segoe UI', Arial, sans-serif", background: isDark?"#0b1220":"#f3f4f6", minHeight:"100vh", color: isDark?"#e5e7eb":"#111827" },
-    card: { border: isDark?"1px solid #1f2937":"1px solid #e5e7eb", borderRadius: 16, background: isDark?"#111827":"#ffffff", boxShadow: isDark?"0 8px 24px rgba(0,0,0,0.45)":"0 8px 24px rgba(0,0,0,0.06)", overflow:"hidden", width: showPortal ? 640 : 720, transition:"width .3s ease" },
+    frame: { display:"grid", gridTemplateColumns:"1fr", gap:0, maxWidth: 1100, margin:"0 auto", padding: 16, fontFamily: "'Segoe UI', Arial, sans-serif", background: isDark?"#0b1220":"#f3f4f6", minHeight:"100vh", color: isDark?"#e5e7eb":"#111827" },
+    card: { border: isDark?"1px solid #1f2937":"1px solid #e5e7eb", borderRadius: 16, background: isDark?"#111827":"#ffffff", boxShadow: isDark?"0 8px 24px rgba(0,0,0,0.45)":"0 8px 24px rgba(0,0,0,0.06)", overflow:"hidden", width: 720, margin:"0 auto" },
     header: { display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 16px", borderBottom: isDark?"1px solid #1f2937":"1px solid #e5e7eb", background: isDark?"#0f172a":"#fafafa" },
     brand: { display:"flex", alignItems:"center", gap:10, fontWeight:700 },
     onlineDot: { marginLeft:8, fontSize:12, color:"#10b981", fontWeight:600 },
@@ -540,8 +588,8 @@ export default function Home() {
             <button type="button" style={styles.btn} onClick={toggleTheme} title="Toggle theme">
               {theme === "dark" ? "☀️ Light" : "🌙 Dark"}
             </button>
-            <button type="button" style={styles.btn} onClick={()=>setShowPortal(v=>!v)} title="Open client portal">
-              {showPortal ? "Close Portal" : "Open Portal"}
+            <button type="button" style={styles.btn} onClick={()=>setShowPortal(true)} title="Open client portal">
+              Open Portal
             </button>
           </div>
         </div>
@@ -590,7 +638,7 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Slide-in Portal */}
+      {/* Full-screen Portal Overlay */}
       <PortalPanel
         sessionId={sessionId}
         visible={showPortal}
