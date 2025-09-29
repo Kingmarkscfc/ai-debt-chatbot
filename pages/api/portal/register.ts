@@ -13,39 +13,46 @@ function hashPin(pin: string) {
   return `scrypt$${salt}$${hash}`;
 }
 
-function normalizeEmail(email: string) {
+function normEmail(email: string) {
   return (email || "").trim().toLowerCase();
 }
 
 export default async function handler(req: any, res: any) {
-  if (req.method !== "POST") return res.status(405).end();
-  if (!process.env.SUPABASE_URL) return res.status(500).json({ ok:false, error:"Server not configured (URL)" });
+  if (req.method !== "POST") return res.status(405).json({ ok:false, error:"Method not allowed" });
 
-  const rawEmail = req.body?.email as string;
-  const pin = (req.body?.pin || "").toString().trim();
-  const sessionId = (req.body?.sessionId || "").toString().trim() || null;
-  const displayName = (req.body?.displayName || "").toString().trim() || null;
+  try {
+    if (!process.env.SUPABASE_URL) throw new Error("Missing SUPABASE_URL");
 
-  const email = normalizeEmail(rawEmail);
-  const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-  if (!emailOk || !/^\d{4}$/.test(pin)) {
-    return res.status(400).json({ ok:false, error:"Invalid email or PIN" });
-  }
+    const email = normEmail(req.body?.email);
+    const pin = String(req.body?.pin || "");
+    const sessionId = (req.body?.sessionId || "").toString().trim() || null;
+    const displayName = (req.body?.displayName || "").toString().trim() || null;
 
-  const pin_hash = hashPin(pin);
-
-  // Use insert (not upsert) so we don't overwrite existing accounts
-  const { error } = await supabase
-    .from("portal_users")
-    .insert({ email, pin_hash, session_id: sessionId, display_name: displayName });
-
-  if (error) {
-    // Postgres unique violation (email unique)
-    if ((error as any).code === "23505") {
-      return res.status(409).json({ ok:false, error:"Email already registered. Please log in." });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ ok:false, error:"Invalid email" });
     }
-    return res.status(400).json({ ok:false, error: error.message || "Could not register." });
-  }
+    if (!/^\d{4}$/.test(pin)) {
+      return res.status(400).json({ ok:false, error:"PIN must be exactly 4 digits" });
+    }
 
-  return res.status(200).json({ ok:true, displayName, sessionId });
+    const pin_hash = hashPin(pin);
+
+    const { error } = await supabase
+      .from("portal_users")
+      .insert([{ email, pin_hash, session_id: sessionId, display_name: displayName }]);
+
+    if (error) {
+      // unique violation → user exists
+      if ((error as any).code === "23505") {
+        return res.status(409).json({ ok:false, error:"User already exists" });
+      }
+      console.error("register error:", error);
+      return res.status(500).json({ ok:false, error:"Registration failed" });
+    }
+
+    return res.status(200).json({ ok:true, displayName: displayName || email.split("@")[0] });
+  } catch (e: any) {
+    console.error("register crash:", e);
+    return res.status(500).json({ ok:false, error:String(e?.message || e) });
+  }
 }
