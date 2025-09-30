@@ -42,15 +42,30 @@ export default async function handler(req: any, res: any) {
       .insert([{ email, pin_hash, session_id: sessionId, display_name: displayName }]);
 
     if (error) {
-      // unique violation → user exists
       if ((error as any).code === "23505") {
-        return res.status(409).json({ ok:false, error:"User already exists" });
+        // Already exists → fetch client_ref to return
+        const { data } = await supabase
+          .from("portal_users")
+          .select("client_ref, display_name")
+          .eq("email", email)
+          .maybeSingle();
+        return res.status(409).json({ ok:false, error:"User already exists", clientRef: data?.client_ref || null });
       }
       console.error("register error:", error);
       return res.status(500).json({ ok:false, error:"Registration failed" });
     }
 
-    return res.status(200).json({ ok:true, displayName: displayName || email.split("@")[0] });
+    const { data } = await supabase
+      .from("portal_users")
+      .select("client_ref, display_name")
+      .eq("email", email)
+      .maybeSingle();
+
+    return res.status(200).json({
+      ok:true,
+      displayName: data?.display_name || displayName || email.split("@")[0],
+      clientRef: data?.client_ref || null
+    });
   } catch (e: any) {
     console.error("register crash:", e);
     return res.status(500).json({ ok:false, error:String(e?.message || e) });

@@ -6,6 +6,20 @@ type Sender = "user" | "bot";
 type Attachment = { filename: string; url: string; mimeType?: string; size?: number };
 type Message = { sender: Sender; text: string; attachment?: Attachment };
 
+type MoneyRow = { id: string; label: string; amount: string };
+type DebtRow = { id: string; creditor: string; balance: string; accountRef: string };
+type Profile = {
+  full_name: string;
+  phone: string;
+  address1: string;
+  address2: string;
+  city: string;
+  postcode: string;
+  incomes: MoneyRow[];
+  expenses: MoneyRow[];
+  debts: DebtRow[];
+};
+
 const LANGUAGES = ["English","Spanish","Polish","French","German","Portuguese","Italian","Romanian"];
 
 function ensureSessionId(): string {
@@ -68,24 +82,16 @@ function Avatar({ size = 40 }: { size?: number }) {
   );
 }
 
-/* ----------------------- Portal Profile UI ----------------------- */
-type MoneyRow = { id: string; label: string; amount: string };
-type Profile = {
-  full_name: string;
-  phone: string;
-  address1: string;
-  address2: string;
-  city: string;
-  postcode: string;
-  incomes: MoneyRow[];
-  expenses: MoneyRow[];
-};
-
+/* ------------------------- Helpers ------------------------- */
+function cryptoRandomId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return (crypto as any).randomUUID();
+  return Math.random().toString(36).slice(2);
+}
 function currencyToNumber(v: string) {
   const n = parseFloat((v || "").replace(/[^\d.]/g, ""));
   return isNaN(n) ? 0 : n;
 }
-function sumRows(rows: MoneyRow[]) {
+function sumMoney(rows: MoneyRow[]) {
   return rows.reduce((acc, r) => acc + currencyToNumber(r.amount), 0);
 }
 
@@ -94,12 +100,14 @@ function PortalPanel({
   sessionId, visible, onClose, onDisplayName
 }: { sessionId: string; visible: boolean; onClose: () => void; onDisplayName: (name?: string)=>void; }) {
   const [mode, setMode] = useState<"login" | "register" | "forgot" | "profile">("register");
+  const [tab, setTab] = useState<"details"|"income"|"debts"|"docs">("details");
+
   const [email, setEmail] = useState("");
   const [pin, setPin] = useState("");
   const [pin2, setPin2] = useState("");
   const [notice, setNotice] = useState<string>("");
 
-  // Profile state
+  const [clientRef, setClientRef] = useState<number | null>(null);
   const [profile, setProfile] = useState<Profile>({
     full_name: "", phone: "", address1: "", address2: "", city: "", postcode: "",
     incomes: [
@@ -111,13 +119,15 @@ function PortalPanel({
       { id: cryptoRandomId(), label: "Utilities", amount: "" },
       { id: cryptoRandomId(), label: "Food", amount: "" },
       { id: cryptoRandomId(), label: "Transport", amount: "" }
-    ]
+    ],
+    debts: []
   });
-  const totalIncome = sumRows(profile.incomes);
-  const totalExpense = sumRows(profile.expenses);
-  const surplus = totalIncome - totalExpense;
 
-  // compute simple tasks
+  // totals
+  const totalIncome = sumMoney(profile.incomes);
+  const totalExpense = sumMoney(profile.expenses);
+  const disposable = totalIncome - totalExpense;
+
   const tasks = [
     { id:"name",    label:"Add your full name",                done: !!profile.full_name.trim() },
     { id:"phone",   label:"Add a contact phone",               done: !!profile.phone.trim() },
@@ -127,60 +137,122 @@ function PortalPanel({
   ];
   const tasksOutstanding = tasks.filter(t => !t.done).length;
 
+  // docs list for this session
+  const [docs, setDocs] = useState<{id:string;file_name:string;file_url:string;uploaded_at:string}[]>([]);
+  async function loadDocs() {
+    try {
+      const r = await fetch(`/api/portal/documents?sessionId=${encodeURIComponent(sessionId)}`);
+      const j = await r.json();
+      if (j?.ok) setDocs(j.documents || []);
+    } catch { /* ignore */ }
+  }
+
+  // prevent background scroll when visible
   useEffect(() => {
     if (visible) {
       setNotice("");
       setMode("register");
-      // prevent background scroll while portal is open
+      setTab("details");
       const prev = document.body.style.overflow;
       document.body.style.overflow = "hidden";
       return () => { document.body.style.overflow = prev; };
     }
   }, [visible]);
 
-  // allow Escape to close
+  // Esc to close
   useEffect(() => {
     if (!visible) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [visible, onClose]);
 
   const validatePin = (p: string) => /^\d{4}$/.test(p);
   const normalizeEmail = (e: string) => (e || "").trim().toLowerCase();
+  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(email));
+
+  const loadProfile = async (em: string) => {
+    try {
+      const r = await fetch(`/api/portal/profile?email=${encodeURIComponent(em)}`);
+      const j = await r.json();
+      if (j?.ok) {
+        setClientRef(j.clientRef || null);
+        if (j.profile) {
+          setProfile({
+            full_name: j.profile.full_name || "",
+            phone: j.profile.phone || "",
+            address1: j.profile.address1 || "",
+            address2: j.profile.address2 || "",
+            city: j.profile.city || "",
+            postcode: j.profile.postcode || "",
+            incomes: Array.isArray(j.profile.incomes) ? j.profile.incomes : [],
+            expenses: Array.isArray(j.profile.expenses) ? j.profile.expenses : [],
+            debts: Array.isArray(j.profile.debts) ? j.profile.debts : []
+          });
+          if (j.profile.full_name) onDisplayName(j.profile.full_name);
+        }
+      }
+    } catch { /* ignore */ }
+  };
+
+  const saveProfile = async (quiet = false) => {
+    if (!emailValid) return;
+    try {
+      const r = await fetch("/api/portal/profile", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ email: normalizeEmail(email), sessionId, profile })
+      });
+      const j = await r.json();
+      if (!quiet) setNotice(j?.ok ? "✅ Profile saved." : (j?.error || "Could not save profile."));
+    } catch { if (!quiet) setNotice("Network error while saving."); }
+  };
+
+  // AUTOSAVE (debounced)
+  const saveTimer = useRef<any>(null);
+  const loadedRef = useRef(false);
+  useEffect(() => { loadedRef.current = true; }, []); // after mount
+  useEffect(() => {
+    if (mode !== "profile" || !emailValid || !loadedRef.current) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => saveProfile(true), 900);
+    return () => clearTimeout(saveTimer.current);
+  }, [profile, mode, emailValid]); // eslint-disable-line
 
   const handleRegister = async () => {
     const em = normalizeEmail(email);
     if (!validatePin(pin) || pin !== pin2) { setNotice("PIN must be 4 digits and match."); return; }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) { setNotice("Enter a valid email."); return; }
+    if (!emailValid) { setNotice("Enter a valid email."); return; }
     try {
       const r = await fetch("/api/portal/register",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email: em, pin, sessionId})});
       const j = await r.json();
       if (j?.ok) {
         setNotice("Portal created — you are logged in.");
         onDisplayName(j?.displayName);
-        await fetch("/api/portal/profile", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ email: em, sessionId, profile }) });
+        setClientRef(j?.clientRef || null);
         setMode("profile");
+        await saveProfile(true);
         await loadProfile(em);
+        await loadDocs();
       } else {
+        setClientRef(j?.clientRef || null);
         setNotice(j?.error || "Could not register.");
       }
     } catch { setNotice("Network error."); }
   };
   const handleLogin = async () => {
     const em = normalizeEmail(email);
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em) || !validatePin(pin)) { setNotice("Check email and 4-digit PIN."); return; }
+    if (!emailValid || !validatePin(pin)) { setNotice("Check email and 4-digit PIN."); return; }
     try {
       const r = await fetch("/api/portal/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email: em, pin})});
       const j = await r.json();
       if (j?.ok) {
         setNotice("Logged in.");
         onDisplayName(j?.displayName || undefined);
+        setClientRef(j?.clientRef || null);
         setMode("profile");
-        await fetch("/api/portal/profile", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ email: em, sessionId, profile }) });
         await loadProfile(em);
+        await loadDocs();
       } else {
         setNotice(j?.error || "Login failed.");
       }
@@ -188,7 +260,7 @@ function PortalPanel({
   };
   const handleForgot = async () => {
     const em = normalizeEmail(email);
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) { setNotice("Enter a valid email."); return; }
+    if (!emailValid) { setNotice("Enter a valid email."); return; }
     try {
       const r = await fetch("/api/portal/request-reset",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email: em})});
       const j = await r.json();
@@ -196,59 +268,33 @@ function PortalPanel({
     } catch { setNotice("Network error."); }
   };
 
-  async function loadProfile(em: string) {
+  const doLogout = () => {
+    setNotice("You’ve been logged out.");
+    setMode("login");
+    setClientRef(null);
+    setTab("details");
+    setPin(""); setPin2("");
+    // keep email so they can log back in quicker
+  };
+
+  // docs tab upload
+  const docsInputRef = useRef<HTMLInputElement>(null);
+  const [docsUploading, setDocsUploading] = useState(false);
+  const handleDocsSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    setDocsUploading(true);
     try {
-      const r = await fetch(`/api/portal/profile?email=${encodeURIComponent(em)}`);
+      const fd = new FormData(); fd.append("file", file); fd.append("sessionId", sessionId);
+      const r = await fetch("/api/upload", { method: "POST", body: fd });
       const j = await r.json();
-      if (j?.ok && j.profile) {
-        setProfile({
-          full_name: j.profile.full_name || "",
-          phone: j.profile.phone || "",
-          address1: j.profile.address1 || "",
-          address2: j.profile.address2 || "",
-          city: j.profile.city || "",
-          postcode: j.profile.postcode || "",
-          incomes: Array.isArray(j.profile.incomes) ? j.profile.incomes : [],
-          expenses: Array.isArray(j.profile.expenses) ? j.profile.expenses : []
-        });
-      }
-    } catch { /* ignore */ }
-  }
+      if (!j?.ok) { setNotice(`Upload failed — ${j?.details || j?.error}`); }
+      else { setNotice("Document uploaded."); await loadDocs(); }
+    } catch { setNotice("Upload failed — network error."); }
+    finally { setDocsUploading(false); if (docsInputRef.current) docsInputRef.current.value=""; }
+  };
 
-  async function saveProfile() {
-    const em = normalizeEmail(email);
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) { setNotice("Enter a valid email."); return; }
-    try {
-      const r = await fetch("/api/portal/profile", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ email: em, sessionId, profile })
-      });
-      const j = await r.json();
-      setNotice(j?.ok ? "✅ Profile saved." : (j?.error || "Could not save profile."));
-    } catch { setNotice("Network error while saving."); }
-  }
+  const headerTitle = clientRef ? `Client #${clientRef}${profile.full_name ? " — " + profile.full_name : ""}` : "Client Portal";
 
-  function updateRow(kind: "incomes"|"expenses", id: string, patch: Partial<MoneyRow>) {
-    setProfile(p => ({
-      ...p,
-      [kind]: p[kind].map(r => r.id===id ? { ...r, ...patch } : r)
-    }));
-  }
-  function addRow(kind: "incomes"|"expenses") {
-    setProfile(p => ({
-      ...p,
-      [kind]: [...p[kind], { id: cryptoRandomId(), label: "", amount: "" }]
-    }));
-  }
-  function removeRow(kind: "incomes"|"expenses", id: string) {
-    setProfile(p => ({
-      ...p,
-      [kind]: p[kind].filter(r => r.id !== id)
-    }));
-  }
-
-  // full-screen overlay container
   return (
     <div
       aria-hidden={!visible}
@@ -279,17 +325,26 @@ function PortalPanel({
           <button onClick={onClose} style={{padding:"6px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb", cursor:"pointer"}}>
             ← Back to Chat
           </button>
-          <strong>Client Portal</strong>
+          <strong>{headerTitle}</strong>
         </div>
-        {mode !== "profile" && (
+
+        {mode === "profile" ? (
+          <div style={{display:"flex", gap:8}}>
+            <button onClick={()=>setTab("details")} style={{padding:"6px 10px", borderRadius:8, border:"1px solid #374151", background: tab==="details"?"#1f2937":"transparent", color:"#e5e7eb"}}>Your Details</button>
+            <button onClick={()=>setTab("income")}  style={{padding:"6px 10px", borderRadius:8, border:"1px solid #374151", background: tab==="income" ?"#1f2937":"transparent", color:"#e5e7eb"}}>Income & Expenditure</button>
+            <button onClick={()=>setTab("debts")}   style={{padding:"6px 10px", borderRadius:8, border:"1px solid #374151", background: tab==="debts"  ?"#1f2937":"transparent", color:"#e5e7eb"}}>Debts</button>
+            <button onClick={()=>setTab("docs")}    style={{padding:"6px 10px", borderRadius:8, border:"1px solid #374151", background: tab==="docs"   ?"#1f2937":"transparent", color:"#e5e7eb"}}>Supporting Documents</button>
+            <button onClick={doLogout}              style={{padding:"6px 10px", borderRadius:8, border:"1px solid #ef4444", background:"transparent", color:"#fecaca"}}>Logout</button>
+          </div>
+        ) : (
           <div style={{fontSize:12, opacity:.85}}>Please set up your client portal so you can view and save your progress.</div>
         )}
       </div>
 
-      {/* scrollable portal content */}
+      {/* content */}
       <div style={{overflowY:"auto"}}>
         <div style={{
-          maxWidth: 980, margin:"18px auto", padding:"16px",
+          maxWidth: 1000, margin:"18px auto", padding:"16px",
           background:"linear-gradient(135deg,#0b1220,#111827)", color:"#e5e7eb",
           border:"1px solid #1f2937", borderRadius:16, boxShadow:"0 10px 30px rgba(0,0,0,0.45)"
         }}>
@@ -297,8 +352,8 @@ function PortalPanel({
             <>
               <div style={{display:"flex", gap:8, marginBottom:12}}>
                 <button onClick={()=>setMode("register")} style={{padding:"6px 10px", borderRadius:8, border:"1px solid #374151", background: mode==="register"?"#1f2937":"transparent", color:"#e5e7eb"}}>Register</button>
-                <button onClick={()=>setMode("login")} style={{padding:"6px 10px", borderRadius:8, border:"1px solid #374151", background: mode==="login"?"#1f2937":"transparent", color:"#e5e7eb"}}>Login</button>
-                <button onClick={()=>setMode("forgot")} style={{padding:"6px 10px", borderRadius:8, border:"1px solid #374151", background: mode==="forgot"?"#1f2937":"transparent", color:"#e5e7eb"}}>Forgot PIN</button>
+                <button onClick={()=>setMode("login")}    style={{padding:"6px 10px", borderRadius:8, border:"1px solid #374151", background: mode==="login"   ?"#1f2937":"transparent", color:"#e5e7eb"}}>Login</button>
+                <button onClick={()=>setMode("forgot")}   style={{padding:"6px 10px", borderRadius:8, border:"1px solid #374151", background: mode==="forgot"  ?"#1f2937":"transparent", color:"#e5e7eb"}}>Forgot PIN</button>
               </div>
 
               <div style={{display:"grid", gap:10, maxWidth:520}}>
@@ -332,8 +387,8 @@ function PortalPanel({
                 )}
 
                 {mode==="register" && <button onClick={handleRegister} style={{padding:"10px 12px", borderRadius:8, background:"#16a34a", color:"#fff", border:"none", cursor:"pointer"}}>Create Portal</button>}
-                {mode==="login" && <button onClick={handleLogin} style={{padding:"10px 12px", borderRadius:8, background:"#16a34a", color:"#fff", border:"none", cursor:"pointer"}}>Log In</button>}
-                {mode==="forgot" && <button onClick={handleForgot} style={{padding:"10px 12px", borderRadius:8, background:"#16a34a", color:"#fff", border:"none", cursor:"pointer"}}>Send Reset Email</button>}
+                {mode==="login"    && <button onClick={handleLogin}    style={{padding:"10px 12px", borderRadius:8, background:"#16a34a", color:"#fff", border:"none", cursor:"pointer"}}>Log In</button>}
+                {mode==="forgot"   && <button onClick={handleForgot}   style={{padding:"10px 12px", borderRadius:8, background:"#16a34a", color:"#fff", border:"none", cursor:"pointer"}}>Send Reset Email</button>}
 
                 {notice && <div style={{fontSize:12, color:"#a7f3d0"}}>{notice}</div>}
               </div>
@@ -353,96 +408,128 @@ function PortalPanel({
                   {tasksOutstanding ? `${tasksOutstanding} to do` : "All done"}
                 </div>
               </div>
-              <ul style={{listStyle:"none", padding:0, margin:0, display:"grid", gap:6}}>
-                {tasks.map(t=>(
-                  <li key={t.id} style={{
-                    display:"flex", alignItems:"center", justifyContent:"space-between",
-                    padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220"
-                  }}>
-                    <span style={{opacity: t.done ? .7 : 1}}>
-                      {t.done ? "✅" : "⏳"} {t.label}
-                    </span>
-                  </li>
-                ))}
-              </ul>
 
-              <hr style={{borderColor:"#1f2937"}} />
-
-              <div style={{display:"grid", gap:10}}>
-                <div style={{fontWeight:700, marginBottom:4}}>Your details</div>
-                <div style={{display:"grid", gap:10, gridTemplateColumns:"1fr 1fr", maxWidth: "100%"}}>
-                  <input placeholder="Full name" value={profile.full_name} onChange={e=>setProfile(p=>({...p, full_name:e.target.value}))}
-                    style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb", gridColumn:"1 / span 2"}} />
-                  <input placeholder="Phone" value={profile.phone} onChange={e=>setProfile(p=>({...p, phone:e.target.value}))}
-                    style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
-                  <input placeholder="Postcode" value={profile.postcode} onChange={e=>setProfile(p=>({...p, postcode:e.target.value}))}
-                    style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
-                  <input placeholder="Address line 1" value={profile.address1} onChange={e=>setProfile(p=>({...p, address1:e.target.value}))}
-                    style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb", gridColumn:"1 / span 2"}} />
-                  <input placeholder="Address line 2 (optional)" value={profile.address2} onChange={e=>setProfile(p=>({...p, address2:e.target.value}))}
-                    style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb", gridColumn:"1 / span 2"}} />
-                  <input placeholder="City" value={profile.city} onChange={e=>setProfile(p=>({...p, city:e.target.value}))}
-                    style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb", gridColumn:"1 / span 2"}} />
+              {/* Tabs content */}
+              {tab === "details" && (
+                <div style={{display:"grid", gap:10}}>
+                  <div style={{fontWeight:700, marginBottom:4}}>Your details</div>
+                  <div style={{display:"grid", gap:10, gridTemplateColumns:"1fr 1fr", maxWidth:"100%"}}>
+                    <input placeholder="Full name" value={profile.full_name} onChange={e=>setProfile(p=>({...p, full_name:e.target.value}))}
+                      style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb", gridColumn:"1 / span 2"}} />
+                    <input placeholder="Phone" value={profile.phone} onChange={e=>setProfile(p=>({...p, phone:e.target.value}))}
+                      style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
+                    <input placeholder="Postcode" value={profile.postcode} onChange={e=>setProfile(p=>({...p, postcode:e.target.value}))}
+                      style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
+                    <input placeholder="Address line 1" value={profile.address1} onChange={e=>setProfile(p=>({...p, address1:e.target.value}))}
+                      style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb", gridColumn:"1 / span 2"}} />
+                    <input placeholder="Address line 2 (optional)" value={profile.address2} onChange={e=>setProfile(p=>({...p, address2:e.target.value}))}
+                      style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb", gridColumn:"1 / span 2"}} />
+                    <input placeholder="City" value={profile.city} onChange={e=>setProfile(p=>({...p, city:e.target.value}))}
+                      style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb", gridColumn:"1 / span 2"}} />
+                  </div>
+                  <button onClick={()=>saveProfile(false)} style={{marginTop:8, padding:"10px 12px", borderRadius:8, background:"#16a34a", color:"#fff", border:"none", cursor:"pointer"}}>Save</button>
+                  {notice && <div style={{fontSize:12, color:"#a7f3d0"}}>{notice}</div>}
                 </div>
-              </div>
+              )}
 
-              {/* Income */}
-              <div style={{display:"grid", gap:8, marginTop:8}}>
-                <div style={{fontWeight:700}}>Income</div>
-                {profile.incomes.map(row=>(
-                  <div key={row.id} style={{display:"grid", gridTemplateColumns:"1fr 160px 40px", gap:8}}>
-                    <input placeholder="Label" value={row.label} onChange={e=>updateRow("incomes", row.id, {label:e.target.value})}
-                      style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
-                    <input placeholder="Amount / month" value={row.amount} onChange={e=>updateRow("incomes", row.id, {amount:e.target.value})}
-                      inputMode="decimal" style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
-                    <button onClick={()=>removeRow("incomes", row.id)} style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb"}}>✕</button>
+              {tab === "income" && (
+                <div style={{display:"grid", gap:12}}>
+                  <div style={{fontWeight:700}}>Income</div>
+                  {profile.incomes.map(row=>(
+                    <div key={row.id} style={{display:"grid", gridTemplateColumns:"1fr 160px 40px", gap:8}}>
+                      <input placeholder="Label" value={row.label} onChange={e=>setProfile(p=>({...p, incomes:p.incomes.map(r=>r.id===row.id?{...r, label:e.target.value}:r)}))}
+                        style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
+                      <input placeholder="Amount / month" value={row.amount} onChange={e=>setProfile(p=>({...p, incomes:p.incomes.map(r=>r.id===row.id?{...r, amount:e.target.value}:r)}))}
+                        inputMode="decimal" style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
+                      <button onClick={()=>setProfile(p=>({...p, incomes:p.incomes.filter(r=>r.id!==row.id)}))} style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb"}}>✕</button>
+                    </div>
+                  ))}
+                  <button onClick={()=>setProfile(p=>({...p, incomes:[...p.incomes, {id:cryptoRandomId(), label:"", amount:""}]}))} style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb"}}>+ Add income</button>
+                  <div style={{textAlign:"right", opacity:.9}}>Total income: £{totalIncome.toFixed(2)}</div>
+
+                  <hr style={{borderColor:"#1f2937"}} />
+
+                  <div style={{fontWeight:700}}>Expenditure</div>
+                  {profile.expenses.map(row=>(
+                    <div key={row.id} style={{display:"grid", gridTemplateColumns:"1fr 160px 40px", gap:8}}>
+                      <input placeholder="Label" value={row.label} onChange={e=>setProfile(p=>({...p, expenses:p.expenses.map(r=>r.id===row.id?{...r, label:e.target.value}:r)}))}
+                        style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
+                      <input placeholder="Amount / month" value={row.amount} onChange={e=>setProfile(p=>({...p, expenses:p.expenses.map(r=>r.id===row.id?{...r, amount:e.target.value}:r)}))}
+                        inputMode="decimal" style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
+                      <button onClick={()=>setProfile(p=>({...p, expenses:p.expenses.filter(r=>r.id!==row.id)}))} style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb"}}>✕</button>
+                    </div>
+                  ))}
+                  <button onClick={()=>setProfile(p=>({...p, expenses:[...p.expenses, {id:cryptoRandomId(), label:"", amount:""}]}))} style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb"}}>+ Add expense</button>
+                  <div style={{textAlign:"right", fontWeight:700}}>
+                    Disposable income: <span style={{color: disposable>=0 ? "#34d399" : "#f87171"}}>£{disposable.toFixed(2)}</span>
                   </div>
-                ))}
-                <button onClick={()=>addRow("incomes")} style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb"}}>+ Add income</button>
-                <div style={{textAlign:"right", opacity:.9}}>Total income: £{totalIncome.toFixed(2)}</div>
-              </div>
 
-              {/* Expenditure */}
-              <div style={{display:"grid", gap:8}}>
-                <div style={{fontWeight:700}}>Expenditure</div>
-                {profile.expenses.map(row=>(
-                  <div key={row.id} style={{display:"grid", gridTemplateColumns:"1fr 160px 40px", gap:8}}>
-                    <input placeholder="Label" value={row.label} onChange={e=>updateRow("expenses", row.id, {label:e.target.value})}
-                      style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
-                    <input placeholder="Amount / month" value={row.amount} onChange={e=>updateRow("expenses", row.id, {amount:e.target.value})}
-                      inputMode="decimal" style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
-                    <button onClick={()=>removeRow("expenses", row.id)} style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb"}}>✕</button>
+                  <button onClick={()=>saveProfile(false)} style={{marginTop:8, padding:"10px 12px", borderRadius:8, background:"#16a34a", color:"#fff", border:"none", cursor:"pointer"}}>Save</button>
+                  {notice && <div style={{fontSize:12, color:"#a7f3d0"}}>{notice}</div>}
+                </div>
+              )}
+
+              {tab === "debts" && (
+                <div style={{display:"grid", gap:12}}>
+                  <div style={{fontWeight:700}}>Debts</div>
+                  {profile.debts.map(row=>(
+                    <div key={row.id} style={{display:"grid", gridTemplateColumns:"1fr 160px 1fr 40px", gap:8}}>
+                      <input placeholder="Creditor" value={row.creditor} onChange={e=>setProfile(p=>({...p, debts:p.debts.map(r=>r.id===row.id?{...r, creditor:e.target.value}:r)}))}
+                        style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
+                      <input placeholder="Balance (£)" value={row.balance} onChange={e=>setProfile(p=>({...p, debts:p.debts.map(r=>r.id===row.id?{...r, balance:e.target.value}:r)}))}
+                        inputMode="decimal" style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
+                      <input placeholder="Account / Ref" value={row.accountRef} onChange={e=>setProfile(p=>({...p, debts:p.debts.map(r=>r.id===row.id?{...r, accountRef:e.target.value}:r)}))}
+                        style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
+                      <button onClick={()=>setProfile(p=>({...p, debts:p.debts.filter(r=>r.id!==row.id)}))} style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb"}}>✕</button>
+                    </div>
+                  ))}
+                  <button onClick={()=>setProfile(p=>({...p, debts:[...p.debts, {id:cryptoRandomId(), creditor:"", balance:"", accountRef:""}]}))} style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb"}}>+ Add debt</button>
+                  <button onClick={()=>saveProfile(false)} style={{marginTop:4, padding:"10px 12px", borderRadius:8, background:"#16a34a", color:"#fff", border:"none", cursor:"pointer"}}>Save Debts</button>
+                  {notice && <div style={{fontSize:12, color:"#a7f3d0"}}>{notice}</div>}
+                </div>
+              )}
+
+              {tab === "docs" && (
+                <div style={{display:"grid", gap:12}}>
+                  <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+                    <div style={{fontWeight:700}}>Supporting Documents</div>
+                    <div>
+                      <input type="file" hidden ref={docsInputRef} onChange={handleDocsSelected} />
+                      <button onClick={()=>docsInputRef.current?.click()} disabled={docsUploading}
+                        style={{padding:"8px 12px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb"}}>
+                        📎 Upload {docsUploading ? "…" : ""}
+                      </button>
+                    </div>
                   </div>
-                ))}
-                <button onClick={()=>addRow("expenses")} style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb"}}>+ Add expense</button>
-                <div style={{textAlign:"right", opacity:.9}}>Total expenses: £{totalExpense.toFixed(2)}</div>
-              </div>
+                  <div style={{fontSize:12, opacity:.8}}>
+                    • ID • Bank Statements (3m) • Payslips (3m / 12w) or SA302 • UC statements • Car finance docs • Creditor letters.
+                  </div>
 
-              {/* Surplus + Save */}
-              <div style={{marginTop:4, textAlign:"right", fontWeight:700}}>
-                Surplus: <span style={{color: surplus>=0 ? "#34d399" : "#f87171"}}>£{surplus.toFixed(2)}</span>
-              </div>
-
-              <button onClick={saveProfile} style={{marginTop:8, padding:"10px 12px", borderRadius:8, background:"#16a34a", color:"#fff", border:"none", cursor:"pointer"}}>Save Profile</button>
-              {notice && <div style={{fontSize:12, color:"#a7f3d0"}}>{notice}</div>}
+                  <div style={{display:"grid", gap:8}}>
+                    {docs.map(d => (
+                      <a key={d.id} href={d.file_url} target="_blank" rel="noreferrer"
+                        style={{display:"inline-flex", alignItems:"center", gap:8, padding:"6px 10px", borderRadius:999, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb", textDecoration:"none"}}>
+                        <span>{fileEmoji(d.file_name)}</span>
+                        <span style={{fontWeight:600}}>{prettyFilename(d.file_name)}</span>
+                        <span style={{opacity:.7}}>{new Date(d.uploaded_at).toLocaleString()}</span>
+                        <span style={{textDecoration:"underline"}}>Download ⬇️</span>
+                      </a>
+                    ))}
+                    {!docs.length && <div style={{opacity:.8}}>No documents yet for this session.</div>}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
 
-        {/* bottom safe area for mobile */}
         <div style={{height:24}} />
       </div>
     </div>
   );
 }
 
-/* ------------------------- Helpers ------------------------- */
-function cryptoRandomId() {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return (crypto as any).randomUUID();
-  return Math.random().toString(36).slice(2);
-}
-
-/* --------------------------- Page --------------------------- */
+/* --------------------------- Page (chat UI) --------------------------- */
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -456,7 +543,7 @@ export default function Home() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const chosenVoice = useRef<SpeechSynthesisVoice | null>(null);
 
-  // Chat footer upload state/handlers
+  // Chat footer upload
   const chatFileInputRef = useRef<HTMLInputElement>(null);
   const [chatUploading, setChatUploading] = useState(false);
 
@@ -479,7 +566,6 @@ export default function Home() {
       const attachment: Attachment | undefined = link
         ? { filename: cleanName, url: link, mimeType: data?.file?.mimeType, size: data?.file?.size }
         : undefined;
-      // Show a single tidy chip message (no duplicate text)
       setMessages(prev => [...prev, { sender: "bot", text: "", attachment }]);
     } catch {
       setMessages(prev => [...prev, { sender: "bot", text: "Upload failed — network error." }]);

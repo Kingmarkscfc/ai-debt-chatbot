@@ -28,8 +28,6 @@ export default async function handler(req: any, res: any) {
   if (req.method !== "POST") return res.status(405).json({ ok:false, error:"Method not allowed" });
 
   try {
-    if (!process.env.SUPABASE_URL) throw new Error("Missing SUPABASE_URL");
-
     const email = normEmail(req.body?.email);
     const pin = String(req.body?.pin || "");
 
@@ -42,7 +40,7 @@ export default async function handler(req: any, res: any) {
 
     const { data, error } = await supabase
       .from("portal_users")
-      .select("pin_hash, display_name")
+      .select("pin_hash, display_name, client_ref")
       .eq("email", email)
       .maybeSingle();
 
@@ -57,7 +55,11 @@ export default async function handler(req: any, res: any) {
       return res.status(401).json({ ok:false, error:"Invalid PIN" });
     }
 
-    return res.status(200).json({ ok:true, displayName: data.display_name || email.split("@")[0] });
+    return res.status(200).json({
+      ok:true,
+      displayName: data.display_name || email.split("@")[0],
+      clientRef: data.client_ref || null
+    });
   } catch (e: any) {
     console.error("login crash:", e);
     return res.status(500).json({ ok:false, error:String(e?.message || e) });
