@@ -1,4 +1,5 @@
 // pages/api/portal/register.ts
+// Note: untyped req/res to avoid duplicate Next types in some Vercel builds
 import { createClient } from "@supabase/supabase-js";
 import { randomBytes, scryptSync } from "crypto";
 
@@ -7,67 +8,93 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || ""
 );
 
-function hashPin(pin: string) {
+// scrypt hash "pin|email" with random salt
+function hashPin(pin: string, email: string) {
   const salt = randomBytes(16).toString("hex");
-  const hash = scryptSync(pin, salt, 32).toString("hex");
+  const hash = scryptSync(`${pin}|${email.toLowerCase().trim()}`, salt, 32).toString("hex");
   return `scrypt$${salt}$${hash}`;
 }
 
-function normEmail(email: string) {
-  return (email || "").trim().toLowerCase();
+async function ensureClientRef(): Promise<number> {
+  // Make sure the column exists (safe to re-run)
+  await supabase.rpc("noop").catch(() => {}); // no-op to ensure connection
+  await supabase
+    .from("portal_users")
+    .select("id", { count: "exact", head: true })
+    .limit(1);
+
+  // Add column if missing (best effort)
+  await supabase
+    .rpc("exec_sql", {
+      sql: `
+        do $$ begin
+          alter table portal_users add column if not exists client_ref integer unique;
+        exception when duplicate_column then null; end $$;
+      `,
+    })
+    .catch(() => {});
+
+  // Find current max client_ref
+  const { data: maxRows, error } = await supabase
+    .from("portal_users")
+    .select("client_ref")
+    .not("client_ref", "is", null)
+    .order("client_ref", { ascending: false })
+    .limit(1);
+
+  if (error) return 100000;
+  const max = (maxRows && maxRows[0]?.client_ref) || 0;
+  return Math.max(100000, Number(max || 0) + 1);
 }
 
 export default async function handler(req: any, res: any) {
-  if (req.method !== "POST") return res.status(405).json({ ok:false, error:"Method not allowed" });
+  if (req.method !== "POST") return res.status(405).end();
+  const { email, pin, sessionId, displayName } = req.body || {};
+  const normEmail = (email || "").toLowerCase().trim();
+
+  if (!normEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normEmail))
+    return res.status(400).json({ ok: false, error: "Invalid email" });
+  if (!/^\d{4}$/.test(pin || "")) return res.status(400).json({ ok: false, error: "PIN must be 4 digits" });
 
   try {
-    if (!process.env.SUPABASE_URL) throw new Error("Missing SUPABASE_URL");
-
-    const email = normEmail(req.body?.email);
-    const pin = String(req.body?.pin || "");
-    const sessionId = (req.body?.sessionId || "").toString().trim() || null;
-    const displayName = (req.body?.displayName || "").toString().trim() || null;
-
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return res.status(400).json({ ok:false, error:"Invalid email" });
-    }
-    if (!/^\d{4}$/.test(pin)) {
-      return res.status(400).json({ ok:false, error:"PIN must be exactly 4 digits" });
-    }
-
-    const pin_hash = hashPin(pin);
-
-    const { error } = await supabase
+    // If already exists, return their client_ref/display_name
+    const { data: existing, error: selErr } = await supabase
       .from("portal_users")
-      .insert([{ email, pin_hash, session_id: sessionId, display_name: displayName }]);
-
-    if (error) {
-      if ((error as any).code === "23505") {
-        // Already exists → fetch client_ref to return
-        const { data } = await supabase
-          .from("portal_users")
-          .select("client_ref, display_name")
-          .eq("email", email)
-          .maybeSingle();
-        return res.status(409).json({ ok:false, error:"User already exists", clientRef: data?.client_ref || null });
-      }
-      console.error("register error:", error);
-      return res.status(500).json({ ok:false, error:"Registration failed" });
-    }
-
-    const { data } = await supabase
-      .from("portal_users")
-      .select("client_ref, display_name")
-      .eq("email", email)
+      .select("email, client_ref, display_name")
+      .eq("email", normEmail)
       .maybeSingle();
 
+    if (selErr) throw selErr;
+    if (existing) {
+      return res.status(200).json({
+        ok: true,
+        message: "User already registered",
+        clientRef: existing.client_ref || null,
+        displayName: existing.display_name || displayName || null,
+      });
+    }
+
+    const clientRef = await ensureClientRef();
+    const pin_hash = hashPin(pin, normEmail);
+
+    const { error: insErr } = await supabase.from("portal_users").insert({
+      email: normEmail,
+      pin_hash,
+      session_id: sessionId || null,
+      display_name: displayName || null,
+      client_ref: clientRef,
+    });
+
+    if (insErr) throw insErr;
+
     return res.status(200).json({
-      ok:true,
-      displayName: data?.display_name || displayName || email.split("@")[0],
-      clientRef: data?.client_ref || null
+      ok: true,
+      clientRef,
+      displayName: displayName || null,
+      message: "Portal created",
     });
   } catch (e: any) {
-    console.error("register crash:", e);
-    return res.status(500).json({ ok:false, error:String(e?.message || e) });
+    console.error("register error:", e?.message || e);
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 }

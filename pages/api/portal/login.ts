@@ -7,61 +7,40 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || ""
 );
 
-function normEmail(email: string) {
-  return (email || "").trim().toLowerCase();
-}
-
-function verifyPin(pin: string, stored: string) {
-  try {
-    const [algo, salt, hex] = String(stored || "").split("$");
-    if (algo !== "scrypt" || !salt || !hex) return false;
-    const hash = scryptSync(pin, salt, 32).toString("hex");
-    const a = Buffer.from(hash, "hex");
-    const b = Buffer.from(hex, "hex");
-    return a.length === b.length && timingSafeEqual(a, b);
-  } catch {
-    return false;
-  }
+function verifyPin(pin: string, stored: string, email: string) {
+  const [algo, salt, hex] = (stored || "").split("$");
+  if (algo !== "scrypt" || !salt || !hex) return false;
+  const hash = scryptSync(`${pin}|${email.toLowerCase().trim()}`, salt, 32).toString("hex");
+  const a = Buffer.from(hash, "hex");
+  const b = Buffer.from(hex, "hex");
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 export default async function handler(req: any, res: any) {
-  if (req.method !== "POST") return res.status(405).json({ ok:false, error:"Method not allowed" });
+  if (req.method !== "POST") return res.status(405).end();
+  const { email, pin } = req.body || {};
+  const normEmail = (email || "").toLowerCase().trim();
+
+  if (!normEmail || !pin) return res.status(400).json({ ok: false, error: "Missing credentials" });
 
   try {
-    const email = normEmail(req.body?.email);
-    const pin = String(req.body?.pin || "");
-
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return res.status(400).json({ ok:false, error:"Invalid email" });
-    }
-    if (!/^\d{4}$/.test(pin)) {
-      return res.status(400).json({ ok:false, error:"PIN must be exactly 4 digits" });
-    }
-
-    const { data, error } = await supabase
+    const { data: u, error } = await supabase
       .from("portal_users")
-      .select("pin_hash, display_name, client_ref")
-      .eq("email", email)
+      .select("email, pin_hash, display_name, client_ref")
+      .eq("email", normEmail)
       .maybeSingle();
 
-    if (error) {
-      console.error("login select error:", error);
-      return res.status(500).json({ ok:false, error:"Login failed" });
-    }
-    if (!data) {
-      return res.status(404).json({ ok:false, error:"User not found" });
-    }
-    if (!verifyPin(pin, data.pin_hash)) {
-      return res.status(401).json({ ok:false, error:"Invalid PIN" });
-    }
+    if (error) throw error;
+    if (!u || !u.pin_hash) return res.status(401).json({ ok: false, error: "Invalid email or PIN" });
+    if (!verifyPin(pin, u.pin_hash, normEmail)) return res.status(401).json({ ok: false, error: "Invalid email or PIN" });
 
     return res.status(200).json({
-      ok:true,
-      displayName: data.display_name || email.split("@")[0],
-      clientRef: data.client_ref || null
+      ok: true,
+      displayName: u.display_name || null,
+      clientRef: u.client_ref || null,
     });
   } catch (e: any) {
-    console.error("login crash:", e);
-    return res.status(500).json({ ok:false, error:String(e?.message || e) });
+    console.error("login error:", e?.message || e);
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 }

@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
-import avatarPhoto from "../assets/advisor-avatar-human.png"; // bundled
+import avatarPhoto from "../assets/advisor-avatar-human.png";
 
+// ---------- Types ----------
 type Sender = "user" | "bot";
 type Attachment = { filename: string; url: string; mimeType?: string; size?: number };
 type Message = { sender: Sender; text: string; attachment?: Attachment };
 
 type MoneyRow = { id: string; label: string; amount: string };
-type DebtRow = { id: string; creditor: string; balance: string; accountRef: string };
+type DebtRow = { id: string; creditor: string; balance: string; monthlyPayment: string; accountRef: string };
 type Profile = {
   full_name: string;
   phone: string;
@@ -22,12 +23,17 @@ type Profile = {
 
 const LANGUAGES = ["English","Spanish","Polish","French","German","Portuguese","Italian","Romanian"];
 
+// ---------- Utils ----------
 function ensureSessionId(): string {
   if (typeof window === "undefined") return Math.random().toString(36).slice(2);
   const key = "da_session_id";
   let sid = localStorage.getItem(key);
   if (!sid) { sid = Math.random().toString(36).slice(2); localStorage.setItem(key, sid); }
   return sid;
+}
+function cryptoRandomId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return (crypto as any).randomUUID();
+  return Math.random().toString(36).slice(2);
 }
 function formatBytes(n?: number) {
   if (typeof n !== "number") return "";
@@ -66,26 +72,12 @@ function prettyFilename(name: string): string {
     return `${title}${ext}`;
   } catch { return name; }
 }
-
 function pickUkMaleVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
   if (!voices?.length) return null;
   const preferred = ["Google UK English Male","Microsoft Ryan Online (Natural) - English (United Kingdom)","Daniel","UK English Male"];
   for (const name of preferred) { const v=voices.find(vv=>vv.name===name); if (v) return v; }
   const enGb=voices.find(v=>(v.lang||"").toLowerCase().startsWith("en-gb")); if (enGb) return enGb;
   const enAny=voices.find(v=>(v.lang||"").toLowerCase().startsWith("en-")); return enAny||null;
-}
-
-function Avatar({ size = 40 }: { size?: number }) {
-  return (
-    <Image src={avatarPhoto} alt="" width={size} height={size} priority
-      style={{ width:size, height:size, display:"block", borderRadius:"999px", objectFit:"cover", background:"#e5e7eb", boxShadow:"0 1px 3px rgba(0,0,0,0.18)" }} />
-  );
-}
-
-/* ------------------------- Helpers ------------------------- */
-function cryptoRandomId() {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return (crypto as any).randomUUID();
-  return Math.random().toString(36).slice(2);
 }
 function currencyToNumber(v: string) {
   const n = parseFloat((v || "").replace(/[^\d.]/g, ""));
@@ -95,21 +87,39 @@ function sumMoney(rows: MoneyRow[]) {
   return rows.reduce((acc, r) => acc + currencyToNumber(r.amount), 0);
 }
 
-/* ------------ Client Portal (FULL-SCREEN OVERLAY) ------------ */
+function Avatar({ size = 40 }: { size?: number }) {
+  return (
+    <Image src={avatarPhoto} alt="" width={size} height={size} priority
+      style={{ width:size, height:size, display:"block", borderRadius:"999px", objectFit:"cover", background:"#e5e7eb", boxShadow:"0 1px 3px rgba(0,0,0,0.18)" }} />
+  );
+}
+
+// ---------- Portal Panel (FULL-SCREEN LIGHT THEME) ----------
 function PortalPanel({
   sessionId, visible, onClose, onDisplayName
 }: { sessionId: string; visible: boolean; onClose: () => void; onDisplayName: (name?: string)=>void; }) {
   const [mode, setMode] = useState<"login" | "register" | "forgot" | "profile">("register");
   const [tab, setTab] = useState<"details"|"income"|"debts"|"docs">("details");
 
+  // Auth form
+  const [registerName, setRegisterName] = useState("");
   const [email, setEmail] = useState("");
   const [pin, setPin] = useState("");
   const [pin2, setPin2] = useState("");
   const [notice, setNotice] = useState<string>("");
 
+  // Profile
+  const emptyDebt = (): DebtRow => ({ id: cryptoRandomId(), creditor: "", balance: "", monthlyPayment: "", accountRef: "" });
+  const fiveDebts = (): DebtRow[] => Array.from({length:5}, ()=> emptyDebt());
+
   const [clientRef, setClientRef] = useState<number | null>(null);
   const [profile, setProfile] = useState<Profile>({
-    full_name: "", phone: "", address1: "", address2: "", city: "", postcode: "",
+    full_name: "",
+    phone: "",
+    address1: "",
+    address2: "",
+    city: "",
+    postcode: "",
     incomes: [
       { id: cryptoRandomId(), label: "Salary", amount: "" },
       { id: cryptoRandomId(), label: "Benefits", amount: "" }
@@ -120,20 +130,19 @@ function PortalPanel({
       { id: cryptoRandomId(), label: "Food", amount: "" },
       { id: cryptoRandomId(), label: "Transport", amount: "" }
     ],
-    debts: []
+    debts: fiveDebts()
   });
 
-  // docs list for this session
+  // Docs (for tasks detection)
   const [docs, setDocs] = useState<{id:string;file_name:string;file_url:string;uploaded_at:string;category?:string;creditor?:string;debt_ref?:string}[]>([]);
   async function loadDocs() {
     try {
       const r = await fetch(`/api/portal/documents?sessionId=${encodeURIComponent(sessionId)}`);
       const j = await r.json();
       if (j?.ok) setDocs(j.documents || []);
-    } catch { /* ignore */ }
+    } catch {}
   }
 
-  // computed task checks
   const totalIncome = sumMoney(profile.incomes);
   const totalExpense = sumMoney(profile.expenses);
   const disposable = totalIncome - totalExpense;
@@ -154,49 +163,30 @@ function PortalPanel({
   ];
   const tasksOutstanding = tasks.filter(t => !t.done).length;
 
-  // prevent background scroll when visible + auto-load saved email profile
+  // Visibility + bootstrap
   useEffect(() => {
     if (!visible) return;
     setNotice("");
-    const prev = document.body.style.overflow;
+    const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
 
-    const savedEmail = typeof window !== "undefined" ? localStorage.getItem("portal_email") : null;
     (async () => {
+      const savedEmail = typeof window !== "undefined" ? localStorage.getItem("portal_email") : null;
       if (savedEmail) {
         setEmail(savedEmail);
-        // try load existing profile; if found, jump to profile
-        try {
-          const r = await fetch(`/api/portal/profile?email=${encodeURIComponent(savedEmail)}`);
-          const j = await r.json();
-          if (j?.ok) {
-            setClientRef(j.clientRef || null);
-            if (j.profile) {
-              setProfile({
-                full_name: j.profile.full_name || "",
-                phone: j.profile.phone || "",
-                address1: j.profile.address1 || "",
-                address2: j.profile.address2 || "",
-                city: j.profile.city || "",
-                postcode: j.profile.postcode || "",
-                incomes: Array.isArray(j.profile.incomes) ? j.profile.incomes : [],
-                expenses: Array.isArray(j.profile.expenses) ? j.profile.expenses : [],
-                debts: Array.isArray(j.profile.debts) ? j.profile.debts : []
-              });
-              if (j.profile.full_name) onDisplayName(j.profile.full_name);
-              setMode("profile");
-            } else {
-              setMode("register");
-            }
-          }
-        } catch { /* ignore */ }
-        await loadDocs();
+        const ok = await loadProfile(savedEmail);
+        if (ok) {
+          setMode("profile");
+          await loadDocs();
+        } else {
+          setMode("register");
+        }
       } else {
         setMode("register");
       }
     })();
 
-    return () => { document.body.style.overflow = prev; };
+    return () => { document.body.style.overflow = prevOverflow; };
   }, [visible]); // eslint-disable-line
 
   // Esc to close
@@ -207,10 +197,11 @@ function PortalPanel({
     return () => window.removeEventListener("keydown", onKey);
   }, [visible, onClose]);
 
+  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((email || "").toLowerCase().trim());
   const validatePin = (p: string) => /^\d{4}$/.test(p);
   const normalizeEmail = (e: string) => (e || "").trim().toLowerCase();
-  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(email));
 
+  // Load/save profile
   const loadProfile = async (em: string) => {
     try {
       const r = await fetch(`/api/portal/profile?email=${encodeURIComponent(em)}`);
@@ -218,6 +209,8 @@ function PortalPanel({
       if (j?.ok) {
         setClientRef(j.clientRef || null);
         if (j.profile) {
+          const debts = Array.isArray(j.profile.debts) ? j.profile.debts : [];
+          const topped = [...debts, ...fiveDebts()].slice(0,5); // ensure 5 visible rows
           setProfile({
             full_name: j.profile.full_name || "",
             phone: j.profile.phone || "",
@@ -227,13 +220,20 @@ function PortalPanel({
             postcode: j.profile.postcode || "",
             incomes: Array.isArray(j.profile.incomes) ? j.profile.incomes : [],
             expenses: Array.isArray(j.profile.expenses) ? j.profile.expenses : [],
-            debts: Array.isArray(j.profile.debts) ? j.profile.debts : []
+            debts: topped.map((d: any) => ({
+              id: d.id || cryptoRandomId(),
+              creditor: d.creditor || "",
+              balance: d.balance || "",
+              monthlyPayment: d.monthlyPayment || "",
+              accountRef: d.accountRef || ""
+            }))
           });
-          if (j.profile.full_name) onDisplayName(j.profile.full_name);
+          const nm = j.profile.full_name || j.displayName || undefined;
+          if (nm) onDisplayName(nm);
         }
         return !!j.clientRef;
       }
-    } catch { /* ignore */ }
+    } catch {}
     return false;
   };
 
@@ -253,27 +253,33 @@ function PortalPanel({
   // AUTOSAVE (debounced)
   const saveTimer = useRef<any>(null);
   const loadedRef = useRef(false);
-  useEffect(() => { loadedRef.current = true; }, []); // after mount
+  useEffect(() => { loadedRef.current = true; }, []);
   useEffect(() => {
     if (mode !== "profile" || !emailValid || !loadedRef.current) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => saveProfile(true), 900);
+    saveTimer.current = setTimeout(() => saveProfile(true), 800);
     return () => clearTimeout(saveTimer.current);
   }, [profile, mode, emailValid]); // eslint-disable-line
 
+  // Register / Login / Forgot
   const handleRegister = async () => {
     const em = normalizeEmail(email);
-    if (!validatePin(pin) || pin !== pin2) { setNotice("PIN must be 4 digits and match."); return; }
     if (!emailValid) { setNotice("Enter a valid email."); return; }
+    if (!validatePin(pin) || pin !== pin2) { setNotice("PIN must be 4 digits and match."); return; }
     try {
-      const r = await fetch("/api/portal/register",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email: em, pin, sessionId})});
+      const r = await fetch("/api/portal/register",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({ email: em, pin, sessionId, displayName: registerName || null })
+      });
       const j = await r.json();
       if (j?.ok) {
         setNotice("Portal created — you are logged in.");
-        onDisplayName(j?.displayName);
         setClientRef(j?.clientRef || null);
         localStorage.setItem("portal_email", em);
         if (j?.clientRef) localStorage.setItem("portal_clientRef", String(j.clientRef));
+        setProfile(p => ({ ...p, full_name: registerName || p.full_name }));
+        onDisplayName(registerName || j?.displayName || undefined);
         setMode("profile");
         await saveProfile(true);
         await loadProfile(em);
@@ -292,10 +298,10 @@ function PortalPanel({
       const j = await r.json();
       if (j?.ok) {
         setNotice("Logged in.");
-        onDisplayName(j?.displayName || undefined);
         setClientRef(j?.clientRef || null);
         localStorage.setItem("portal_email", em);
         if (j?.clientRef) localStorage.setItem("portal_clientRef", String(j.clientRef));
+        onDisplayName(j?.displayName || undefined);
         setMode("profile");
         await loadProfile(em);
         await loadDocs();
@@ -319,14 +325,14 @@ function PortalPanel({
     setMode("login");
     setClientRef(null);
     setTab("details");
-    setPin(""); setPin2("");
+    setPin(""); setPin2(""); setRegisterName("");
     if (typeof window !== "undefined") {
       localStorage.removeItem("portal_email");
       localStorage.removeItem("portal_clientRef");
     }
   };
 
-  // Docs tab: generic upload
+  // Uploads (Docs tab)
   const docsInputRef = useRef<HTMLInputElement>(null);
   const [docsUploading, setDocsUploading] = useState(false);
   const handleDocsSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -342,7 +348,7 @@ function PortalPanel({
     finally { setDocsUploading(false); if (docsInputRef.current) docsInputRef.current.value=""; }
   };
 
-  // Debts tab: creditor letter upload (tagged)
+  // Creditor letter upload from Debts tab
   const creditorInputRef = useRef<HTMLInputElement>(null);
   const [pendingCreditorMeta, setPendingCreditorMeta] = useState<{creditor?:string; debtRef?:string} | null>(null);
   const handleCreditorUploadClick = (row: DebtRow) => {
@@ -371,72 +377,104 @@ function PortalPanel({
     }
   };
 
-  const headerTitle = clientRef ? `Client Reference #${clientRef}${profile.full_name ? " — " + profile.full_name : ""}` : "Client Portal";
+  const headerTitle = clientRef
+    ? `Client Reference #${clientRef} — ${profile.full_name ? `Welcome ${profile.full_name}` : "Welcome"}`
+    : "Client Portal";
+
+  // Light theme styles
+  const S = {
+    overlay: (show: boolean): React.CSSProperties => ({
+      position:"fixed", inset:0, zIndex:60,
+      pointerEvents: show ? "auto" : "none",
+      opacity: show ? 1 : 0,
+      transition:"opacity .2s ease",
+      display:"flex", flexDirection:"column",
+      background:"#f8fafc" // opaque light background (chat fully hidden)
+    }),
+    topbar: {
+      background:"#ffffff",
+      borderBottom:"1px solid #e5e7eb",
+      color:"#111827",
+      display:"flex", alignItems:"center", justifyContent:"space-between",
+      padding:"10px 14px", boxShadow:"0 1px 6px rgba(0,0,0,0.06)"
+    } as React.CSSProperties,
+    btn: (emphasis = false): React.CSSProperties => ({
+      padding:"8px 12px", borderRadius:8, cursor:"pointer",
+      border: emphasis ? "none" : "1px solid #d1d5db",
+      background: emphasis ? "#16a34a" : "#ffffff",
+      color: emphasis ? "#fff" : "#111827",
+      fontWeight: 600
+    }),
+    wrap: {
+      flex: 1, overflowY:"auto"
+    } as React.CSSProperties,
+    card: {
+      maxWidth: 1100, margin:"18px auto", padding:"16px",
+      background:"#ffffff", color:"#111827",
+      border:"1px solid #e5e7eb", borderRadius:16, boxShadow:"0 10px 30px rgba(0,0,0,0.05)"
+    } as React.CSSProperties,
+    tabs: {
+      display:"flex", gap:8, flexWrap:"wrap", marginBottom:12
+    } as React.CSSProperties,
+    tabBtn: (active: boolean): React.CSSProperties => ({
+      padding:"6px 10px",
+      borderRadius:8,
+      border: "1px solid #d1d5db",
+      background: active ? "#f3f4f6" : "#ffffff",
+      color:"#111827",
+      fontWeight: 600,
+      cursor:"pointer"
+    }),
+    sectionHeader: { fontWeight:700, marginBottom:6 } as React.CSSProperties,
+    input: { padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db", background:"#ffffff", color:"#111827" } as React.CSSProperties,
+    rowGrid: { display:"grid", gap:8 } as React.CSSProperties,
+    debtsGridRow: { display:"grid", gridTemplateColumns:"1fr 140px 160px 1fr 100px 40px", gap:8 } as React.CSSProperties,
+    chip: { display:"inline-flex", alignItems:"center", gap:8, fontSize:12, padding:"6px 10px", background:"#ffffff", border:"1px solid #e5e7eb", borderRadius:999 } as React.CSSProperties
+  };
 
   return (
-    <div
-      aria-hidden={!visible}
-      style={{
-        position:"fixed", inset:0, zIndex:60,
-        pointerEvents: visible ? "auto" : "none",
-        opacity: visible ? 1 : 0,
-        transition:"opacity .25s ease",
-        display:"grid",
-        gridTemplateRows:"auto 1fr",
-        background:"rgba(0,0,0,0.5)"
-      }}
-    >
-      {/* top bar */}
-      <div
-        style={{
-          backdropFilter:"blur(6px)",
-          background:"linear-gradient(180deg, rgba(16,24,40,0.95), rgba(16,24,40,0.85))",
-          borderBottom:"1px solid #1f2937",
-          color:"#e5e7eb",
-          display:"flex",
-          alignItems:"center",
-          justifyContent:"space-between",
-          padding:"10px 14px"
-        }}
-      >
+    <div aria-hidden={!visible} style={S.overlay(visible)}>
+      {/* Top bar */}
+      <div style={S.topbar}>
         <div style={{display:"flex", alignItems:"center", gap:10}}>
-          <button onClick={onClose} style={{padding:"6px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb", cursor:"pointer"}}>
-            ← Back to Chat
-          </button>
+          <button onClick={onClose} style={S.btn(false)}>← Back to Chat</button>
           <strong>{headerTitle}</strong>
         </div>
-
         {mode === "profile" ? (
-          <div style={{display:"flex", gap:8}}>
-            <button onClick={()=>setTab("details")} style={{padding:"6px 10px", borderRadius:8, border:"1px solid #374151", background: tab==="details"?"#1f2937":"transparent", color:"#e5e7eb"}}>Your Details</button>
-            <button onClick={()=>setTab("income")}  style={{padding:"6px 10px", borderRadius:8, border:"1px solid #374151", background: tab==="income" ?"#1f2937":"transparent", color:"#e5e7eb"}}>Income & Expenditure</button>
-            <button onClick={()=>setTab("debts")}   style={{padding:"6px 10px", borderRadius:8, border:"1px solid #374151", background: tab==="debts"  ?"#1f2937":"transparent", color:"#e5e7eb"}}>Debts</button>
-            <button onClick={()=>setTab("docs")}    style={{padding:"6px 10px", borderRadius:8, border:"1px solid #374151", background: tab==="docs"   ?"#1f2937":"transparent", color:"#e5e7eb"}}>Supporting Documents</button>
-            <button onClick={doLogout}              style={{padding:"6px 10px", borderRadius:8, border:"1px solid #ef4444", background:"transparent", color:"#fecaca"}}>Logout</button>
-          </div>
+          <button onClick={doLogout} style={{...S.btn(false), border:"1px solid #ef4444", color:"#991b1b", background:"#fff"}}>Logout</button>
         ) : (
           <div style={{fontSize:12, opacity:.85}}>Please set up your client portal so you can view and save your progress.</div>
         )}
       </div>
 
-      {/* content */}
-      <div style={{overflowY:"auto"}}>
-        <div style={{
-          maxWidth: 1000, margin:"18px auto", padding:"16px",
-          background:"linear-gradient(135deg,#0b1220,#111827)", color:"#e5e7eb",
-          border:"1px solid #1f2937", borderRadius:16, boxShadow:"0 10px 30px rgba(0,0,0,0.45)"
-        }}>
+      {/* Content */}
+      <div style={S.wrap}>
+        <div style={S.card}>
+          {/* Tabs moved under header, above tasks (only when logged in / profile mode) */}
+          {mode === "profile" && (
+            <div style={S.tabs}>
+              <button onClick={()=>setTab("details")} style={S.tabBtn(tab==="details")}>Your Details</button>
+              <button onClick={()=>setTab("income")}  style={S.tabBtn(tab==="income")}>Income & Expenditure</button>
+              <button onClick={()=>setTab("debts")}   style={S.tabBtn(tab==="debts")}>Debts</button>
+              <button onClick={()=>setTab("docs")}    style={S.tabBtn(tab==="docs")}>Supporting Documents</button>
+            </div>
+          )}
+
+          {/* Auth modes */}
           {mode !== "profile" && (
             <>
               <div style={{display:"flex", gap:8, marginBottom:12}}>
-                <button onClick={()=>setMode("register")} style={{padding:"6px 10px", borderRadius:8, border:"1px solid #374151", background: mode==="register"?"#1f2937":"transparent", color:"#e5e7eb"}}>Register</button>
-                <button onClick={()=>setMode("login")}    style={{padding:"6px 10px", borderRadius:8, border:"1px solid #374151", background: mode==="login"   ?"#1f2937":"transparent", color:"#e5e7eb"}}>Login</button>
-                <button onClick={()=>setMode("forgot")}   style={{padding:"6px 10px", borderRadius:8, border:"1px solid #374151", background: mode==="forgot"  ?"#1f2937":"transparent", color:"#e5e7eb"}}>Forgot PIN</button>
+                <button onClick={()=>setMode("register")} style={{...S.tabBtn(mode==="register"), fontWeight:700}}>Register</button>
+                <button onClick={()=>setMode("login")}    style={{...S.tabBtn(mode==="login"),    fontWeight:700}}>Login</button>
+                <button onClick={()=>setMode("forgot")}   style={{...S.tabBtn(mode==="forgot"),   fontWeight:700}}>Forgot PIN</button>
               </div>
 
-              <div style={{display:"grid", gap:10, maxWidth:520}}>
-                <input placeholder="Email address" value={email} onChange={e=>setEmail(e.target.value)}
-                  style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
+              <div style={{...S.rowGrid, maxWidth:520}}>
+                {mode==="register" && (
+                  <input placeholder="Full name" value={registerName} onChange={e=>setRegisterName(e.target.value)} style={S.input} />
+                )}
+
+                <input placeholder="Email address" value={email} onChange={e=>setEmail(e.target.value)} style={S.input} />
 
                 {(mode==="register" || mode==="login") && (
                   <input
@@ -447,10 +485,9 @@ function PortalPanel({
                     inputMode="numeric"
                     pattern="[0-9]*"
                     autoComplete="one-time-code"
-                    style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}}
+                    style={S.input}
                   />
                 )}
-
                 {mode==="register" && (
                   <input
                     placeholder="Confirm 4-digit PIN"
@@ -460,27 +497,28 @@ function PortalPanel({
                     inputMode="numeric"
                     pattern="[0-9]*"
                     autoComplete="one-time-code"
-                    style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}}
+                    style={S.input}
                   />
                 )}
 
-                {mode==="register" && <button onClick={handleRegister} style={{padding:"10px 12px", borderRadius:8, background:"#16a34a", color:"#fff", border:"none", cursor:"pointer"}}>Create Portal</button>}
-                {mode==="login"    && <button onClick={handleLogin}    style={{padding:"10px 12px", borderRadius:8, background:"#16a34a", color:"#fff", border:"none", cursor:"pointer"}}>Log In</button>}
-                {mode==="forgot"   && <button onClick={handleForgot}   style={{padding:"10px 12px", borderRadius:8, background:"#16a34a", color:"#fff", border:"none", cursor:"pointer"}}>Send Reset Email</button>}
+                {mode==="register" && <button onClick={handleRegister} style={S.btn(true)}>Create Portal</button>}
+                {mode==="login"    && <button onClick={handleLogin}    style={S.btn(true)}>Log In</button>}
+                {mode==="forgot"   && <button onClick={handleForgot}   style={S.btn(true)}>Send Reset Email</button>}
 
-                {notice && <div style={{fontSize:12, color:"#a7f3d0"}}>{notice}</div>}
+                {notice && <div style={{fontSize:12, color:"#047857"}}>{notice}</div>}
               </div>
             </>
           )}
 
+          {/* Profile mode */}
           {mode === "profile" && (
-            <div style={{display:"grid", gap:14}}>
+            <div style={{display:"grid", gap:16}}>
               {/* Outstanding tasks */}
               <div style={{display:"flex", alignItems:"center", justifyContent:"space-between"}}>
                 <div style={{fontWeight:700}}>Outstanding tasks</div>
                 <div style={{
                   padding:"2px 8px", borderRadius:12,
-                  background: tasksOutstanding ? "#f59e0b" : "#065f46",
+                  background: tasksOutstanding ? "#f59e0b" : "#16a34a",
                   color:"#fff", fontSize:12, fontWeight:700
                 }}>
                   {tasksOutstanding ? `${tasksOutstanding} to do` : "All done"}
@@ -495,114 +533,94 @@ function PortalPanel({
                 ))}
               </ul>
 
-              {/* Tabs content */}
+              {/* Tab content */}
               {tab === "details" && (
                 <div style={{display:"grid", gap:10}}>
-                  <div style={{fontWeight:700, marginBottom:4}}>Your details</div>
-                  <div style={{display:"grid", gap:10, gridTemplateColumns:"1fr 1fr", maxWidth:"100%"}}>
-                    <input placeholder="Full name" value={profile.full_name} onChange={e=>setProfile(p=>({...p, full_name:e.target.value}))}
-                      style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb", gridColumn:"1 / span 2"}} />
-                    <input placeholder="Phone" value={profile.phone} onChange={e=>setProfile(p=>({...p, phone:e.target.value}))}
-                      style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
-                    <input placeholder="Postcode" value={profile.postcode} onChange={e=>setProfile(p=>({...p, postcode:e.target.value}))}
-                      style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
-                    <input placeholder="Address line 1" value={profile.address1} onChange={e=>setProfile(p=>({...p, address1:e.target.value}))}
-                      style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb", gridColumn:"1 / span 2"}} />
-                    <input placeholder="Address line 2 (optional)" value={profile.address2} onChange={e=>setProfile(p=>({...p, address2:e.target.value}))}
-                      style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb", gridColumn:"1 / span 2"}} />
-                    <input placeholder="City" value={profile.city} onChange={e=>setProfile(p=>({...p, city:e.target.value}))}
-                      style={{padding:"10px 12px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb", gridColumn:"1 / span 2"}} />
+                  <div style={S.sectionHeader}>Your details</div>
+                  <div style={{display:"grid", gap:10}}>
+                    <input placeholder="Full name" value={profile.full_name} onChange={e=>setProfile(p=>({...p, full_name:e.target.value}))} style={S.input} />
+                    <input placeholder="Phone" value={profile.phone} onChange={e=>setProfile(p=>({...p, phone:e.target.value}))} style={S.input} />
+                    <input placeholder="Postcode" value={profile.postcode} onChange={e=>setProfile(p=>({...p, postcode:e.target.value}))} style={S.input} />
+                    <input placeholder="Address line 1" value={profile.address1} onChange={e=>setProfile(p=>({...p, address1:e.target.value}))} style={S.input} />
+                    <input placeholder="Address line 2 (optional)" value={profile.address2} onChange={e=>setProfile(p=>({...p, address2:e.target.value}))} style={S.input} />
+                    <input placeholder="City" value={profile.city} onChange={e=>setProfile(p=>({...p, city:e.target.value}))} style={S.input} />
                   </div>
-                  <button onClick={()=>saveProfile(false)} style={{marginTop:8, padding:"10px 12px", borderRadius:8, background:"#16a34a", color:"#fff", border:"none", cursor:"pointer"}}>Save</button>
-                  {notice && <div style={{fontSize:12, color:"#a7f3d0"}}>{notice}</div>}
+                  <button onClick={()=>saveProfile(false)} style={S.btn(true)}>Save</button>
+                  {notice && <div style={{fontSize:12, color:"#047857"}}>{notice}</div>}
                 </div>
               )}
 
               {tab === "income" && (
                 <div style={{display:"grid", gap:12}}>
-                  <div style={{fontWeight:700}}>Income</div>
+                  <div style={S.sectionHeader}>Income</div>
                   {profile.incomes.map(row=>(
-                    <div key={row.id} style={{display:"grid", gridTemplateColumns:"1fr 160px 40px", gap:8}}>
-                      <input placeholder="Label" value={row.label} onChange={e=>setProfile(p=>({...p, incomes:p.incomes.map(r=>r.id===row.id?{...r, label:e.target.value}:r)}))}
-                        style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
-                      <input placeholder="Amount / month" value={row.amount} onChange={e=>setProfile(p=>({...p, incomes:p.incomes.map(r=>r.id===row.id?{...r, amount:e.target.value}:r)}))}
-                        inputMode="decimal" style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
-                      <button onClick={()=>setProfile(p=>({...p, incomes:p.incomes.filter(r=>r.id!==row.id)}))} style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb"}}>✕</button>
+                    <div key={row.id} style={{display:"grid", gridTemplateColumns:"1fr 180px 40px", gap:8}}>
+                      <input placeholder="Label" value={row.label} onChange={e=>setProfile(p=>({...p, incomes:p.incomes.map(r=>r.id===row.id?{...r, label:e.target.value}:r)}))} style={S.input} />
+                      <input placeholder="Amount / month" value={row.amount} onChange={e=>setProfile(p=>({...p, incomes:p.incomes.map(r=>r.id===row.id?{...r, amount:e.target.value}:r)}))} inputMode="decimal" style={S.input} />
+                      <button onClick={()=>setProfile(p=>({...p, incomes:p.incomes.filter(r=>r.id!==row.id)}))} style={S.btn(false)}>✕</button>
                     </div>
                   ))}
-                  <button onClick={()=>setProfile(p=>({...p, incomes:[...p.incomes, {id:cryptoRandomId(), label:"", amount:""}]}))} style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb"}}>+ Add income</button>
-                  <div style={{textAlign:"right", opacity:.9}}>Total income: £{totalIncome.toFixed(2)}</div>
+                  <button onClick={()=>setProfile(p=>({...p, incomes:[...p.incomes, {id:cryptoRandomId(), label:"", amount:""}]}))} style={S.btn(false)}>+ Add income</button>
+                  <div style={{textAlign:"right"}}>Total income: £{totalIncome.toFixed(2)}</div>
 
-                  <hr style={{borderColor:"#1f2937"}} />
+                  <hr style={{border:"1px solid #e5e7eb"}} />
 
-                  <div style={{fontWeight:700}}>Expenditure</div>
+                  <div style={S.sectionHeader}>Expenditure</div>
                   {profile.expenses.map(row=>(
-                    <div key={row.id} style={{display:"grid", gridTemplateColumns:"1fr 160px 40px", gap:8}}>
-                      <input placeholder="Label" value={row.label} onChange={e=>setProfile(p=>({...p, expenses:p.expenses.map(r=>r.id===row.id?{...r, label:e.target.value}:r)}))}
-                        style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
-                      <input placeholder="Amount / month" value={row.amount} onChange={e=>setProfile(p=>({...p, expenses:p.expenses.map(r=>r.id===row.id?{...r, amount:e.target.value}:r)}))}
-                        inputMode="decimal" style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
-                      <button onClick={()=>setProfile(p=>({...p, expenses:p.expenses.filter(r=>r.id!==row.id)}))} style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb"}}>✕</button>
+                    <div key={row.id} style={{display:"grid", gridTemplateColumns:"1fr 180px 40px", gap:8}}>
+                      <input placeholder="Label" value={row.label} onChange={e=>setProfile(p=>({...p, expenses:p.expenses.map(r=>r.id===row.id?{...r, label:e.target.value}:r)}))} style={S.input} />
+                      <input placeholder="Amount / month" value={row.amount} onChange={e=>setProfile(p=>({...p, expenses:p.expenses.map(r=>r.id===row.id?{...r, amount:e.target.value}:r)}))} inputMode="decimal" style={S.input} />
+                      <button onClick={()=>setProfile(p=>({...p, expenses:p.expenses.filter(r=>r.id!==row.id)}))} style={S.btn(false)}>✕</button>
                     </div>
                   ))}
-                  <button onClick={()=>setProfile(p=>({...p, expenses:[...p.expenses, {id:cryptoRandomId(), label:"", amount:""}]}))} style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb"}}>+ Add expense</button>
+                  <button onClick={()=>setProfile(p=>({...p, expenses:[...p.expenses, {id:cryptoRandomId(), label:"", amount:""}]}))} style={S.btn(false)}>+ Add expense</button>
                   <div style={{textAlign:"right", fontWeight:700}}>
-                    Disposable income: <span style={{color: disposable>=0 ? "#34d399" : "#f87171"}}>£{disposable.toFixed(2)}</span>
+                    Disposable income: <span style={{color: disposable>=0 ? "#16a34a" : "#dc2626"}}>£{disposable.toFixed(2)}</span>
                   </div>
 
-                  <button onClick={()=>saveProfile(false)} style={{marginTop:8, padding:"10px 12px", borderRadius:8, background:"#16a34a", color:"#fff", border:"none", cursor:"pointer"}}>Save</button>
-                  {notice && <div style={{fontSize:12, color:"#a7f3d0"}}>{notice}</div>}
+                  <button onClick={()=>saveProfile(false)} style={S.btn(true)}>Save</button>
+                  {notice && <div style={{fontSize:12, color:"#047857"}}>{notice}</div>}
                 </div>
               )}
 
               {tab === "debts" && (
                 <div style={{display:"grid", gap:12}}>
-                  <div style={{fontWeight:700}}>Debts</div>
-                  <input
-                    type="file"
-                    hidden
-                    ref={creditorInputRef}
-                    onChange={handleCreditorFileSelected}
-                  />
+                  <div style={S.sectionHeader}>Debts</div>
+                  <input type="file" hidden ref={creditorInputRef} onChange={handleCreditorFileSelected} />
                   {profile.debts.map(row=>(
-                    <div key={row.id} style={{display:"grid", gridTemplateColumns:"1fr 140px 1fr 100px 40px", gap:8}}>
-                      <input placeholder="Creditor" value={row.creditor} onChange={e=>setProfile(p=>({...p, debts:p.debts.map(r=>r.id===row.id?{...r, creditor:e.target.value}:r)}))}
-                        style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
-                      <input placeholder="Balance (£)" value={row.balance} onChange={e=>setProfile(p=>({...p, debts:p.debts.map(r=>r.id===row.id?{...r, balance:e.target.value}:r)}))}
-                        inputMode="decimal" style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
-                      <input placeholder="Account / Ref" value={row.accountRef} onChange={e=>setProfile(p=>({...p, debts:p.debts.map(r=>r.id===row.id?{...r, accountRef:e.target.value}:r)}))}
-                        style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
-                      <button onClick={()=>handleCreditorUploadClick(row)} disabled={docsUploading}
-                        style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb"}}>📎 Letter</button>
-                      <button onClick={()=>setProfile(p=>({...p, debts:p.debts.filter(r=>r.id!==row.id)}))} style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb"}}>✕</button>
+                    <div key={row.id} style={S.debtsGridRow}>
+                      <input placeholder="Creditor" value={row.creditor} onChange={e=>setProfile(p=>({...p, debts:p.debts.map(r=>r.id===row.id?{...r, creditor:e.target.value}:r)}))} style={S.input} />
+                      <input placeholder="Balance (£)" value={row.balance} onChange={e=>setProfile(p=>({...p, debts:p.debts.map(r=>r.id===row.id?{...r, balance:e.target.value}:r)}))} inputMode="decimal" style={S.input} />
+                      <input placeholder="Monthly Payment (£)" value={row.monthlyPayment} onChange={e=>setProfile(p=>({...p, debts:p.debts.map(r=>r.id===row.id?{...r, monthlyPayment:e.target.value}:r)}))} inputMode="decimal" style={S.input} />
+                      <input placeholder="Account / Ref" value={row.accountRef} onChange={e=>setProfile(p=>({...p, debts:p.debts.map(r=>r.id===row.id?{...r, accountRef:e.target.value}:r)}))} style={S.input} />
+                      <button onClick={()=>handleCreditorUploadClick(row)} style={S.btn(false)}>📎 Letter</button>
+                      <button onClick={()=>setProfile(p=>({...p, debts:p.debts.filter(r=>r.id!==row.id)}))} style={S.btn(false)}>✕</button>
                     </div>
                   ))}
-                  <button onClick={()=>setProfile(p=>({...p, debts:[...p.debts, {id:cryptoRandomId(), creditor:"", balance:"", accountRef:""}]}))} style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb"}}>+ Add debt</button>
-                  <button onClick={()=>saveProfile(false)} style={{marginTop:4, padding:"10px 12px", borderRadius:8, background:"#16a34a", color:"#fff", border:"none", cursor:"pointer"}}>Save Debts</button>
-                  {notice && <div style={{fontSize:12, color:"#a7f3d0"}}>{notice}</div>}
+                  <button onClick={()=>setProfile(p=>({...p, debts:[...p.debts, {id:cryptoRandomId(), creditor:"", balance:"", monthlyPayment:"", accountRef:""}]}))} style={S.btn(false)}>+ Add debt</button>
+                  <button onClick={()=>saveProfile(false)} style={S.btn(true)}>Save Debts</button>
+                  {notice && <div style={{fontSize:12, color:"#047857"}}>{notice}</div>}
                 </div>
               )}
 
               {tab === "docs" && (
                 <div style={{display:"grid", gap:12}}>
                   <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
-                    <div style={{fontWeight:700}}>Supporting Documents</div>
+                    <div style={S.sectionHeader}>Supporting Documents</div>
                     <div>
                       <input type="file" hidden ref={docsInputRef} onChange={handleDocsSelected} />
-                      <button onClick={()=>docsInputRef.current?.click()} disabled={docsUploading}
-                        style={{padding:"8px 12px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb"}}>
+                      <button onClick={()=>docsInputRef.current?.click()} disabled={docsUploading} style={S.btn(false)}>
                         📎 Upload {docsUploading ? "…" : ""}
                       </button>
                     </div>
                   </div>
-                  <div style={{fontSize:12, opacity:.8}}>
+                  <div style={{fontSize:12, color:"#374151"}}>
                     • ID • Bank Statements (1m) • Payslip (1m) or SA302 • UC statements • Car finance docs • Creditor letters.
                   </div>
 
                   <div style={{display:"grid", gap:8}}>
                     {docs.map(d => (
-                      <a key={d.id} href={d.file_url} target="_blank" rel="noreferrer"
-                        style={{display:"inline-flex", alignItems:"center", gap:8, padding:"6px 10px", borderRadius:999, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb", textDecoration:"none"}}>
+                      <a key={d.id} href={d.file_url} target="_blank" rel="noreferrer" style={S.chip}>
                         <span>{fileEmoji(d.file_name)}</span>
                         <span style={{fontWeight:600}}>{prettyFilename(d.file_name)}</span>
                         {d.creditor && <span style={{opacity:.8}}>({d.creditor})</span>}
@@ -617,14 +635,13 @@ function PortalPanel({
             </div>
           )}
         </div>
-
         <div style={{height:24}} />
       </div>
     </div>
   );
 }
 
-/* --------------------------- Page (chat UI) --------------------------- */
+// --------------------------- Page (chat UI) ---------------------------
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -750,6 +767,8 @@ export default function Home() {
     footer: { display:"flex", alignItems:"center", gap:8, padding:12, borderTop: isDark?"1px solid #1f2937":"1px solid #e5e7eb", background: isDark?"#0f172a":"#fafafa" }
   };
 
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+
   return (
     <main style={styles.frame}>
       <div style={styles.card}>
@@ -787,7 +806,7 @@ export default function Home() {
                 <div style={{...styles.bubble, ...(isUser?styles.bubbleUser:styles.bubbleBot)}}>
                   {m.text ? <div>{m.text}</div> : null}
                   {att && (
-                    <div style={styles.attach}>
+                    <div style={{ marginTop: 8 }}>
                       <a href={att.url} target="_blank" rel="noreferrer" download={pretty||att.filename} style={styles.chip} title={pretty}>
                         <span>{icon}</span>
                         <span style={{fontWeight:600}}>{pretty}</span>
@@ -819,7 +838,7 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Full-screen Portal Overlay */}
+      {/* Full-screen Portal */}
       <PortalPanel
         sessionId={sessionId}
         visible={showPortal}
