@@ -1,9 +1,10 @@
 // pages/index.tsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
+// IMPORTANT: keep this path pointing to your bundled PNG (not /public)
 import avatarPhoto from "../assets/advisor-avatar-human.png";
 
-/* ====================== Types & helpers ====================== */
+/* =============== Types & helpers =============== */
 type Sender = "user" | "bot";
 type Attachment = { filename: string; url: string; mimeType?: string; size?: number };
 type Message = { sender: Sender; text: string; attachment?: Attachment };
@@ -66,7 +67,7 @@ function pickUkMaleVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice |
   const enAny=voices.find(v=>(v.lang||"").toLowerCase().startsWith("en-")); return enAny||null;
 }
 
-/* ====================== Shared UI bits ====================== */
+/* =============== Shared UI bits =============== */
 function Avatar({ size = 40 }: { size?: number }) {
   return (
     <Image src={avatarPhoto} alt="" width={size} height={size} priority
@@ -74,8 +75,8 @@ function Avatar({ size = 40 }: { size?: number }) {
   );
 }
 
-/* ====================== Auth Screen (Register/Login/Forgot) ====================== */
-function AuthScreen({
+/* =============== FULL-SCREEN AUTH =============== */
+function AuthFullScreen({
   visible, onClose, onAuthed
 }: { visible: boolean; onClose: () => void; onAuthed: (email: string, displayName?: string) => void }) {
   const [mode, setMode] = useState<"register"|"login"|"forgot">("register");
@@ -86,11 +87,10 @@ function AuthScreen({
   const [notice, setNotice] = useState("");
 
   useEffect(()=>{ if (visible) setNotice(""); },[visible]);
-
   const clampPin = (v: string) => v.replace(/\D/g,"").slice(0,4);
 
   const handleRegister = async () => {
-    const p = clampPin(pin); const p2 = clampPin(pin2);
+    const p = clampPin(pin), p2 = clampPin(pin2);
     if (!email.includes("@")) return setNotice("Enter a valid email.");
     if (!/^\d{4}$/.test(p)) return setNotice("PIN must be 4 digits.");
     if (p !== p2) return setNotice("PINs do not match.");
@@ -105,7 +105,6 @@ function AuthScreen({
       onAuthed(email, fullName || undefined);
     } catch { setNotice("Network error."); }
   };
-
   const handleLogin = async () => {
     const p = clampPin(pin);
     if (!email.includes("@")) return setNotice("Enter a valid email.");
@@ -121,7 +120,6 @@ function AuthScreen({
       onAuthed(email, j?.displayName);
     } catch { setNotice("Network error."); }
   };
-
   const handleForgot = async () => {
     if (!email.includes("@")) return setNotice("Enter a valid email.");
     try {
@@ -138,32 +136,35 @@ function AuthScreen({
 
   return (
     <div style={{
-      position:"fixed", inset:0, zIndex:80,
-      background:"rgba(0,0,0,.55)",
-      display:"grid", placeItems:"center", padding:16
+      position:"fixed", inset:0, zIndex:999,
+      background:"#ffffff",
+      display:"grid", gridTemplateRows:"auto 1fr"
     }}>
+      {/* Top bar */}
       <div style={{
-        width:"100%", maxWidth:520, borderRadius:16,
-        background:"#fff", color:"#111827", boxShadow:"0 24px 64px rgba(0,0,0,.35)",
-        overflow:"hidden", border:"1px solid #e5e7eb"
+        display:"flex", alignItems:"center", justifyContent:"space-between",
+        padding:"12px 16px", borderBottom:"1px solid #e5e7eb", background:"#fff"
       }}>
-        {/* Header */}
-        <div style={{display:"flex", alignItems:"center", justifyContent:"space-between",
-          padding:"12px 16px", borderBottom:"1px solid #e5e7eb", background:"#fafafa"}}>
-          <div style={{fontWeight:800}}>Client Portal</div>
-          <button onClick={onClose}
-            style={{padding:"6px 10px", borderRadius:8, border:"1px solid #d1d5db", background:"#fff", cursor:"pointer"}}>
-            Back to Chat
-          </button>
+        <div style={{display:"flex", alignItems:"center", gap:10, fontWeight:800}}>
+          <span>Client Portal</span>
         </div>
+        <button onClick={onClose}
+          style={{padding:"8px 12px", borderRadius:8, border:"1px solid #d1d5db", background:"#fff", cursor:"pointer"}}>
+          Back to Chat
+        </button>
+      </div>
 
-        {/* Body */}
-        <div style={{padding:16, display:"grid", gap:12}}>
-          <div style={{fontSize:13, color:"#4b5563"}}>
+      {/* Content */}
+      <div style={{display:"grid", placeItems:"center", padding:16}}>
+        <div style={{
+          width:"100%", maxWidth:560, border:"1px solid #e5e7eb", borderRadius:16, background:"#fff",
+          padding:18, boxShadow:"0 24px 64px rgba(0,0,0,.06)"
+        }}>
+          <div style={{fontSize:14, color:"#4b5563", marginBottom:10}}>
             Please set up your client portal so you can view and save your progress.
           </div>
 
-          <div style={{display:"flex", gap:8}}>
+          <div style={{display:"flex", gap:8, marginBottom:12}}>
             <button onClick={()=>setMode("register")}
               style={{padding:"8px 12px", borderRadius:8, border:"1px solid #e5e7eb",
                 background: mode==="register" ? "#111827":"#fff", color: mode==="register" ? "#fff":"#111827"}}>
@@ -197,7 +198,9 @@ function AuthScreen({
             {(mode==="register" || mode==="login") && (
               <label style={{display:"grid", gap:6}}>
                 <span>{mode==="register" ? "Create 4-digit PIN" : "4-digit PIN"}</span>
-                <input value={pin} onChange={e=>setPin(e.target.value.replace(/\D/g,"").slice(0,4))}
+                <input
+                  value={pin}
+                  onChange={(e)=>{ const v=e.target.value.replace(/\D/g,"").slice(0,4); setPin(v); }}
                   inputMode="numeric" maxLength={4}
                   style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
               </label>
@@ -205,7 +208,9 @@ function AuthScreen({
             {mode==="register" && (
               <label style={{display:"grid", gap:6}}>
                 <span>Confirm 4-digit PIN</span>
-                <input value={pin2} onChange={e=>setPin2(e.target.value.replace(/\D/g,"").slice(0,4))}
+                <input
+                  value={pin2}
+                  onChange={(e)=>{ const v=e.target.value.replace(/\D/g,"").slice(0,4); setPin2(v); }}
                   inputMode="numeric" maxLength={4}
                   style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
               </label>
@@ -230,7 +235,7 @@ function AuthScreen({
               </button>
             )}
 
-            {notice && <div style={{fontSize:12, color: /error|invalid|fail/i.test(notice) ? "#b91c1c" : "#065f46"}}>{notice}</div>}
+            {notice && <div style={{fontSize:12, marginTop:4, color: /error|invalid|fail/i.test(notice) ? "#b91c1c" : "#065f46"}}>{notice}</div>}
           </div>
         </div>
       </div>
@@ -238,8 +243,8 @@ function AuthScreen({
   );
 }
 
-/* ====================== Fullscreen Portal (after login) ====================== */
-function PortalScreen({
+/* =============== FULL-SCREEN PORTAL =============== */
+function PortalFullScreen({
   visible, onClose, displayName, loggedEmail
 }: { visible: boolean; onClose: () => void; displayName?: string; loggedEmail?: string }) {
   const [tab, setTab] = useState<"details"|"budget"|"debts"|"docs">("details");
@@ -280,11 +285,13 @@ function PortalScreen({
     { id:"payslip1m", label:"1 month payslip", done:false },
     { id:"letters", label:"Upload creditor letters", done:false },
   ]);
+  const totalOutstanding = tasks.filter(t=>!t.done).length;
+  const toggleTask = (id: string) => setTasks(prev => prev.map(t => t.id===id ? {...t, done:!t.done} : t));
 
   const [docsCount] = useState(0);
   const [notice, setNotice] = useState("");
 
-  // Load profile (best-effort)
+  // Load existing profile (best-effort)
   useEffect(() => {
     if (!visible || !loggedEmail) return;
     (async ()=>{
@@ -342,15 +349,12 @@ function PortalScreen({
     } catch { setNotice("Save failed (network)."); }
   };
 
-  const toggleTask = (id: string) => setTasks(prev => prev.map(t => t.id===id ? {...t, done:!t.done} : t));
-  const totalOutstanding = tasks.filter(t=>!t.done).length;
-
   if (!visible) return null;
 
   return (
     <div style={{
-      position:"fixed", inset:0, zIndex:70, background:"#fff", color:"#111827",
-      display:"grid", gridTemplateRows:"auto 1fr"
+      position:"fixed", inset:0, zIndex:998, background:"#ffffff",
+      display:"grid", gridTemplateRows:"auto auto 1fr"
     }}>
       {/* Top bar */}
       <div style={{
@@ -373,192 +377,213 @@ function PortalScreen({
         </div>
       </div>
 
-      {/* Content */}
-      <div style={{display:"grid", gridTemplateRows:"auto auto 1fr", gap:12, padding:"12px 16px", background:"#f8fafc"}}>
-        {/* Tabs */}
-        <div style={{display:"flex", gap:8}}>
-          {["details","budget","debts","docs"].map(t=>(
-            <button key={t} onClick={()=>setTab(t as any)}
-              style={{
-                padding:"8px 12px", borderRadius:8, border:"1px solid #e5e7eb",
-                background: tab===t ? "#111827" : "#fff",
-                color: tab===t ? "#fff" : "#111827", cursor:"pointer"
-              }}>
-              {{
-                details: "Your Details",
-                budget: "Income / Expenditure",
-                debts: "Debts",
-                docs: "Documents"
-              }[t as "details"]}
-            </button>
-          ))}
-        </div>
+      {/* Tabs */}
+      <div style={{display:"flex", gap:8, padding:"10px 16px", borderBottom:"1px solid #e5e7eb", background:"#fff"}}>
+        {[
+          {k:"details", label:"Your Details"},
+          {k:"budget",  label:"Income & Expenditure"},
+          {k:"debts",   label:"Debts"},
+          {k:"docs",    label:"Documents"},
+        ].map(t=>(
+          <button key={t.k} onClick={()=>setTab(t.k as any)}
+            style={{
+              padding:"8px 12px", borderRadius:8, border:"1px solid #e5e7eb",
+              background: tab===t.k ? "#111827" : "#fff",
+              color: tab===t.k ? "#fff" : "#111827", cursor:"pointer"
+            }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
 
-        {/* Tasks */}
-        <div style={{display:"flex", alignItems:"center", gap:12, padding:"10px 12px",
-          border:"1px solid #e5e7eb", borderRadius:12, background:"#fff"}}>
-          <strong>Outstanding tasks:</strong>
-          <span>{totalOutstanding} to do</span>
-          <div style={{display:"flex", gap:8, flexWrap:"wrap"}}>
-            {tasks.map(t=>(
-              <button key={t.id} onClick={()=>toggleTask(t.id)} title={t.done?"Undo":"Mark done"}
-                style={{padding:"6px 10px", borderRadius:999, border:"1px solid #e5e7eb",
-                  background: t.done ? "#d1fae5":"#fff", color:"#111827", cursor:"pointer"}}>
-                {t.done ? "✅" : "⬜"} {t.label}{t.done ? " - Completed" : ""}
-              </button>
-            ))}
+      {/* Main content area */}
+      <div style={{
+        display:"grid",
+        gridTemplateColumns:"minmax(260px, 320px) 1fr",
+        gap:16, padding:"16px",
+        background:"#f8fafc", height:"100%", overflow:"hidden"
+      }}>
+        {/* Tasks side panel */}
+        <div style={{display:"grid", alignContent:"start", gap:16, overflow:"auto"}}>
+          <div style={{border:"1px solid #e5e7eb", borderRadius:12, background:"#fff", padding:12}}>
+            <div style={{fontWeight:800, marginBottom:8}}>Outstanding tasks</div>
+            <TaskList tasks={tasks} onToggle={toggleTask} />
+            <div style={{marginTop:8, fontSize:12, color:"#6b7280"}}>{tasks.filter(t=>!t.done).length} to do</div>
           </div>
+          {notice && (
+            <div style={{border:"1px solid #e5e7eb", borderRadius:12, background:"#ecfdf5", color:"#065f46", padding:12, fontSize:14}}>
+              {notice}
+            </div>
+          )}
         </div>
 
-        {/* Main area */}
-        <div style={{border:"1px solid #e5e7eb", borderRadius:12, background:"#fff", overflow:"auto", padding:16}}>
-          {tab==="details" && (
-            <div style={{display:"grid", gap:12}}>
-              <div style={{display:"grid", gap:10, gridTemplateColumns:"1fr 1fr"}}>
-                <label style={{display:"grid", gap:6}}>
-                  <span>Full name</span>
-                  <input value={fullName} onChange={e=>setFullName(e.target.value)}
-                         style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
-                </label>
-                <label style={{display:"grid", gap:6}}>
-                  <span>Phone</span>
-                  <input value={phone} onChange={e=>setPhone(e.target.value)}
-                         style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
-                </label>
-              </div>
+        {/* Scrollable content */}
+        <div style={{overflow:"auto"}}>
+          <div style={{border:"1px solid #e5e7eb", borderRadius:12, background:"#fff", padding:16}}>
+            {tab==="details" && (
+              <div style={{display:"grid", gap:12}}>
+                <div style={{display:"grid", gap:10, gridTemplateColumns:"1fr 1fr"}}>
+                  <label style={{display:"grid", gap:6}}>
+                    <span>Full name</span>
+                    <input value={fullName} onChange={e=>setFullName(e.target.value)}
+                           style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
+                  </label>
+                  <label style={{display:"grid", gap:6}}>
+                    <span>Phone</span>
+                    <input value={phone} onChange={e=>setPhone(e.target.value)}
+                           style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
+                  </label>
+                </div>
 
-              {addresses.map((a, idx)=>(
-                <div key={idx} style={{border:"1px solid #e5e7eb", borderRadius:12, background:"#fafafa", padding:12}}>
-                  <div style={{fontWeight:700, marginBottom:8}}>
-                    {idx===0 ? "Current address" : `Previous address ${idx}`}
-                  </div>
-                  <div style={{display:"grid", gap:10, gridTemplateColumns:"1fr 1fr"}}>
-                    <label style={{display:"grid", gap:6}}>
-                      <span>Address line 1</span>
-                      <input value={a.line1} onChange={e=>setAddr(idx,{line1:e.target.value})}
-                             style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
-                    </label>
-                    <label style={{display:"grid", gap:6}}>
-                      <span>Address line 2</span>
-                      <input value={a.line2} onChange={e=>setAddr(idx,{line2:e.target.value})}
-                             style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
-                    </label>
-                    <label style={{display:"grid", gap:6}}>
-                      <span>City</span>
-                      <input value={a.city} onChange={e=>setAddr(idx,{city:e.target.value})}
-                             style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
-                    </label>
-                    <label style={{display:"grid", gap:6}}>
-                      <span>Postcode</span>
-                      <input value={a.postcode} onChange={e=>setAddr(idx,{postcode:e.target.value.toUpperCase()})}
-                             placeholder="e.g. SW1A 1AA"
-                             style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
-                    </label>
-                    <label style={{display:"grid", gap:6}}>
-                      <span>Years at address</span>
-                      <input type="number" min={0} max={99} value={a.yearsAt}
-                             onChange={e=>setAddr(idx,{yearsAt: Math.max(0, Math.min(99, Number(e.target.value||0)))})}
-                             style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
-                    </label>
-                  </div>
-                  {idx>0 && (
-                    <div style={{marginTop:10}}>
-                      <button onClick={()=>removeAddress(idx)}
-                              style={{padding:"8px 12px", borderRadius:8, border:"1px solid #d1d5db", background:"#fff", cursor:"pointer"}}>
-                        Remove this address
-                      </button>
+                {addresses.map((a, idx)=>(
+                  <div key={idx} style={{border:"1px solid #e5e7eb", borderRadius:12, background:"#fafafa", padding:12}}>
+                    <div style={{fontWeight:700, marginBottom:8}}>
+                      {idx===0 ? "Current address" : `Previous address ${idx}`}
                     </div>
-                  )}
-                </div>
-              ))}
-              {addresses.length<3 && sumYears(addresses)<6 && (
-                <div>
-                  <button onClick={addAddress}
-                          style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db", background:"#fff", cursor:"pointer"}}>
-                    + Add previous address
-                  </button>
-                  <div style={{fontSize:12, marginTop:6, color:"#6b7280"}}>Provide up to 6 years of address history (max 3 addresses).</div>
-                </div>
-              )}
-
-              {notice && <div style={{fontSize:12, color:"#065f46"}}>{notice}</div>}
-            </div>
-          )}
-
-          {tab==="budget" && (
-            <div style={{display:"grid", gap:16}}>
-              <div style={{fontWeight:800}}>Income</div>
-              {incomes.map((r, i)=>(
-                <div key={i} style={{display:"grid", gridTemplateColumns:"1fr 160px", gap:10}}>
-                  <input value={r.label} onChange={e=>setIncomes(prev=>prev.map((x,idx)=>idx===i?{...x,label:e.target.value}:x))}
-                         style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
-                  <input type="number" value={r.amount} onChange={e=>setIncomes(prev=>prev.map((x,idx)=>idx===i?{...x,amount:Number(e.target.value||0)}:x))}
-                         style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
-                </div>
-              ))}
-              <button onClick={()=>setIncomes(p=>[...p,{label:"Other",amount:0}])}
-                      style={{padding:"8px 12px", borderRadius:8, border:"1px solid #d1d5db", background:"#fff", cursor:"pointer"}}>+ Add income</button>
-
-              <div style={{fontWeight:800, marginTop:8}}>Expenditure</div>
-              {expenses.map((r, i)=>(
-                <div key={i} style={{display:"grid", gridTemplateColumns:"1fr 160px", gap:10}}>
-                  <input value={r.label} onChange={e=>setExpenses(prev=>prev.map((x,idx)=>idx===i?{...x,label:e.target.value}:x))}
-                         style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
-                  <input type="number" value={r.amount} onChange={e=>setExpenses(prev=>prev.map((x,idx)=>idx===i?{...x,amount:Number(e.target.value||0)}:x))}
-                         style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
-                </div>
-              ))}
-              <button onClick={()=>setExpenses(p=>[...p,{label:"Other",amount:0}])}
-                      style={{padding:"8px 12px", borderRadius:8, border:"1px solid #d1d5db", background:"#fff", cursor:"pointer"}}>+ Add expense</button>
-
-              <div style={{display:"flex", gap:16, marginTop:8}}>
-                <div><strong>Total income:</strong> £{totalIncome.toFixed(2)}</div>
-                <div><strong>Total expenditure:</strong> £{totalExpense.toFixed(2)}</div>
-                <div><strong>Disposable income:</strong> £{disposable.toFixed(2)}</div>
+                    <div style={{display:"grid", gap:10, gridTemplateColumns:"1fr 1fr"}}>
+                      <label style={{display:"grid", gap:6}}>
+                        <span>Address line 1</span>
+                        <input value={a.line1} onChange={e=>setAddr(idx,{line1:e.target.value})}
+                               style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
+                      </label>
+                      <label style={{display:"grid", gap:6}}>
+                        <span>Address line 2</span>
+                        <input value={a.line2} onChange={e=>setAddr(idx,{line2:e.target.value})}
+                               style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
+                      </label>
+                      <label style={{display:"grid", gap:6}}>
+                        <span>City</span>
+                        <input value={a.city} onChange={e=>setAddr(idx,{city:e.target.value})}
+                               style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
+                      </label>
+                      <label style={{display:"grid", gap:6}}>
+                        <span>Postcode</span>
+                        <input value={a.postcode} onChange={e=>setAddr(idx,{postcode:e.target.value.toUpperCase()})}
+                               placeholder="e.g. SW1A 1AA"
+                               style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
+                      </label>
+                      <label style={{display:"grid", gap:6}}>
+                        <span>Years at address</span>
+                        <input type="number" min={0} max={99} value={a.yearsAt}
+                               onChange={e=>setAddr(idx,{yearsAt: Math.max(0, Math.min(99, Number(e.target.value||0)))})}
+                               style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
+                      </label>
+                    </div>
+                    {idx>0 && (
+                      <div style={{marginTop:10}}>
+                        <button onClick={()=>removeAddress(idx)}
+                                style={{padding:"8px 12px", borderRadius:8, border:"1px solid #d1d5db", background:"#fff", cursor:"pointer"}}>
+                          Remove this address
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {addresses.length<3 && sumYears(addresses)<6 && (
+                  <div>
+                    <button onClick={addAddress}
+                            style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db", background:"#fff", cursor:"pointer"}}>
+                      + Add previous address
+                    </button>
+                    <div style={{fontSize:12, marginTop:6, color:"#6b7280"}}>Provide up to 6 years of address history (max 3 addresses).</div>
+                  </div>
+                )}
               </div>
-            </div>
-          )}
+            )}
 
-          {tab==="debts" && (
-            <div style={{display:"grid", gap:12}}>
-              <div style={{display:"grid", gridTemplateColumns:"1fr 140px 160px 200px", gap:10, fontWeight:800}}>
-                <div>Creditor</div>
-                <div>Amount (£)</div>
-                <div>Monthly Payment (£)</div>
-                <div>Account / Reference</div>
-              </div>
-              {debts.map((d, i)=>(
-                <div key={i} style={{display:"grid", gridTemplateColumns:"1fr 140px 160px 200px", gap:10}}>
-                  <input value={d.creditor} onChange={e=>setDebts(prev=>prev.map((x,idx)=>idx===i?{...x,creditor:e.target.value}:x))}
-                         style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
-                  <input type="number" value={d.amount} onChange={e=>setDebts(prev=>prev.map((x,idx)=>idx===i?{...x,amount:Number(e.target.value||0)}:x))}
-                         style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
-                  <input type="number" value={d.monthly} onChange={e=>setDebts(prev=>prev.map((x,idx)=>idx===i?{...x,monthly:Number(e.target.value||0)}:x))}
-                         style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
-                  <input value={d.account} onChange={e=>setDebts(prev=>prev.map((x,idx)=>idx===i?{...x,account:e.target.value}:x))}
-                         style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
+            {tab==="budget" && (
+              <div style={{display:"grid", gap:16}}>
+                <div style={{fontWeight:800}}>Income</div>
+                {incomes.map((r, i)=>(
+                  <div key={i} style={{display:"grid", gridTemplateColumns:"1fr 160px", gap:10}}>
+                    <input value={r.label} onChange={e=>setIncomes(prev=>prev.map((x,idx)=>idx===i?{...x,label:e.target.value}:x))}
+                           style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
+                    <input type="number" value={r.amount} onChange={e=>setIncomes(prev=>prev.map((x,idx)=>idx===i?{...x,amount:Number(e.target.value||0)}:x))}
+                           style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
+                  </div>
+                ))}
+                <button onClick={()=>setIncomes(p=>[...p,{label:"Other",amount:0}])}
+                        style={{padding:"8px 12px", borderRadius:8, border:"1px solid #d1d5db", background:"#fff", cursor:"pointer"}}>+ Add income</button>
+
+                <div style={{fontWeight:800, marginTop:8}}>Expenditure</div>
+                {expenses.map((r, i)=>(
+                  <div key={i} style={{display:"grid", gridTemplateColumns:"1fr 160px", gap:10}}>
+                    <input value={r.label} onChange={e=>setExpenses(prev=>prev.map((x,idx)=>idx===i?{...x,label:e.target.value}:x))}
+                           style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
+                    <input type="number" value={r.amount} onChange={e=>setExpenses(prev=>prev.map((x,idx)=>idx===i?{...x,amount:Number(e.target.value||0)}:x))}
+                           style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
+                  </div>
+                ))}
+                <button onClick={()=>setExpenses(p=>[...p,{label:"Other",amount:0}])}
+                        style={{padding:"8px 12px", borderRadius:8, border:"1px solid #d1d5db", background:"#fff", cursor:"pointer"}}>+ Add expense</button>
+
+                <div style={{display:"flex", gap:16, marginTop:8, flexWrap:"wrap"}}>
+                  <div><strong>Total income:</strong> £{totalIncome.toFixed(2)}</div>
+                  <div><strong>Total expenditure:</strong> £{totalExpense.toFixed(2)}</div>
+                  <div><strong>Disposable income:</strong> £{disposable.toFixed(2)}</div>
                 </div>
-              ))}
-              <div style={{marginTop:6, color:"#6b7280", fontSize:12}}>
-                You can add more later. Upload creditor letters via the chat uploader (📎).
               </div>
-            </div>
-          )}
+            )}
 
-          {tab==="docs" && (
-            <div style={{display:"grid", gap:10}}>
-              <div><strong>Documents</strong></div>
-              <div style={{color:"#6b7280"}}>{docsCount>0 ? `${docsCount} documents uploaded.` : "No documents uploaded."}</div>
-              <div style={{fontSize:12, color:"#6b7280"}}>Use the 📎 Upload docs button in the chat to attach files.</div>
-            </div>
-          )}
+            {tab==="debts" && (
+              <div style={{display:"grid", gap:12}}>
+                <div style={{display:"grid", gridTemplateColumns:"1fr 140px 160px 200px", gap:10, fontWeight:800}}>
+                  <div>Creditor</div>
+                  <div>Amount (£)</div>
+                  <div>Monthly Payment (£)</div>
+                  <div>Account / Reference</div>
+                </div>
+                {debts.map((d, i)=>(
+                  <div key={i} style={{display:"grid", gridTemplateColumns:"1fr 140px 160px 200px", gap:10}}>
+                    <input value={d.creditor} onChange={e=>setDebts(prev=>prev.map((x,idx)=>idx===i?{...x,creditor:e.target.value}:x))}
+                           style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
+                    <input type="number" value={d.amount} onChange={e=>setDebts(prev=>prev.map((x,idx)=>idx===i?{...x,amount:Number(e.target.value||0)}:x))}
+                           style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
+                    <input type="number" value={d.monthly} onChange={e=>setDebts(prev=>prev.map((x,idx)=>idx===i?{...x,monthly:Number(e.target.value||0)}:x))}
+                           style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
+                    <input value={d.account} onChange={e=>setDebts(prev=>prev.map((x,idx)=>idx===i?{...x,account:e.target.value}:x))}
+                           style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
+                  </div>
+                ))}
+                <div style={{marginTop:6, color:"#6b7280", fontSize:12}}>
+                  You can add more later. Upload creditor letters via the chat uploader (📎).
+                </div>
+              </div>
+            )}
+
+            {tab==="docs" && (
+              <div style={{display:"grid", gap:10}}>
+                <div><strong>Documents</strong></div>
+                <div style={{color:"#6b7280"}}>{docsCount>0 ? `${docsCount} documents uploaded.` : "No documents uploaded."}</div>
+                <div style={{fontSize:12, color:"#6b7280"}}>Use the 📎 Upload docs button in the chat to attach files.</div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-/* ====================== Chat UI (unchanged look) ====================== */
+function TaskList({tasks, onToggle}:{tasks:{id:string;label:string;done:boolean}[], onToggle:(id:string)=>void}) {
+  return (
+    <div style={{display:"grid", gap:8}}>
+      {tasks.map(t=>(
+        <button key={t.id} onClick={()=>onToggle(t.id)}
+          style={{
+            textAlign:"left",
+            padding:"8px 10px", borderRadius:8, border:"1px solid #e5e7eb", background:"#fff", cursor:"pointer",
+            display:"flex", alignItems:"center", gap:8
+          }}>
+          <span>{t.done ? "✅" : "⬜"}</span>
+          <span>{t.label}{t.done ? " - Completed" : ""}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* =============== Chat UI (unchanged) =============== */
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -623,9 +648,7 @@ export default function Home() {
       const reply = (data?.reply as string) || "Thanks — let’s continue.";
       if (data?.displayName) setDisplayName(data.displayName);
       setMessages(prev => [...prev, { sender:"bot", text: reply }]);
-      if (data?.openPortal) {
-        setShowAuth(true); // gate by auth, then portal
-      }
+      if (data?.openPortal) setShowAuth(true);
     } catch {
       setMessages(prev => [...prev, { sender:"bot", text:"⚠️ I couldn’t reach the server just now." }]);
     }
@@ -731,8 +754,8 @@ export default function Home() {
         </div>
       </main>
 
-      {/* Auth gate (first) */}
-      <AuthScreen
+      {/* FULL SCREEN AUTH (blocks chat) */}
+      <AuthFullScreen
         visible={showAuth && !loggedEmail}
         onClose={()=>setShowAuth(false)}
         onAuthed={(email, name) => {
@@ -743,8 +766,8 @@ export default function Home() {
         }}
       />
 
-      {/* Fullscreen portal only after auth */}
-      <PortalScreen
+      {/* FULL SCREEN PORTAL (after auth) */}
+      <PortalFullScreen
         visible={showPortal && !!loggedEmail}
         onClose={()=>setShowPortal(false)}
         displayName={displayName}
