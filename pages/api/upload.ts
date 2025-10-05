@@ -12,7 +12,13 @@ const supabase = createClient(
 type FileInfo = { filename: string; mimeType: string; encoding: string };
 
 function parseMultipart(req: NextApiRequest): Promise<{
-  buffer: Buffer; filename: string; mimeType: string; sessionId?: string;
+  buffer: Buffer;
+  filename: string;
+  mimeType: string;
+  sessionId?: string;
+  category?: string;
+  creditor?: string;
+  debt_ref?: string;
 }> {
   return new Promise(async (resolve, reject) => {
     const { default: Busboy } = await import("busboy");
@@ -22,6 +28,9 @@ function parseMultipart(req: NextApiRequest): Promise<{
     let filename = "upload.bin";
     let mimeType = "application/octet-stream";
     let sessionId: string | undefined;
+    let category: string | undefined;
+    let creditor: string | undefined;
+    let debt_ref: string | undefined;
 
     bb.on("file", (_name: string, file: NodeJS.ReadableStream, info: FileInfo) => {
       filename = info?.filename || filename;
@@ -32,13 +41,15 @@ function parseMultipart(req: NextApiRequest): Promise<{
 
     bb.on("field", (name: string, val: string) => {
       if (name === "sessionId") sessionId = val;
+      if (name === "category") category = val;
+      if (name === "creditor") creditor = val;
+      if (name === "debt_ref") debt_ref = val;
     });
 
     bb.on("error", (err: unknown) => reject(err));
-
     bb.on("finish", () => {
       const buffer = Buffer.concat(chunks);
-      resolve({ buffer, filename, mimeType, sessionId });
+      resolve({ buffer, filename, mimeType, sessionId, category, creditor, debt_ref });
     });
 
     req.pipe(bb);
@@ -49,7 +60,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
 
   try {
-    const { buffer, filename, mimeType, sessionId } = await parseMultipart(req);
+    const { buffer, filename, mimeType, sessionId, category, creditor, debt_ref } = await parseMultipart(req);
     if (!buffer?.length) return res.status(400).json({ ok:false, error:"No file received" });
 
     const safeSession = sessionId || "unknown";
@@ -68,13 +79,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const { data: pub } = supabase.storage.from("uploads").getPublicUrl(path);
     const downloadUrl = pub?.publicUrl || null;
 
-    // record in DB (for Documents tab)
+    // record in DB (for Documents tab & tasks)
     if (downloadUrl) {
-      await supabase.from("documents").insert([{
+      const row: any = {
         session_id: safeSession,
         file_name: filename,
-        file_url: downloadUrl
-      }]);
+        file_url: downloadUrl,
+      };
+      if (category) row.category = category;
+      if (creditor) row.creditor = creditor;
+      if (debt_ref) row.debt_ref = debt_ref;
+
+      await supabase.from("documents").insert([row]);
     }
 
     return res.status(200).json({

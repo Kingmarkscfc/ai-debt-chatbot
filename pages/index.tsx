@@ -123,22 +123,8 @@ function PortalPanel({
     debts: []
   });
 
-  // totals
-  const totalIncome = sumMoney(profile.incomes);
-  const totalExpense = sumMoney(profile.expenses);
-  const disposable = totalIncome - totalExpense;
-
-  const tasks = [
-    { id:"name",    label:"Add your full name",                done: !!profile.full_name.trim() },
-    { id:"phone",   label:"Add a contact phone",               done: !!profile.phone.trim() },
-    { id:"addr",    label:"Add your address & postcode",       done: !!(profile.address1.trim() && profile.postcode.trim()) },
-    { id:"income",  label:"Enter at least one income",         done: totalIncome > 0 },
-    { id:"expense", label:"Enter at least one monthly expense",done: totalExpense > 0 },
-  ];
-  const tasksOutstanding = tasks.filter(t => !t.done).length;
-
   // docs list for this session
-  const [docs, setDocs] = useState<{id:string;file_name:string;file_url:string;uploaded_at:string}[]>([]);
+  const [docs, setDocs] = useState<{id:string;file_name:string;file_url:string;uploaded_at:string;category?:string;creditor?:string;debt_ref?:string}[]>([]);
   async function loadDocs() {
     try {
       const r = await fetch(`/api/portal/documents?sessionId=${encodeURIComponent(sessionId)}`);
@@ -147,17 +133,71 @@ function PortalPanel({
     } catch { /* ignore */ }
   }
 
-  // prevent background scroll when visible
+  // computed task checks
+  const totalIncome = sumMoney(profile.incomes);
+  const totalExpense = sumMoney(profile.expenses);
+  const disposable = totalIncome - totalExpense;
+
+  const hasBankStatement = docs.some(d => (d.category === "bank_statement") || /statement/i.test(d.file_name));
+  const hasPayslip      = docs.some(d => (d.category === "payslip")       || /payslip|sa302/i.test(d.file_name));
+  const hasCredLetter   = docs.some(d => (d.category === "creditor_letter")|| /creditor|letter/i.test(d.file_name));
+
+  const tasks = [
+    { id:"name",    label:"Add your full name",                  done: !!profile.full_name.trim() },
+    { id:"phone",   label:"Add a contact phone",                 done: !!profile.phone.trim() },
+    { id:"addr",    label:"Add your address & postcode",         done: !!(profile.address1.trim() && profile.postcode.trim()) },
+    { id:"income",  label:"Enter at least one income",           done: totalIncome > 0 },
+    { id:"expense", label:"Enter at least one monthly expense",  done: totalExpense > 0 },
+    { id:"bank",    label:"Upload 1 month bank statements",      done: hasBankStatement },
+    { id:"payslip", label:"Upload 1 month payslip",              done: hasPayslip },
+    { id:"letters", label:"Upload creditor letters",             done: hasCredLetter },
+  ];
+  const tasksOutstanding = tasks.filter(t => !t.done).length;
+
+  // prevent background scroll when visible + auto-load saved email profile
   useEffect(() => {
-    if (visible) {
-      setNotice("");
-      setMode("register");
-      setTab("details");
-      const prev = document.body.style.overflow;
-      document.body.style.overflow = "hidden";
-      return () => { document.body.style.overflow = prev; };
-    }
-  }, [visible]);
+    if (!visible) return;
+    setNotice("");
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    const savedEmail = typeof window !== "undefined" ? localStorage.getItem("portal_email") : null;
+    (async () => {
+      if (savedEmail) {
+        setEmail(savedEmail);
+        // try load existing profile; if found, jump to profile
+        try {
+          const r = await fetch(`/api/portal/profile?email=${encodeURIComponent(savedEmail)}`);
+          const j = await r.json();
+          if (j?.ok) {
+            setClientRef(j.clientRef || null);
+            if (j.profile) {
+              setProfile({
+                full_name: j.profile.full_name || "",
+                phone: j.profile.phone || "",
+                address1: j.profile.address1 || "",
+                address2: j.profile.address2 || "",
+                city: j.profile.city || "",
+                postcode: j.profile.postcode || "",
+                incomes: Array.isArray(j.profile.incomes) ? j.profile.incomes : [],
+                expenses: Array.isArray(j.profile.expenses) ? j.profile.expenses : [],
+                debts: Array.isArray(j.profile.debts) ? j.profile.debts : []
+              });
+              if (j.profile.full_name) onDisplayName(j.profile.full_name);
+              setMode("profile");
+            } else {
+              setMode("register");
+            }
+          }
+        } catch { /* ignore */ }
+        await loadDocs();
+      } else {
+        setMode("register");
+      }
+    })();
+
+    return () => { document.body.style.overflow = prev; };
+  }, [visible]); // eslint-disable-line
 
   // Esc to close
   useEffect(() => {
@@ -191,8 +231,10 @@ function PortalPanel({
           });
           if (j.profile.full_name) onDisplayName(j.profile.full_name);
         }
+        return !!j.clientRef;
       }
     } catch { /* ignore */ }
+    return false;
   };
 
   const saveProfile = async (quiet = false) => {
@@ -230,6 +272,8 @@ function PortalPanel({
         setNotice("Portal created — you are logged in.");
         onDisplayName(j?.displayName);
         setClientRef(j?.clientRef || null);
+        localStorage.setItem("portal_email", em);
+        if (j?.clientRef) localStorage.setItem("portal_clientRef", String(j.clientRef));
         setMode("profile");
         await saveProfile(true);
         await loadProfile(em);
@@ -250,6 +294,8 @@ function PortalPanel({
         setNotice("Logged in.");
         onDisplayName(j?.displayName || undefined);
         setClientRef(j?.clientRef || null);
+        localStorage.setItem("portal_email", em);
+        if (j?.clientRef) localStorage.setItem("portal_clientRef", String(j.clientRef));
         setMode("profile");
         await loadProfile(em);
         await loadDocs();
@@ -274,10 +320,13 @@ function PortalPanel({
     setClientRef(null);
     setTab("details");
     setPin(""); setPin2("");
-    // keep email so they can log back in quicker
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("portal_email");
+      localStorage.removeItem("portal_clientRef");
+    }
   };
 
-  // docs tab upload
+  // Docs tab: generic upload
   const docsInputRef = useRef<HTMLInputElement>(null);
   const [docsUploading, setDocsUploading] = useState(false);
   const handleDocsSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -293,7 +342,36 @@ function PortalPanel({
     finally { setDocsUploading(false); if (docsInputRef.current) docsInputRef.current.value=""; }
   };
 
-  const headerTitle = clientRef ? `Client #${clientRef}${profile.full_name ? " — " + profile.full_name : ""}` : "Client Portal";
+  // Debts tab: creditor letter upload (tagged)
+  const creditorInputRef = useRef<HTMLInputElement>(null);
+  const [pendingCreditorMeta, setPendingCreditorMeta] = useState<{creditor?:string; debtRef?:string} | null>(null);
+  const handleCreditorUploadClick = (row: DebtRow) => {
+    setPendingCreditorMeta({ creditor: row.creditor, debtRef: row.accountRef });
+    creditorInputRef.current?.click();
+  };
+  const handleCreditorFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    setDocsUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("sessionId", sessionId);
+      fd.append("category", "creditor_letter");
+      if (pendingCreditorMeta?.creditor) fd.append("creditor", pendingCreditorMeta.creditor);
+      if (pendingCreditorMeta?.debtRef)  fd.append("debt_ref", pendingCreditorMeta.debtRef);
+      const r = await fetch("/api/upload", { method: "POST", body: fd });
+      const j = await r.json();
+      if (!j?.ok) setNotice(`Upload failed — ${j?.details || j?.error}`);
+      else { setNotice("Creditor letter uploaded."); await loadDocs(); }
+    } catch { setNotice("Upload failed — network error."); }
+    finally {
+      setDocsUploading(false);
+      if (creditorInputRef.current) creditorInputRef.current.value="";
+      setPendingCreditorMeta(null);
+    }
+  };
+
+  const headerTitle = clientRef ? `Client Reference #${clientRef}${profile.full_name ? " — " + profile.full_name : ""}` : "Client Portal";
 
   return (
     <div
@@ -408,6 +486,14 @@ function PortalPanel({
                   {tasksOutstanding ? `${tasksOutstanding} to do` : "All done"}
                 </div>
               </div>
+              <ul style={{listStyle:"none", margin:0, padding:0, display:"grid", gap:6}}>
+                {tasks.map(t => (
+                  <li key={t.id} style={{display:"flex", alignItems:"center", gap:8, opacity: t.done? .7 : 1}}>
+                    <span>{t.done ? "✅" : "⬜"}</span>
+                    <span>{t.label}</span>
+                  </li>
+                ))}
+              </ul>
 
               {/* Tabs content */}
               {tab === "details" && (
@@ -472,14 +558,22 @@ function PortalPanel({
               {tab === "debts" && (
                 <div style={{display:"grid", gap:12}}>
                   <div style={{fontWeight:700}}>Debts</div>
+                  <input
+                    type="file"
+                    hidden
+                    ref={creditorInputRef}
+                    onChange={handleCreditorFileSelected}
+                  />
                   {profile.debts.map(row=>(
-                    <div key={row.id} style={{display:"grid", gridTemplateColumns:"1fr 160px 1fr 40px", gap:8}}>
+                    <div key={row.id} style={{display:"grid", gridTemplateColumns:"1fr 140px 1fr 100px 40px", gap:8}}>
                       <input placeholder="Creditor" value={row.creditor} onChange={e=>setProfile(p=>({...p, debts:p.debts.map(r=>r.id===row.id?{...r, creditor:e.target.value}:r)}))}
                         style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
                       <input placeholder="Balance (£)" value={row.balance} onChange={e=>setProfile(p=>({...p, debts:p.debts.map(r=>r.id===row.id?{...r, balance:e.target.value}:r)}))}
                         inputMode="decimal" style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
                       <input placeholder="Account / Ref" value={row.accountRef} onChange={e=>setProfile(p=>({...p, debts:p.debts.map(r=>r.id===row.id?{...r, accountRef:e.target.value}:r)}))}
                         style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb"}} />
+                      <button onClick={()=>handleCreditorUploadClick(row)} disabled={docsUploading}
+                        style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb"}}>📎 Letter</button>
                       <button onClick={()=>setProfile(p=>({...p, debts:p.debts.filter(r=>r.id!==row.id)}))} style={{padding:"8px 10px", borderRadius:8, border:"1px solid #374151", background:"transparent", color:"#e5e7eb"}}>✕</button>
                     </div>
                   ))}
@@ -502,7 +596,7 @@ function PortalPanel({
                     </div>
                   </div>
                   <div style={{fontSize:12, opacity:.8}}>
-                    • ID • Bank Statements (3m) • Payslips (3m / 12w) or SA302 • UC statements • Car finance docs • Creditor letters.
+                    • ID • Bank Statements (1m) • Payslip (1m) or SA302 • UC statements • Car finance docs • Creditor letters.
                   </div>
 
                   <div style={{display:"grid", gap:8}}>
@@ -511,6 +605,7 @@ function PortalPanel({
                         style={{display:"inline-flex", alignItems:"center", gap:8, padding:"6px 10px", borderRadius:999, border:"1px solid #374151", background:"#0b1220", color:"#e5e7eb", textDecoration:"none"}}>
                         <span>{fileEmoji(d.file_name)}</span>
                         <span style={{fontWeight:600}}>{prettyFilename(d.file_name)}</span>
+                        {d.creditor && <span style={{opacity:.8}}>({d.creditor})</span>}
                         <span style={{opacity:.7}}>{new Date(d.uploaded_at).toLocaleString()}</span>
                         <span style={{textDecoration:"underline"}}>Download ⬇️</span>
                       </a>
