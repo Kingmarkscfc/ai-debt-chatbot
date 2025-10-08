@@ -91,12 +91,12 @@ function emojiReply(s: string) {
 // “Empathy ping”: short supportive sentence if user surfaces pain points.
 const EMPATHY_CUES: [RegExp, string][] = [
   [/bailiff|bailiffs|enforcement/i, "I know bailiff contact is stressful — let’s get protections in place quickly."],
-  (/ccj|county court|default/i, "Court or default letters can be scary — we’ll address that in your plan."),
-  (/miss(ed)? payments?|arrears|late fees?/i, "Missed payments happen; we’ll focus on stabilising things now."),
-  (/rent|council tax|water|gas|electric/i, "We’ll make sure essentials like housing and utilities are prioritised."),
-  (/gambl|crypto|stock/i, "Thanks for being honest — we’ll keep things practical and judgement-free."),
-  (/anxious|anxiety|depress|suicid/i, "If you’re feeling overwhelmed, you’re not alone — we’ll take this one step at a time.")
-].map((x) => (Array.isArray(x) ? (x as any) : [x, ""])) as any;
+  [/ccj|county court|default/i, "Court or default letters can be scary — we’ll address that in your plan."],
+  [/miss(ed)? payments?|arrears|late fees?/i, "Missed payments happen; we’ll focus on stabilising things now."],
+  [/rent|council tax|water|gas|electric/i, "We’ll make sure essentials like housing and utilities are prioritised."],
+  [/gambl|crypto|stock/i, "Thanks for being honest — we’ll keep things practical and judgement-free."],
+  [/anxious|anxiety|depress|suicid/i, "If you’re feeling overwhelmed, you’re not alone — we’ll take this one step at a time."]
+];
 
 function empathyLine(msg: string): string | null {
   const m = msg.toLowerCase();
