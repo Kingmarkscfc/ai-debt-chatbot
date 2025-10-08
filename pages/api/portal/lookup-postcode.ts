@@ -1,51 +1,40 @@
-// pages/api/portal/lookup-postcode.ts
-import { createClient } from "@supabase/supabase-js"; // not used, but kept consistent for future auditing
-const GETADDRESS_API_KEY = process.env.GETADDRESS_API_KEY || "";
+// pages/api/address-lookup.ts
+// Proxy endpoint for UK postcode address lookup (getAddress.io if configured)
 
 export default async function handler(req: any, res: any) {
-  if (req.method !== "POST") return res.status(405).end();
-
   try {
-    const { postcode } = req.body || {};
-    const pc = String(postcode || "").trim();
+    const { postcode } = req.query || {};
+    const pc = String(postcode || "").trim().toUpperCase();
 
-    if (!pc) return res.status(400).json({ ok: false, error: "Missing postcode" });
-    if (!GETADDRESS_API_KEY) {
-      return res.status(400).json({
-        ok: false,
-        error: "Address lookup is not configured. Set GETADDRESS_API_KEY in Vercel.",
-      });
+    const ukRe = /^[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$/i;
+    if (!pc || !ukRe.test(pc)) {
+      return res.status(400).json({ ok:false, error:"Invalid UK postcode." });
     }
 
-    // getAddress.io
-    const url = `https://api.getaddress.io/find/${encodeURIComponent(pc)}?expand=true&api-key=${GETADDRESS_API_KEY}`;
+    const key = process.env.GETADDRESS_API_KEY;
+    if (!key) {
+      return res.status(200).json({ ok:false, error:"Address lookup not configured." });
+    }
+
+    // getAddress.io – https://getaddress.io
+    const url = `https://api.getaddress.io/find/${encodeURIComponent(pc)}?expand=true&api-key=${encodeURIComponent(key)}`;
     const r = await fetch(url);
     if (!r.ok) {
-      const txt = await r.text();
-      return res.status(r.status).json({ ok: false, error: `Lookup failed: ${txt}` });
+      const txt = await r.text().catch(()=>String(r.status));
+      return res.status(200).json({ ok:false, error:`Lookup failed (${r.status}): ${txt}` });
     }
-    const j = await r.json();
+    const data: any = await r.json();
 
-    // Shape addresses into a small list of suggestions for the UI
-    const suggestions =
-      (j?.addresses || []).map((a: any) => {
-        // expand=true yields { line_1,line_2,line_3,town_or_city,county,postcode }
-        const line1 = a?.line_1 || "";
-        const line2 = a?.line_2 || a?.line_3 || "";
-        const city = a?.town_or_city || "";
-        const label = [line1, line2, city, j?.postcode || a?.postcode || pc].filter(Boolean).join(", ");
-        return {
-          label,
-          line1,
-          line2,
-          city,
-          postcode: j?.postcode || a?.postcode || pc,
-        };
-      }) || [];
+    const addresses = Array.isArray(data?.addresses) ? data.addresses.map((a: any) => {
+      // Normalise a few common fields
+      const line1 = a?.line_1 || a?.thoroughfare || a?.building_number || "";
+      const line2 = a?.line_2 || a?.sub_building_name || a?.dependent_locality || "";
+      const city  = a?.town_or_city || a?.post_town || a?.locality || "";
+      return { line1, line2, city, postcode: data?.postcode || pc };
+    }) : [];
 
-    return res.status(200).json({ ok: true, suggestions });
+    return res.status(200).json({ ok:true, addresses });
   } catch (e: any) {
-    console.error("lookup-postcode error:", e?.message || e);
-    return res.status(500).json({ ok: false, error: "Server error during postcode lookup" });
+    return res.status(200).json({ ok:false, error:String(e?.message || e) });
   }
 }

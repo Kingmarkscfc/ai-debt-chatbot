@@ -1,0 +1,67 @@
+[
+  {
+    "q": "Will this affect my credit rating?",
+    "a": "Changing contractual agreements (and insolvency options) can affect your credit file for a time, but the aim is to stabilise things and help you move forward.",
+    "keywords": ["credit score","credit rating","credit file","affect","impact"]
+  },
+  {
+    "q": "Can I get a loan?",
+    "a": "We don’t provide loans; our role is to help you reduce and clear debt rather than add more credit.",
+    "keywords": ["loan","borrow"]
+  },
+  {
+    "q": "IVA vs DMP benefits",
+    "a": "An IVA can stop/freeze interest and charges, protect assets, and often write off a portion of debt; a DMP is flexible but usually repays the full balance over time.",
+    "keywords": ["iva","dmp","compare","benefits","write off"]
+  },
+  {
+    "q": "Will I lose my house?",
+    "a": "In an IVA or DMP you keep paying your rent/mortgage as normal and your home isn’t taken, provided payments are maintained.",
+    "keywords": ["house","home","property","lose"]
+  },
+  {
+    "q": "Can I move address?",
+    "a": "Yes — moving address is fine during a DMP or IVA; just keep us updated.",
+    "keywords": ["move address","moving"]
+  },
+  {
+    "q": "Will I lose my car?",
+    "a": "Most people keep their car. If repayments are very high, a more affordable vehicle may be discussed.",
+    "keywords": ["car","vehicle","keep car","finance"]
+  },
+  {
+    "q": "What happens next?",
+    "a": "You upload documents, we review your case, and come back with tailored next steps.",
+    "keywords": ["what next","next steps","process"]
+  },
+  {
+    "q": "Can I still use my cards?",
+    "a": "On a plan you typically stop using credit cards to avoid new borrowing while creditors review proposals.",
+    "keywords": ["credit card","use cards"]
+  },
+  {
+    "q": "Can I get a mortgage?",
+    "a": "You can apply anytime, but acceptance is more likely after your plan completes.",
+    "keywords": ["mortgage"]
+  },
+  {
+    "q": "Will this affect my benefits?",
+    "a": "Your normal benefit payments themselves aren’t reduced by starting a plan. We’ll also check for benefit deductions that can be included.",
+    "keywords": ["benefits","universal credit","uc"]
+  },
+  {
+    "q": "Are you regulated / real?",
+    "a": "Yes, this service is regulated and your information is handled securely. We can share company details or reviews on request.",
+    "keywords": ["regulated","real company","trustpilot"]
+  },
+  {
+    "q": "Can you stop bailiff action?",
+    "a": "An IVA provides legal protection once approved. Before approval (or on a DMP), contact may continue — we’ll advise the safest steps.",
+    "keywords": ["bailiff","enforcement"]
+  },
+  {
+    "q": "What is a CCJ / default?",
+    "a": "A CCJ is a court order stating money is owed; a default marks missed contractual payments. We’ll work to prevent further action and stabilise your situation.",
+    "keywords": ["ccj","default","court"]
+  }
+]

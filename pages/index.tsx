@@ -1,7 +1,5 @@
-// pages/index.tsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
-// IMPORTANT: keep this path pointing to your bundled PNG (not /public)
 import avatarPhoto from "../assets/advisor-avatar-human.png";
 
 /* =============== Types & helpers =============== */
@@ -75,6 +73,124 @@ function Avatar({ size = 40 }: { size?: number }) {
   );
 }
 
+/* ------------ Address card (with UK postcode lookup) ------------ */
+type AddressCardProps = {
+  idx: number;
+  value: AddressEntry;
+  onChange: (patch: Partial<AddressEntry>) => void;
+  onRemove?: () => void;
+  removable?: boolean;
+};
+function AddressCard({ idx, value, onChange, onRemove, removable }: AddressCardProps) {
+  const [searching, setSearching] = useState(false);
+  const [options, setOptions] = useState<AddressEntry[]>([]);
+  const [searchNotice, setSearchNotice] = useState<string>("");
+
+  const ukPostcode = (s: string) => /^[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$/i.test(s.trim());
+
+  const doLookup = async () => {
+    const pc = value.postcode.trim().toUpperCase();
+    if (!ukPostcode(pc)) { setSearchNotice("Please enter a valid UK postcode."); return; }
+    setSearching(true); setSearchNotice("");
+    try {
+      const r = await fetch(`/api/address-lookup?postcode=${encodeURIComponent(pc)}`);
+      const j = await r.json();
+      if (!j?.ok || !Array.isArray(j?.addresses) || j.addresses.length === 0) {
+        setSearchNotice(j?.error || "No addresses found for that postcode.");
+        setOptions([]);
+      } else {
+        setOptions(j.addresses);
+        setSearchNotice(`${j.addresses.length} address${j.addresses.length>1?"es":""} found.`);
+      }
+    } catch {
+      setSearchNotice("Address search unavailable right now.");
+      setOptions([]);
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const applyOption = (i: number) => {
+    const pick = options[i];
+    if (!pick) return;
+    onChange({ line1: pick.line1, line2: pick.line2, city: pick.city, postcode: pick.postcode });
+  };
+
+  return (
+    <div style={{border:"1px solid #e5e7eb", borderRadius:12, background:"#fafafa", padding:12, marginBottom:12}}>
+      <div style={{fontWeight:700, marginBottom:8}}>
+        {idx===0 ? "Current address" : `Previous address ${idx}`}
+      </div>
+
+      <div style={{display:"grid", gap:10, gridTemplateColumns:"1fr 1fr"}}>
+        <label style={{display:"grid", gap:6}}>
+          <span>Address line 1</span>
+          <input value={value.line1} onChange={e=>onChange({line1:e.target.value})}
+                 style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
+        </label>
+        <label style={{display:"grid", gap:6}}>
+          <span>Address line 2</span>
+          <input value={value.line2} onChange={e=>onChange({line2:e.target.value})}
+                 style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
+        </label>
+
+        {/* City then Postcode (postcode sits underneath city on small screens naturally) */}
+        <label style={{display:"grid", gap:6}}>
+          <span>City</span>
+          <input value={value.city} onChange={e=>onChange({city:e.target.value})}
+                 style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
+        </label>
+        <label style={{display:"grid", gap:6}}>
+          <span>Postcode</span>
+          <div style={{display:"flex", gap:8}}>
+            <input value={value.postcode} onChange={e=>onChange({postcode:e.target.value.toUpperCase()})}
+                   placeholder="e.g. SW1A 1AA"
+                   style={{flex:1, padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
+            <button type="button" onClick={doLookup}
+                    style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db", background:"#fff", cursor:"pointer"}} disabled={searching}>
+              {searching ? "Searching…" : "Find"}
+            </button>
+          </div>
+        </label>
+
+        <label style={{display:"grid", gap:6}}>
+          <span>Years at address</span>
+          <input type="number" min={0} max={99} value={value.yearsAt}
+                 onChange={e=>onChange({yearsAt: Math.max(0, Math.min(99, Number(e.target.value||0)))})}
+                 style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
+        </label>
+      </div>
+
+      {/* Suggestions dropdown (full-width) */}
+      {options.length > 0 && (
+        <div style={{display:"grid", gap:6, marginTop:10}}>
+          <span style={{fontSize:12, color:"#6b7280"}}>Select your address</span>
+          <select onChange={e=>applyOption(Number(e.target.value))}
+                  style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}}>
+            <option value="">— Choose an address —</option>
+            {options.map((o, i)=>(
+              <option key={i} value={i}>
+                {`${o.line1}${o.line2?`, ${o.line2}`:""}, ${o.city} ${o.postcode}`}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {searchNotice && <div style={{marginTop:8, fontSize:12, color:"#6b7280"}}>{searchNotice}</div>}
+
+      {removable && (
+        <div style={{marginTop:10}}>
+          <button onClick={onRemove}
+                  style={{padding:"8px 12px", borderRadius:8, border:"1px solid #d1d5db", background:"#fff", cursor:"pointer"}}>
+            Remove this address
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* =============== FULL-SCREEN AUTH =============== */
 function AuthFullScreen({
   visible, onClose, onAuthed
@@ -87,10 +203,9 @@ function AuthFullScreen({
   const [notice, setNotice] = useState("");
 
   useEffect(()=>{ if (visible) setNotice(""); },[visible]);
-  const clampPin = (v: string) => v.replace(/\D/g,"").slice(0,4);
 
   const handleRegister = async () => {
-    const p = clampPin(pin), p2 = clampPin(pin2);
+    const p = pin.replace(/\D/g,"").slice(0,4), p2 = pin2.replace(/\D/g,"").slice(0,4);
     if (!email.includes("@")) return setNotice("Enter a valid email.");
     if (!/^\d{4}$/.test(p)) return setNotice("PIN must be 4 digits.");
     if (p !== p2) return setNotice("PINs do not match.");
@@ -106,7 +221,7 @@ function AuthFullScreen({
     } catch { setNotice("Network error."); }
   };
   const handleLogin = async () => {
-    const p = clampPin(pin);
+    const p = pin.replace(/\D/g,"").slice(0,4);
     if (!email.includes("@")) return setNotice("Enter a valid email.");
     if (!/^\d{4}$/.test(p)) return setNotice("PIN must be 4 digits.");
     try {
@@ -285,7 +400,6 @@ function PortalFullScreen({
     { id:"payslip1m", label:"1 month payslip", done:false },
     { id:"letters", label:"Upload creditor letters", done:false },
   ]);
-  const totalOutstanding = tasks.filter(t=>!t.done).length;
   const toggleTask = (id: string) => setTasks(prev => prev.map(t => t.id===id ? {...t, done:!t.done} : t));
 
   const [docsCount] = useState(0);
@@ -436,50 +550,16 @@ function PortalFullScreen({
                 </div>
 
                 {addresses.map((a, idx)=>(
-                  <div key={idx} style={{border:"1px solid #e5e7eb", borderRadius:12, background:"#fafafa", padding:12}}>
-                    <div style={{fontWeight:700, marginBottom:8}}>
-                      {idx===0 ? "Current address" : `Previous address ${idx}`}
-                    </div>
-                    <div style={{display:"grid", gap:10, gridTemplateColumns:"1fr 1fr"}}>
-                      <label style={{display:"grid", gap:6}}>
-                        <span>Address line 1</span>
-                        <input value={a.line1} onChange={e=>setAddr(idx,{line1:e.target.value})}
-                               style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
-                      </label>
-                      <label style={{display:"grid", gap:6}}>
-                        <span>Address line 2</span>
-                        <input value={a.line2} onChange={e=>setAddr(idx,{line2:e.target.value})}
-                               style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
-                      </label>
-                      <label style={{display:"grid", gap:6}}>
-                        <span>City</span>
-                        <input value={a.city} onChange={e=>setAddr(idx,{city:e.target.value})}
-                               style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
-                      </label>
-                      <label style={{display:"grid", gap:6}}>
-                        <span>Postcode</span>
-                        <input value={a.postcode} onChange={e=>setAddr(idx,{postcode:e.target.value.toUpperCase()})}
-                               placeholder="e.g. SW1A 1AA"
-                               style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
-                      </label>
-                      <label style={{display:"grid", gap:6}}>
-                        <span>Years at address</span>
-                        <input type="number" min={0} max={99} value={a.yearsAt}
-                               onChange={e=>setAddr(idx,{yearsAt: Math.max(0, Math.min(99, Number(e.target.value||0)))})}
-                               style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db"}} />
-                      </label>
-                    </div>
-                    {idx>0 && (
-                      <div style={{marginTop:10}}>
-                        <button onClick={()=>removeAddress(idx)}
-                                style={{padding:"8px 12px", borderRadius:8, border:"1px solid #d1d5db", background:"#fff", cursor:"pointer"}}>
-                          Remove this address
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                  <AddressCard
+                    key={idx}
+                    idx={idx}
+                    value={a}
+                    onChange={(patch)=>setAddr(idx, patch)}
+                    onRemove={idx>0 ? ()=>removeAddress(idx) : undefined}
+                    removable={idx>0}
+                  />
                 ))}
-                {addresses.length<3 && sumYears(addresses)<6 && (
+                {addresses.length<3 && addresses.reduce((s,x)=>s+(+x.yearsAt||0),0) < 6 && (
                   <div>
                     <button onClick={addAddress}
                             style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db", background:"#fff", cursor:"pointer"}}>
@@ -554,7 +634,7 @@ function PortalFullScreen({
             {tab==="docs" && (
               <div style={{display:"grid", gap:10}}>
                 <div><strong>Documents</strong></div>
-                <div style={{color:"#6b7280"}}>{docsCount>0 ? `${docsCount} documents uploaded.` : "No documents uploaded."}</div>
+                <div style={{color:"#6b7280"}}>No documents uploaded.</div>
                 <div style={{fontSize:12, color:"#6b7280"}}>Use the 📎 Upload docs button in the chat to attach files.</div>
               </div>
             )}
