@@ -3,38 +3,53 @@
     {
       "id": 0,
       "prompt": "Great, I look forward to helping you clear your debts. Can you let me know who I’m speaking to?",
-      "keywords": ["name", "i am", "i'm", "im", "my name is", "it's", "its", "call me", "mark", "mr", "mrs", "ms"]
+      "keywords": ["name", "i am", "i'm", "im", "my name is", "it's", "its", "call me", "mr", "mrs", "ms", "miss", "dr"]
     },
     {
       "id": 1,
       "prompt": "Just so I can point you in the right direction, what would you say your main concern is with the debts?",
-      "keywords": ["bailiff", "bailiffs", "default", "ccj", "missed", "late", "interest", "charges", "arrears", "rent", "council", "gas", "electric", "water", "card", "loan", "overdraft", "catalogue", "finance", "curious", "better deal"]
+      "keywords": [
+        "bailiff", "bailiffs", "default", "ccj", "missed", "late", "arrears",
+        "interest", "charges", "fees", "rent", "council", "gas", "electric", "water",
+        "credit card", "card", "loan", "loans", "overdraft", "catalogue", "finance",
+        "repayment", "payments", "afford", "can't pay", "struggling", "pressure", "stress"
+      ]
     },
     {
       "id": 2,
-      "prompt": "Let’s set up your secure Client Portal so you can add details, upload documents, and check progress. Shall I open it now?",
-      "keywords": ["yes", "ok", "okay", "sure", "go ahead", "open", "start", "portal", "set up"],
-      "openPortal": true
+      "prompt": "Thanks — that helps. Roughly how much do you pay towards all debts each month, and what would feel affordable for you?",
+      "keywords": ["pay", "payment", "repay", "per month", "monthly", "amount", "£", "gbp", "afford", "affordable", "budget"]
     },
     {
       "id": 3,
-      "prompt": "While you’re in the portal, I’ll stay here to guide you. Once you’ve saved your details, just say “done” and we’ll continue.",
-      "keywords": ["done", "saved", "submitted", "uploaded", "finished", "complete"]
+      "prompt": "Understood. I’ll summarise options shortly. First, is there anything urgent like enforcement or court letters we should know about?",
+      "keywords": ["bailiff", "bailiffs", "enforcement", "ccj", "default", "court", "letter", "claim", "statutory", "threat", "warning", "urgent", "notice"]
     },
     {
       "id": 4,
-      "prompt": "Before we proceed, there’s no obligation to act on any advice today, and there are free sources of debt advice available at MoneyHelper. Shall we carry on?",
-      "keywords": ["yes", "carry on", "continue", "ok", "okay", "proceed"]
+      "prompt": "Let’s set up your secure Client Portal so you can add details, upload documents, and check progress. Shall I open it now?",
+      "keywords": ["yes", "ok", "okay", "sure", "go ahead", "open", "start", "portal", "set up", "proceed", "continue"],
+      "openPortal": true
     },
     {
       "id": 5,
+      "prompt": "While you’re in the portal, I’ll stay here to guide you. Once you’ve saved your details, just say “done” and we’ll continue.",
+      "keywords": ["done", "saved", "submitted", "uploaded", "finished", "complete", "completed"]
+    },
+    {
+      "id": 6,
+      "prompt": "Before we proceed, there’s no obligation to act on any advice today, and there are free sources of debt advice available at MoneyHelper. Shall we carry on?",
+      "keywords": ["yes", "carry on", "continue", "ok", "okay", "proceed", "go on"]
+    },
+    {
+      "id": 7,
       "prompt": "To assess the best solution and save you money each month, please upload documents: proof of ID; last 3 months’ bank statements; payslips (3 months or 12 weeks if weekly) if employed; last year’s tax return if self-employed; Universal Credit statements (12 months + latest full statement) if applicable; car finance docs if applicable; and any creditor letters or statements.",
       "keywords": ["uploaded", "id", "bank", "payslip", "sa302", "uc", "universal credit", "car", "finance", "letters", "statements", "docs", "documents"]
     },
     {
-      "id": 6,
+      "id": 8,
       "prompt": "Brilliant — our assessment team will now review your case and come back with next steps. You can check progress in your portal anytime. Is there anything else you’d like to ask before we wrap up?",
-      "keywords": ["no", "that’s all", "finish", "goodbye", "thanks", "thank you", "end"]
+      "keywords": ["no", "that’s all", "finish", "goodbye", "thanks", "thank you", "end", "done"]
     }
   ]
 }
