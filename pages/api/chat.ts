@@ -31,8 +31,8 @@ type Script = { steps: Step[] };
 let SCRIPT_STEPS: Step[] = [
   { prompt: "Great, I look forward to helping you clear your debts. Can I take your full name?" },
   { prompt: "Thanks. What’s your main concern with the debts right now (e.g., payment pressure, creditor contact, interest)?" },
-  { prompt: "Understood. I’ll set you up with a quick portal to gather details and documents. Ready to start?" },
-  { prompt: "Opening your secure portal now—this only takes a minute and helps us tailor a plan." },
+  { prompt: "I’ll set you up with a quick portal to gather details and documents. Ready to start?" },
+  { prompt: "Opening your secure portal now." }
 ];
 
 try {
@@ -58,7 +58,7 @@ const EMPATHY: Array<[RegExp, string]> = [
   [/ccj|county court|default/i, "Court or default letters can be scary — we’ll deal with those in your plan."],
   [/miss(ed)? payments?|arrears|late fees?/i, "Missed payments happen — we’ll focus on stabilising things now."],
   [/rent|council tax|water|gas|electric/i, "We’ll make sure essentials like housing and utilities are prioritised."],
-  [/gambl|crypto|stock/i, "Thanks for being honest — we’ll keep things practical and judgement-free."],
+  [/gambl|crypto|stock/i, "Thanks for being honest — we’ll keep things practical and judgement-free."]
 ];
 
 function pickEmpathy(u: string): string | null {
@@ -87,7 +87,6 @@ function matchFAQ(u: string): FAQ | null {
 function extractName(u: string) {
   const t = u.trim();
   if (t.length < 2) return null;
-  // two-word heuristic or contains hyphen/apostrophe
   if (/\b[a-z]+[ -'][a-z]+/i.test(t) || /\s/.test(t)) return t;
   return null;
 }
@@ -97,8 +96,6 @@ function mentionsDebtTypes(u: string): boolean {
 }
 
 function nextStepIndex(history: string[]) {
-  // We assume client passes chat bubble texts (bot + user).
-  // Count how many times *our* exact step prompts are present to infer progress.
   let count = 0;
   for (const h of history) if (SCRIPT_STEPS.some(s => s.prompt === h)) count++;
   return Math.min(count, Math.max(0, SCRIPT_STEPS.length - 1));
@@ -110,7 +107,7 @@ async function logTelemetry(sessionId: string, type: string, payload: any) {
     await supabase.from("chat_telemetry").insert({
       session_id: sessionId,
       event_type: type,
-      payload,
+      payload
     });
   } catch {
     /* swallow */
@@ -142,7 +139,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         reply: "Please type a message to begin.",
         sessionId,
         stepIndex: 0,
-        totalSteps: SCRIPT_STEPS.length,
+        totalSteps: SCRIPT_STEPS.length
       });
     }
 
@@ -151,13 +148,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     let openPortal = false;
     let displayName: string | undefined;
 
-    // ---- Respect script first; FAQs act as side-notes only when it's a question ----
     const faq = matchFAQ(userMessage);
     const empathy = pickEmpathy(userMessage);
     const sideNote = faq ? (empathy ? `${empathy} ${faq.a}` : faq.a) : "";
 
     if (stepIdx === 0) {
-      // We asked for a name
       const nm = extractName(userMessage);
       if (nm) {
         displayName = nm;
@@ -166,22 +161,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         reply = (sideNote ? sideNote + " " : "") + "Got it — may I take your full name so I can personalise things?";
       }
     } else if (stepIdx === 1) {
-      // We asked for the main concern
-      // If they list debt types (e.g., “credit cards and loans”), that's a valid answer — progress.
+      // Accept debt-type statements as valid answers (no FAQ hijack)
       if (mentionsDebtTypes(userMessage) || !isQuestion(userMessage)) {
         reply =
           (empathy ? empathy + " " : "") +
           (sideNote ? sideNote + " " : "") +
           (SCRIPT_STEPS[2]?.prompt || "I’ll set you up with a quick portal to gather details and documents. Ready to start?");
       } else {
-        // If they asked a question, answer it then restate our step
+        // If they asked a question, answer then progress
         reply =
           (sideNote ? sideNote + " " : "") +
           (SCRIPT_STEPS[2]?.prompt || "I’ll set you up with a quick portal to gather details and documents. Ready to start?");
       }
     } else if (stepIdx === 2) {
-      // Ask to open portal
-      const yesy = /\b(yes|yeah|ok|okay|yep|sure|ready|start|go)\b/i.test(userMessage);
+      // Ask to open portal; accept typos like "yesd", "yess", etc.
+      const yesy = /\b(yes\w*|yeah|ok|okay|yep|sure|ready|start|go)\b/i.test(userMessage);
       if (yesy) {
         reply = (sideNote ? sideNote + " " : "") + (SCRIPT_STEPS[3]?.prompt || "Opening your secure portal now.");
         openPortal = true;
@@ -191,7 +185,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           "No problem — when you’re ready, I can open the secure portal to move things forward.";
       }
     } else {
-      // Past the core steps — keep helpful, avoid loops
+      // Past the core steps — keep helpful, avoid loops. Do NOT show the “While you’re in the portal…” line here.
       reply =
         (empathy ? empathy + " " : "") +
         (sideNote ? sideNote + " " : "") +
@@ -199,7 +193,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (/\b(portal|upload|register|sign ?in|log ?in)\b/i.test(userMessage)) openPortal = true;
     }
 
-    // Fallback to a short LLM steer if somehow empty
+    // Fallback to short LLM steer if somehow empty
     if (!reply && openai) {
       try {
         const sys = "You are Mark, a UK debt advisor. Reply warmly in one sentence and avoid repetition.";
@@ -208,8 +202,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           temperature: 0.5,
           messages: [
             { role: "system", content: sys },
-            { role: "user", content: userMessage },
-          ],
+            { role: "user", content: userMessage }
+          ]
         });
         reply = cmp.choices[0]?.message?.content?.trim() || "Thanks — let’s keep going.";
       } catch {
@@ -225,12 +219,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       stepIndex: Math.min(stepIdx + 1, SCRIPT_STEPS.length - 1),
       totalSteps: SCRIPT_STEPS.length,
       openPortal,
-      displayName,
+      displayName
     });
   } catch {
     return okJson(res, {
       reply: "Sorry, something went wrong on my end. Please try again.",
-      error: "handled",
+      error: "handled"
     });
   }
 }
