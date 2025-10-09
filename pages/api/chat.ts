@@ -4,13 +4,13 @@ import { v4 as uuidv4 } from "uuid";
 import OpenAI from "openai";
 import { createClient } from "@supabase/supabase-js";
 
-// --- Optional deps (won't crash if missing) ---
+/* ---------- Optional deps (no hard crash if unset) ---------- */
 let openai: OpenAI | null = null;
 try {
   if (process.env.OPENAI_API_KEY) {
     openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   }
-} catch (_) {
+} catch {
   openai = null;
 }
 
@@ -24,7 +24,7 @@ const supabase =
     ? createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: false } })
     : null;
 
-// --- Script & FAQs (robust loads) ---
+/* ---------- Script & FAQs (robust loads) ---------- */
 type Step = { prompt: string; keywords?: string[] };
 type Script = { steps: Step[] };
 
@@ -39,8 +39,8 @@ try {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const script = require("../../utils/full_script_logic.json") as Script;
   if (script?.steps?.length) SCRIPT_STEPS = script.steps;
-} catch (_) {
-  // keep defaults
+} catch {
+  /* keep defaults */
 }
 
 type FAQ = { q: string; a: string; keywords?: string[] };
@@ -48,11 +48,11 @@ let FAQS: FAQ[] = [];
 try {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   FAQS = require("../../utils/faqs.json") as FAQ[];
-} catch (_) {
+} catch {
   FAQS = [];
 }
 
-// --- Helpers ---
+/* ---------- Helpers ---------- */
 const EMPATHY: Array<[RegExp, string]> = [
   [/bailiff|bailiffs|enforcement/i, "I know bailiff contact is stressful — let’s get protections in place quickly."],
   [/ccj|county court|default/i, "Court or default letters can be scary — we’ll deal with those in your plan."],
@@ -66,7 +66,16 @@ function pickEmpathy(u: string): string | null {
   return null;
 }
 
+// Only treat something as a FAQ if it's phrased like a question
+function isQuestion(u: string): boolean {
+  const t = u.trim();
+  if (!t) return false;
+  if (t.includes("?")) return true;
+  return /^(how|what|can|will|do|does|did|is|are|should|could|may|might)\b/i.test(t);
+}
+
 function matchFAQ(u: string): FAQ | null {
+  if (!isQuestion(u)) return null;
   const txt = u.toLowerCase();
   for (const f of FAQS) {
     const kws = f.keywords || [];
@@ -75,28 +84,24 @@ function matchFAQ(u: string): FAQ | null {
   return null;
 }
 
-function nameLike(u: string) {
-  const trimmed = u.trim();
-  if (trimmed.length < 2) return null;
-  // naive-ish: two words or contains space/hyphen/apostrophe
-  if (/\b[a-z]+[ -'][a-z]+/i.test(trimmed) || /\s/.test(trimmed)) return trimmed;
+function extractName(u: string) {
+  const t = u.trim();
+  if (t.length < 2) return null;
+  // two-word heuristic or contains hyphen/apostrophe
+  if (/\b[a-z]+[ -'][a-z]+/i.test(t) || /\s/.test(t)) return t;
   return null;
 }
 
-function nextStepIndex(history: string[]) {
-  // We only get text array from the client, so we infer:
-  // Count how many times we sent a script prompt already by looking for exact matches.
-  let count = 0;
-  for (const h of history) {
-    if (SCRIPT_STEPS.some(s => s.prompt === h)) count++;
-  }
-  // first reply after greeting = step0
-  return Math.min(count, Math.max(0, SCRIPT_STEPS.length - 1));
+function mentionsDebtTypes(u: string): boolean {
+  return /\b(credit\s*cards?|loans?|overdraft|catalogue|payday|store\s*card|finance)\b/i.test(u);
 }
 
-function okJson(res: NextApiResponse, payload: any) {
-  res.setHeader("Content-Type", "application/json; charset=utf-8");
-  return res.status(200).send(JSON.stringify(payload));
+function nextStepIndex(history: string[]) {
+  // We assume client passes chat bubble texts (bot + user).
+  // Count how many times *our* exact step prompts are present to infer progress.
+  let count = 0;
+  for (const h of history) if (SCRIPT_STEPS.some(s => s.prompt === h)) count++;
+  return Math.min(count, Math.max(0, SCRIPT_STEPS.length - 1));
 }
 
 async function logTelemetry(sessionId: string, type: string, payload: any) {
@@ -108,18 +113,23 @@ async function logTelemetry(sessionId: string, type: string, payload: any) {
       payload,
     });
   } catch {
-    // swallow
+    /* swallow */
   }
 }
 
-// --- Handler ---
+function okJson(res: NextApiResponse, payload: any) {
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  return res.status(200).send(JSON.stringify(payload));
+}
+
+/* ---------- Handler ---------- */
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).end();
 
   try {
     const sessionId = (req.body?.sessionId as string) || uuidv4();
 
-    // Accept multiple field names to be safe
+    // Accept different field names from the UI
     const userMessage: string = String(
       req.body?.userMessage ?? req.body?.message ?? req.body?.text ?? ""
     ).trim();
@@ -136,57 +146,60 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
     }
 
-    // Quick FAQ
-    const faq = matchFAQ(userMessage);
-    if (faq) {
-      const empathy = pickEmpathy(userMessage);
-      const reply = empathy ? `${empathy} ${faq.a}` : faq.a;
-      await logTelemetry(sessionId, "faq", { q: faq.q });
-      return okJson(res, {
-        reply,
-        sessionId,
-        stepIndex: nextStepIndex(history),
-        totalSteps: SCRIPT_STEPS.length,
-      });
-    }
-
-    // Script progression (no loops)
     const stepIdx = nextStepIndex(history);
     let reply = "";
     let openPortal = false;
     let displayName: string | undefined;
 
+    // ---- Respect script first; FAQs act as side-notes only when it's a question ----
+    const faq = matchFAQ(userMessage);
+    const empathy = pickEmpathy(userMessage);
+    const sideNote = faq ? (empathy ? `${empathy} ${faq.a}` : faq.a) : "";
+
     if (stepIdx === 0) {
-      // We just asked for the name
-      const nm = nameLike(userMessage);
+      // We asked for a name
+      const nm = extractName(userMessage);
       if (nm) {
         displayName = nm;
-        reply = SCRIPT_STEPS[1]?.prompt || "What’s your main concern right now?";
+        reply = (sideNote ? sideNote + " " : "") + (SCRIPT_STEPS[1]?.prompt || "What’s your main concern right now?");
       } else {
-        reply = "Got it — may I take your full name so I can personalise things?";
+        reply = (sideNote ? sideNote + " " : "") + "Got it — may I take your full name so I can personalise things?";
       }
     } else if (stepIdx === 1) {
       // We asked for the main concern
-      const empathy = pickEmpathy(userMessage);
-      reply = (empathy ? `${empathy} ` : "") + (SCRIPT_STEPS[2]?.prompt || "I’ll set up your portal to gather details. Ready to start?");
+      // If they list debt types (e.g., “credit cards and loans”), that's a valid answer — progress.
+      if (mentionsDebtTypes(userMessage) || !isQuestion(userMessage)) {
+        reply =
+          (empathy ? empathy + " " : "") +
+          (sideNote ? sideNote + " " : "") +
+          (SCRIPT_STEPS[2]?.prompt || "I’ll set you up with a quick portal to gather details and documents. Ready to start?");
+      } else {
+        // If they asked a question, answer it then restate our step
+        reply =
+          (sideNote ? sideNote + " " : "") +
+          (SCRIPT_STEPS[2]?.prompt || "I’ll set you up with a quick portal to gather details and documents. Ready to start?");
+      }
     } else if (stepIdx === 2) {
       // Ask to open portal
       const yesy = /\b(yes|yeah|ok|okay|yep|sure|ready|start|go)\b/i.test(userMessage);
       if (yesy) {
-        reply = SCRIPT_STEPS[3]?.prompt || "Opening your secure portal now.";
+        reply = (sideNote ? sideNote + " " : "") + (SCRIPT_STEPS[3]?.prompt || "Opening your secure portal now.");
         openPortal = true;
       } else {
-        reply = "No problem — when you’re ready, I can open the secure portal to move things forward.";
+        reply =
+          (sideNote ? sideNote + " " : "") +
+          "No problem — when you’re ready, I can open the secure portal to move things forward.";
       }
     } else {
       // Past the core steps — keep helpful, avoid loops
-      const empathy = pickEmpathy(userMessage);
-      reply = (empathy ? `${empathy} ` : "") + "If you’d like, I can open your portal so you can add details and upload documents.";
-      // try to infer intent to open
+      reply =
+        (empathy ? empathy + " " : "") +
+        (sideNote ? sideNote + " " : "") +
+        "If you’d like, I can open your portal so you can add details and upload documents.";
       if (/\b(portal|upload|register|sign ?in|log ?in)\b/i.test(userMessage)) openPortal = true;
     }
 
-    // Gentle off-script steering via OpenAI (optional)
+    // Fallback to a short LLM steer if somehow empty
     if (!reply && openai) {
       try {
         const sys = "You are Mark, a UK debt advisor. Reply warmly in one sentence and avoid repetition.";
@@ -204,8 +217,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     }
 
-    // Always respond with JSON so the frontend never hits .catch
-    await logTelemetry(sessionId, "chat", { stepIdx, openPortal });
+    await logTelemetry(sessionId, "chat", { language, stepIdx, openPortal });
+
     return okJson(res, {
       reply: reply || "Thanks — let’s continue.",
       sessionId,
@@ -214,8 +227,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       openPortal,
       displayName,
     });
-  } catch (e: any) {
-    // Never leak stack; always JSON
+  } catch {
     return okJson(res, {
       reply: "Sorry, something went wrong on my end. Please try again.",
       error: "handled",
