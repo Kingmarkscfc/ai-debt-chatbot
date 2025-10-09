@@ -22,7 +22,7 @@ async function logTelemetry(sessionId: string, type: string, payload: any) {
       payload
     });
   } catch {
-    /* ignore */
+    /* ignore telemetry errors */
   }
 }
 
@@ -42,9 +42,8 @@ try {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const file = require("../../utils/full_script_logic.json") as Script;
   if (file?.steps?.length) SCRIPT_STEPS = file.steps;
-} catch {
-  /* will fall back below if needed */
-}
+} catch { /* fallback below */ }
+
 if (!SCRIPT_STEPS.length) {
   SCRIPT_STEPS = [
     { id: 0, prompt: "Great, I look forward to helping you clear your debts. Can you let me know who I’m speaking to?" },
@@ -66,7 +65,8 @@ try {
 }
 
 /** ============= Helpers ============= */
-function norm(s: string) { return (s || "").trim(); }
+const norm = (s: string) => (s || "").trim();
+const GREETING_RE = /^(hi|hello|hey|good (morning|afternoon|evening)|hiya|yo)\b/i;
 
 function isQuestion(u: string): boolean {
   const t = norm(u);
@@ -100,23 +100,26 @@ function empathyLine(u: string): string | null {
 /** Objection/hesitation detection */
 const OBJECTION_RE = /(not now|not ready|don.?t want|don.?t trust|is this legit|scam|fee|fees|cost|expensive|not sure|unsure|do i have to|why|how do you|data|privacy|gdpr)/i;
 
-/** Step satisfaction rules tuned to your current script */
+/** Soft name extraction (for nicer confirmation) */
+function extractName(s: string): string | null {
+  // Look for common patterns first
+  const m =
+    s.match(/(?:my name is|i am|i'm|im|it's|its|call me)\s+([A-Z][a-z]+(?: [A-Z][a-z]+){0,3})/i) ||
+    s.match(/^([A-Z][a-z]+(?: [A-Z][a-z]+){0,3})$/);
+  const pick = m?.[1] || m?.[0] || "";
+  const cleaned = norm(pick).replace(/\.$/, "");
+  return cleaned || null;
+}
+
+/** Step satisfaction rules */
 function satisfiesStep(user: string, step: Step, stepIndex: number): boolean {
   const u = user.toLowerCase();
 
-  // Step 0 (name): detect common name introductions or a plausible name token
+  // Step 0 (name): detect introductions or a plausible name token
   if (stepIndex === 0) {
     const namePhrases = /(my name is|i am|i'm|im|it's|its|call me|name)/i;
     const looksLikeName = /[A-Z][a-z]+(?: [A-Z][a-z]+){0,3}/.test(user);
     if (namePhrases.test(u) || looksLikeName) return true;
-  }
-
-  // Step 2 (open portal): require explicit affirmative/portal words
-  if (stepIndex === 2) {
-    const okWords = (step.keywords || ["yes","ok","okay","sure","go ahead","open","start","portal","set up"])
-      .map(k => k.toLowerCase());
-    if (okWords.some(k => u.includes(k))) return true;
-    return false;
   }
 
   // Step 3 (“done” in portal)
@@ -125,14 +128,12 @@ function satisfiesStep(user: string, step: Step, stepIndex: number): boolean {
     if (doneWords.some(k => u.includes(k))) return true;
   }
 
-  // Generic keyword gate if provided
+  // If the step has keywords, require at least one match or a reasonably informative free-text answer
   if (Array.isArray(step.keywords) && step.keywords.length) {
     if (!step.keywords.some(k => u.includes(k.toLowerCase()))) {
-      // also allow short free-text if the prompt is an open question and message is reasonably informative
       if (!/[a-z]{3,}/i.test(user)) return false;
     }
   } else {
-    // Otherwise accept any non-trivial text
     if (norm(user).replace(/\s+/g, "").length < 2) return false;
   }
 
@@ -179,7 +180,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
     }
 
-    const askedIdx = lastAskedStepIndex(history);  // last script prompt asked (-1 if none)
+    const askedIdx = lastAskedStepIndex(history);      // last script prompt index we asked (-1 if none)
     const pendingIdx = Math.min(askedIdx + 1, SCRIPT_STEPS.length - 1);
     const justAsked = askedIdx >= 0 ? SCRIPT_STEPS[askedIdx] : null;
     const pending = SCRIPT_STEPS[pendingIdx];
@@ -188,56 +189,70 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     let openPortal = false;
     let displayName: string | undefined;
 
-    // Optional empathy (short & unobtrusive)
+    // Empathy + FAQ (short, optional)
     const emp = empathyLine(userMessage);
     const empPrefix = emp ? emp + " " : "";
 
-    // FAQs — answer only if they asked a question, then restate the step
     const faq = matchFAQ(userMessage);
     const faqPrefix = faq ? faq.a + " " : "";
 
-    // Objection handling — give a short reassurance then restate the current prompt
-    let objectionHandled = false;
-    if (OBJECTION_RE.test(userMessage)) {
-      objectionHandled = true;
+    // Objection handling — short reassurance then restate current prompt
+    const objectionHandled = OBJECTION_RE.test(userMessage);
+    const nudgePrefix = objectionHandled
+      ? "Totally fair — everything is secure and there’s no obligation at this stage. "
+      : "";
+
+    // 0) If no step has been asked yet and the user greets us, greet back + ask step 0
+    if (askedIdx < 0 && GREETING_RE.test(userMessage)) {
+      reply = `Hi! ${empPrefix}${faqPrefix}${SCRIPT_STEPS[0].prompt}`;
+      await logTelemetry(sessionId, "chat", { language, askedIdx, pendingIdx, openPortal: false, greeted: true, faqMatched: !!faq });
+      return res.status(200).json({
+        reply,
+        sessionId,
+        stepIndex: 0,
+        totalSteps: SCRIPT_STEPS.length,
+        openPortal: false
+      });
     }
 
+    // If we asked a step previously — did they satisfy it?
     if (justAsked) {
-      // We asked a step previously — did they satisfy it?
       const ok = satisfiesStep(userMessage, justAsked, askedIdx);
+
       if (ok) {
-        // advance
-        if (pending) {
-          reply = `${empPrefix}${faqPrefix}${pending.prompt}`;
-          if (pending.openPortal) openPortal = true;
+        // Special nicety: if they just answered step 0 with a name, greet them by name before moving on
+        if (askedIdx === 0) {
+          const maybeName = extractName(userMessage);
+          if (maybeName) {
+            displayName = maybeName;
+            const first = maybeName.split(" ")[0];
+            reply = `Nice to meet you, ${first}. ${empPrefix}${faqPrefix}${pending.prompt}`;
+          } else {
+            reply = `${empPrefix}${faqPrefix}${pending.prompt}`;
+          }
         } else {
-          reply = `${empPrefix}${faqPrefix}Thanks — I’m here if you have any other questions.`;
+          reply = `${empPrefix}${faqPrefix}${pending.prompt}`;
+        }
+
+        // IMPORTANT: never open the portal before step 4 (hard gate)
+        // Even if the JSON marks an earlier step with openPortal, we only open from step index >= 4.
+        if (pending.openPortal && pendingIdx >= 4) {
+          openPortal = true;
         }
       } else {
-        // Not satisfied -> gentle nudge; avoid perfect repetition
-        const nudge = objectionHandled
-          ? "Totally fair — quick reassurance: everything’s secure and there’s no obligation at this stage. "
-          : "";
+        // Not satisfied -> gentle nudge; avoid repeating exact prompt back-to-back
+        const base = `${faqPrefix}${nudgePrefix}`;
         if (alreadyAsked(history, justAsked.prompt)) {
-          reply = `${faqPrefix}${nudge}In a sentence or two: ${justAsked.prompt}`;
+          reply = `${base}In a sentence or two: ${justAsked.prompt}`;
         } else {
-          reply = `${faqPrefix}${nudge}${justAsked.prompt}`;
+          reply = `${base}${justAsked.prompt}`;
         }
       }
     } else {
-      // Nothing asked yet -> ask the first step
-      if (pending) {
-        reply = `${empPrefix}${faqPrefix}${pending.prompt}`;
-        if (pending.openPortal) openPortal = true;
-      } else {
-        reply = `${empPrefix}${faqPrefix}Thanks — let’s begin.`;
-      }
-    }
-
-    // Lightweight name capture for step 0
-    if (pendingIdx === 1 && justAsked?.id === 0) {
-      const maybe = userMessage.match(/[A-Z][a-z]+(?: [A-Z][a-z]+){0,3}/)?.[0];
-      if (maybe && maybe.length >= 2) displayName = maybe;
+      // Nothing asked yet -> start at step 0, with a friendly lead
+      reply = `${empPrefix}${faqPrefix}${SCRIPT_STEPS[0].prompt}`;
+      // (No portal at start)
+      openPortal = false;
     }
 
     await logTelemetry(sessionId, "chat", {
