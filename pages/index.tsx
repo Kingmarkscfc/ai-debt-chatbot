@@ -682,14 +682,13 @@ export default function Home() {
   const chosenVoice = useRef<SpeechSynthesisVoice | null>(null);
 
   useEffect(() => {
-    const savedTheme = typeof window === "undefined" ? null : localStorage.getItem("da_theme");
-    if (savedTheme === "dark" || savedTheme === "light") setTheme(savedTheme as any);
-    setMessages([
-      { sender: "bot", text: "Hello! My name’s Mark. What prompted you to seek help with your debts today?" },
-      { sender: "bot", text: "🌍 You can change languages any time using the dropdown above." }
-    ]);
-  }, []);
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior:"smooth" }); }, [messages]);
+  const savedTheme = typeof window === "undefined" ? null : localStorage.getItem("da_theme");
+  if (savedTheme === "dark" || savedTheme === "light") setTheme(savedTheme as any);
+  setMessages([
+    { sender: "bot", text: "Hello! My name’s Mark. What prompted you to seek help with your debts today?" }
+  ]);
+}, []);
+ useEffect(() => { bottomRef.current?.scrollIntoView({ behavior:"smooth" }); }, [messages]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
