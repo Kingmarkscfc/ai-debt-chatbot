@@ -115,13 +115,11 @@ async function briefSteer(currentPrompt: string, userMsg: string): Promise<strin
 
 // ---------- DB (messages table) ----------
 async function loadHistory(sessionId: string): Promise<ChatMsg[]> {
-  const { data, error } = await supabase
+  const { data } = await supabase
     .from("messages")
     .select("role, content")
     .eq("session_id", sessionId)
     .order("created_at", { ascending: true });
-
-  if (error) return [];
   return (data || []) as ChatMsg[];
 }
 
@@ -171,13 +169,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (userMessage) await appendMessage(sessionId, "user", userMessage);
 
     // Compute current step
-    history = await loadHistory(sessionId); // reload with the latest user row
+    history = await loadHistory(sessionId); // reload with latest user row
     let currentStepIdx = lastStepFromHistory(history);
     if (currentStepIdx == null) currentStepIdx = 0;
     const currentStep = S.steps[currentStepIdx] || S.steps[0];
 
-    // Friendly small-talk at early steps, don’t advance
-    if (isGreeting(userMessage, S) && currentStepIdx <= 1) {
+    // Determine if the user already answered the current step
+    const answeredCurrent = matchAny(userMessage, currentStep.keywords || []);
+    const tokenCount = userMessage.split(/\s+/).filter(Boolean).length;
+    const pureGreeting = isGreeting(userMessage, S) && !answeredCurrent && tokenCount <= 4;
+
+    // Friendly small-talk ONLY for pure greeting (short + not answering)
+    if (pureGreeting && currentStepIdx <= 1) {
       const reply = `${greetAck(S)}\n${currentStep.prompt}`;
       const marked = `${reply}\n${STEP_TAG(currentStep.id)}`;
       await appendMessage(sessionId, "assistant", marked);
@@ -197,8 +200,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Advance logic
     let nextIdx = currentStepIdx;
-    const matched = matchAny(userMessage, currentStep.keywords || []);
-    if (currentStep.auto_advance || matched) {
+    if (currentStep.auto_advance || answeredCurrent) {
       nextIdx = Math.min(currentStepIdx + 1, S.steps.length - 1);
     }
 
@@ -217,7 +219,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const nextStep = S.steps[nextIdx];
     let reply = personalise(nextStep.prompt, nameState);
 
-    if (!currentStep.auto_advance && !matched && nextIdx === currentStepIdx) {
+    if (!currentStep.auto_advance && !answeredCurrent && nextIdx === currentStepIdx) {
       // Didn’t match → steer back to current step
       const steer = await briefSteer(currentStep.prompt, userMessage);
       reply = [empath, faq, steer].filter(Boolean).join(" ");
@@ -230,7 +232,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Decide whether to open portal
     let openPortal = false;
     if (currentStep.name === "invite_portal" && currentStep.openPortal) {
-      openPortal = true; // we only reach here when the user agreed above
+      openPortal = true; // only reached when user agreed above
     }
 
     // Tag with the *next* step we’re asking
