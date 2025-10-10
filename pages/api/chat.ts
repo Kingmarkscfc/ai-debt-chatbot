@@ -35,7 +35,7 @@ async function loadHistory(sessionId: string) {
     .select("role, content, created_at")
     .eq("session_id", sessionId)
     .order("created_at", { ascending: true })
-    .limit(400);
+    .limit(500);
   return (data || []).map(m => ({ role: m.role as "user" | "assistant", content: String(m.content || "") }));
 }
 async function append(sessionId: string, role: "user" | "assistant", content: string) {
@@ -80,7 +80,7 @@ function extractName(s: string): string | null {
   const m = s.match(rx);
   if (m?.[2]) {
     const raw = m[2].replace(/\s+/g, " ").trim();
-    return raw.split(" ").map(w => w ? w[0].toUpperCase() + w.slice(1).toLowerCase() : "").join(" ");
+    return raw.split(" ").map(w => (w ? w[0].toUpperCase() + w.slice(1).toLowerCase() : "")).join(" ");
   }
   const m2 = s.match(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b/);
   return m2?.[1] || null;
@@ -127,22 +127,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const userMessage = String(req.body.userMessage || req.body.message || "").trim();
     if (!sessionId) return res.status(400).json({ reply: "Missing session.", openPortal: false });
 
-    // hard reset
+    // HARD RESET: wipe old rows so stale step markers can't confuse the flow
     if (/^(reset|restart|start again)$/i.test(userMessage)) {
+      await supabase.from("messages").delete().eq("session_id", sessionId);
       await append(sessionId, "assistant", `${STEP_TAG(-1)} ${OPENING}`);
       return res.status(200).json({ reply: OPENING, openPortal: false });
     }
 
-    // Load history
+    // Load history (after potential reset)
     let history = await loadHistory(sessionId);
 
-    // First time: send opener
+    // First time ever: send the opener and stop
     if (history.length === 0) {
       await append(sessionId, "assistant", `${STEP_TAG(-1)} ${OPENING}`);
       return res.status(200).json({ reply: OPENING, openPortal: false });
     }
 
-    // Record user
+    // Record this user message
     if (userMessage) {
       await append(sessionId, "user", userMessage);
       history.push({ role: "user", content: userMessage });
@@ -153,24 +154,26 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const uIdx = lastUserIdx(history);
     const latestUser = uIdx >= 0 ? history[uIdx].content : "";
 
-    // If we’ve only shown the opener (STEP:-1), move to step 0 on first user message
+    // If the only assistant marker so far is the opener (STEP -1), move to step 0 on first user message
     if (seenSteps.length === 0) {
-      const greet = GREETINGS.has(norm(latestUser)) ? "Hi — you’re in the right place." : "Thanks for telling me.";
+      const greet = GREETINGS.has(norm(latestUser)) ? "Hi — you’re in the right place." : "Thanks for sharing that.";
       const step0 = SCRIPT[0];
       const out = `${greet} ${step0.prompt}`;
       await append(sessionId, "assistant", `${STEP_TAG(step0.id)} ${out}`);
       return res.status(200).json({ reply: out, openPortal: false });
     }
 
-    // Recovery to the earliest missing step
+    // Calculate which step we should be on
     const expected = earliestMissingStep(seenSteps);
+
+    // If our last asked isn't the expected one, ask the expected one (no jumping ahead)
     if (lastAsked !== expected) {
       const asked = SCRIPT.find(s => s.id === expected) || SCRIPT[0];
       await append(sessionId, "assistant", `${STEP_TAG(asked.id)} ${asked.prompt}`);
       return res.status(200).json({ reply: asked.prompt, openPortal: false });
     }
 
-    // If the last user message occurred before the last assistant step, re-ask the same step
+    // If the last user message was before the last assistant step, re-ask that same step (prevents duplicate prompts)
     if (uIdx <= lastAIdx) {
       const asked = SCRIPT.find(s => s.id === lastAsked) || SCRIPT[0];
       await append(sessionId, "assistant", `${STEP_TAG(asked.id)} ${asked.prompt}`);
@@ -233,18 +236,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const askedIdx = SCRIPT.findIndex(s => s.id === askedStep.id);
 
-    // If the user hasn't answered adequately, re-ask WITHOUT adding another prompt line
+    // If the user hasn't answered adequately, re-ask WITHOUT repeating the full prompt block
     if (!moveNext) {
       const out = replyParts.join(" ");
       await append(sessionId, "assistant", `${STEP_TAG(askedStep.id)} ${out}`);
       return res.status(200).json({ reply: out, openPortal: false });
     }
 
-    // Otherwise, advance
+    // Otherwise, advance to the next step
     let nextIdx = Math.min(askedIdx + 1, SCRIPT.length - 1);
     let nextStep = SCRIPT[nextIdx];
 
-    // Enforce portal ordering
+    // Enforce portal ordering: never show portal before step 5
     if (nextStep.openPortal && nextIdx < PORTAL_MIN_INDEX) {
       nextIdx = PORTAL_MIN_INDEX;
       nextStep = SCRIPT[nextIdx] || nextStep;
