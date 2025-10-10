@@ -2,99 +2,73 @@
   "steps": [
     {
       "id": 0,
-      "name": "intro",
-      "prompt": "Hello! My name’s Mark. What prompted you to seek help with your debts today?",
-      "keywords": ["debt", "debts", "money", "credit", "loan", "overdraft", "catalogue", "arrears", "bailiff", "bills", "repay"],
-      "on_match_note": "Acknowledge and move to name capture."
+      "name": "name",
+      "prompt": "Great, I look forward to helping you clear your debts. Can you let me know who I’m speaking to?",
+      "keywords": ["name","i am","i'm","im","my name is","it's","its","call me","mr","mrs","ms","dr"]
     },
     {
       "id": 1,
-      "name": "name",
-      "prompt": "Great, I look forward to helping you to clear off your debts. Can you let me know who I’m speaking to?",
-      "keywords": ["name", "i am", "i'm", "im", "my name is", "it's", "its", "call me", "mr", "mrs", "ms", "miss", "dr"]
+      "name": "concern",
+      "prompt": "Just so I can point you in the right direction, what would you say your main concern is with the debts?",
+      "keywords": ["bailiff","bailiffs","default","ccj","missed","late","interest","charges","arrears","rent","council","gas","electric","water","card","loan","overdraft","catalogue","finance","worry","concern","stress","repayment","payment"]
     },
     {
       "id": 2,
-      "name": "how_are_you",
-      "prompt": "How are you today, {name}?",
-      "keywords": ["good", "ok", "fine", "great", "worried", "stressed", "tired", "anxious", "low", "not good", "bad"]
+      "name": "more_detail",
+      "prompt": "Thanks — that helps. Which debts are causing the most pressure right now (e.g. credit cards, personal loans, overdraft, car finance)?",
+      "keywords": ["credit","card","cards","loan","loans","overdraft","car finance","catalogue","store card","hire purchase","hp","payday","buy now pay later","klarna","afterpay"]
     },
     {
       "id": 3,
-      "name": "biggest_worry",
-      "prompt": "Just so I can point you in the right direction, what is your biggest worry about your debts?",
-      "keywords": ["bailiff", "bailiffs", "default", "ccj", "interest", "charges", "arrears", "rent", "council", "gas", "electric", "water", "credit card", "loan", "overdraft", "catalogue", "finance", "curious", "better deal", "payment", "repayment", "court", "enforcement"]
+      "name": "affordability",
+      "prompt": "Roughly how much do you pay towards all debts each month, and what would feel affordable for you?",
+      "keywords": ["per month","monthly","pay","payment","repay","afford","affordable","budget","£","gbp","pounds","amount"]
     },
     {
       "id": 4,
-      "name": "reassure",
-      "prompt": "Don’t worry, {name} — we’re going to help you with your debts today.",
-      "keywords": ["*"],
-      "auto_advance": true
+      "name": "urgent_check",
+      "prompt": "Is there anything urgent we should know about — like enforcement/bailiff action, court or default notices, or missed priority bills (rent, council tax, utilities)?",
+      "keywords": ["bailiff","enforcement","court","ccj","default","summons","warrant","eviction","rent","council tax","gas","electric","water","priority","arrears","missed","behind"]
     },
     {
       "id": 5,
-      "name": "regulatory_1",
-      "prompt": "I just need to make you aware that there is no obligation for you to act on the advice you receive today, and there are sources of free debt advice available at MoneyHelper (moneyhelper.org.uk). Shall we carry on?",
-      "keywords": ["yes", "ok", "okay", "carry on", "continue", "proceed", "yep", "sure"]
+      "name": "regulatory_note",
+      "prompt": "Before we proceed, there’s no obligation to act on any advice today, and there are free sources of debt advice available at MoneyHelper. Shall we carry on?",
+      "keywords": ["yes","ok","okay","proceed","continue","carry on","sure","go ahead"]
     },
     {
       "id": 6,
-      "name": "health",
-      "prompt": "Do you suffer with any health conditions that we should be aware of? If you do tell me, are you happy for us to save this information and share it with our trusted partners if necessary?",
-      "keywords": ["yes", "no", "anxiety", "depression", "adhd", "autism", "disabled", "health", "condition", "consent", "share"]
+      "name": "health_disclosure",
+      "prompt": "Do you have any health or personal circumstances we should be aware of (for example a medical condition or vulnerability)? If you tell me, are you happy for us to save this and share it with trusted partners if necessary?",
+      "keywords": ["yes","no","prefer not","health","condition","vulnerable","disability","mental","anxiety","depression","consent","share","save"]
     },
     {
       "id": 7,
-      "name": "changes",
-      "prompt": "Are you expecting any changes to your situation in the next 12 months (for example income, housing, family, health)?",
-      "keywords": ["yes", "no", "maybe", "job", "income", "move", "baby", "maternity", "health", "rent", "mortgage", "hours"]
-    },
-    {
-      "id": 8,
-      "name": "consolidation_value",
-      "prompt": "If we could help you consolidate your debts into one affordable payment, stop interest and charges, and possibly write off some debt — how much would that help you each month?",
-      "keywords": ["help", "a lot", "massively", "reduce", "save", "afford", "payment", "per month", "£", "pounds"]
-    },
-    {
-      "id": 9,
       "name": "invite_portal",
-      "prompt": "So that we can better understand your situation, I can set you up with your secure client portal. There you can add details, upload supporting documents and track progress. Shall I open it now?",
-      "keywords": ["yes", "ok", "okay", "sure", "go ahead", "open", "start", "portal", "set up"],
+      "prompt": "Let’s set up your secure Client Portal so you can add details, upload documents, and check progress. Shall I open it now?",
+      "keywords": ["yes","ok","okay","sure","go ahead","open","start","portal","set up"],
       "openPortal": true
     },
     {
+      "id": 8,
+      "name": "portal_followup",
+      "prompt": "While you’re in the portal, I’ll stay here to guide you. You can return to the chat any time using the button in the top-right corner. Please follow the outstanding tasks so we can understand your situation. When you’ve saved your details, just say “done” and we’ll continue.",
+      "keywords": ["done","saved","submitted","uploaded","finished","complete","completed"]
+    },
+    {
+      "id": 9,
+      "name": "docs_request",
+      "prompt": "To assess the best solution and reduce your monthly outgoings, please upload: proof of ID; last 3 months’ bank statements; payslips (3 months or 12 weeks if weekly) if employed; last year’s tax return if self-employed; Universal Credit statements (12 months + latest full statement) if applicable; car finance docs if applicable; and any creditor letters or statements.",
+      "keywords": ["uploaded","id","bank","payslip","sa302","uc","universal credit","car","finance","letters","statements","docs","documents"]
+    },
+    {
       "id": 10,
-      "name": "portal_guidance",
-      "prompt": "While you’re in the portal, I’ll stay here to guide you. You can come back to the chat any time with the button in the top right. Please follow the outstanding tasks so we can understand your situation. When you’ve saved your details, just say “done” and we’ll continue.",
-      "keywords": ["done", "saved", "submitted", "uploaded", "finished", "complete"]
-    },
-    {
-      "id": 11,
-      "name": "documents",
-      "prompt": "Now that we have the basics, please upload what you can: proof of ID; last 3 months’ bank statements for each account; payslips (3 months or 12 weeks) if employed; last year’s tax return if self-employed; Universal Credit statements (12 months + latest full statement) if applicable; car finance docs if applicable; and any creditor letters or statements.",
-      "keywords": ["uploaded", "id", "bank", "payslip", "sa302", "uc", "universal credit", "car", "finance", "letters", "statements", "docs", "documents"]
-    },
-    {
-      "id": 12,
       "name": "wrap_up",
       "prompt": "Brilliant — our assessment team will now review your case and come back with next steps. You can check progress in your portal any time. Is there anything else you’d like to ask before we wrap up?",
-      "keywords": ["no", "that’s all", "finish", "goodbye", "thanks", "thank you", "end"]
+      "keywords": ["no","that’s all","finish","goodbye","thanks","thank you","end","nothing"]
     }
   ],
   "small_talk": {
-    "greetings": ["hello", "hi", "hey", "good morning", "good afternoon", "good evening"],
-    "ack": [
-      "Hi there — I’m here to help.",
-      "Hello! Let’s work through this together.",
-      "Hey — we’ll keep this simple and supportive."
-    ]
-  },
-  "empathy": [
-    { "re": "bailiff|enforcement", "msg": "I know bailiff contact is stressful — we’ll get protections in place quickly." },
-    { "re": "ccj|county court|default", "msg": "Court or default letters can be worrying — we’ll address that calmly." },
-    { "re": "miss(ed)? payments?|arrears|late fees?", "msg": "Missed payments happen; we’ll focus on stabilising things now." },
-    { "re": "rent|council tax|water|gas|electric", "msg": "We’ll prioritise essentials like housing and utilities." },
-    { "re": "gambl|crypto|stock", "msg": "Thanks for being honest — this stays judgement-free and practical." }
-  ]
+    "greetings": ["hi","hello","hey","good morning","good afternoon","good evening"]
+  }
 }
