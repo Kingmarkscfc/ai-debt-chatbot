@@ -1,13 +1,9 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { createClient } from "@supabase/supabase-js";
-import OpenAI from "openai";
-
 import fullScript from "../../utils/full_script_logic.json";
 import faqs from "../../utils/faqs.json";
 
-/* -------------------- Setup -------------------- */
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
+/* -------------------- Supabase -------------------- */
 const supabase = createClient(
   process.env.SUPABASE_URL || "",
   (process.env.SUPABASE_SERVICE_ROLE_KEY ||
@@ -15,11 +11,15 @@ const supabase = createClient(
     "")
 );
 
+/* -------------------- Script Types -------------------- */
 type Step = { id: number; name?: string; prompt: string; keywords?: string[]; openPortal?: boolean };
 type ScriptShape = { steps: Step[]; small_talk?: { greetings?: string[] } };
-
 const SCRIPT = (fullScript as ScriptShape).steps;
-const GREETINGS = new Set((fullScript as ScriptShape).small_talk?.greetings?.map(s => s.toLowerCase()) || []);
+
+const GREETINGS = new Set(
+  ((fullScript as ScriptShape).small_talk?.greetings || ["hi","hello","hey","good morning","good afternoon","good evening"])
+    .map(s => s.toLowerCase())
+);
 
 const EMPATHY: Array<[RegExp, string]> = [
   [/bailiff|enforcement/i, "I know bailiff contact is stressful — we’ll get protections in place quickly."],
@@ -30,218 +30,238 @@ const EMPATHY: Array<[RegExp, string]> = [
 ];
 
 const STEP_TAG = (n: number) => `[[STEP:${n}]]`;
+const STEP_RE = /\[\[STEP:(-?\d+)\]\]/;
 const OPENING = "Hello! My name’s Mark. What prompted you to seek help with your debts today?";
-
-// Minimum index where portal can be invited (forces it to be later in the script flow)
 const MIN_PORTAL_INVITE_INDEX = 4;
 
-/* ----------------- DB helpers ----------------- */
+/* -------------------- DB helpers -------------------- */
 async function loadMessages(sessionId: string) {
-  const { data, error } = await supabase
+  const { data } = await supabase
     .from("messages")
     .select("role, content, created_at")
     .eq("session_id", sessionId)
     .order("created_at", { ascending: true })
-    .limit(200);
+    .limit(300);
 
-  if (error) return [];
-  return (data || []).map(m => ({ role: (m.role as "user" | "assistant"), content: String(m.content || "") }));
+  return (data || []).map(m => ({ role: m.role as "user" | "assistant", content: String(m.content || "") }));
 }
 
 async function appendMessage(sessionId: string, role: "user" | "assistant", content: string) {
-  await supabase
-    .from("messages")
-    .insert({ session_id: sessionId, role, content });
+  await supabase.from("messages").insert({ session_id: sessionId, role, content });
 }
 
-/* --------------- Logic helpers --------------- */
-function lastScriptedStepFromHistory(history: Array<{ role: "user" | "assistant"; content: string }>): number {
+/* -------------------- Utilities -------------------- */
+const norm = (s: string) => (s || "").toLowerCase().trim();
+
+function lastAssistantStep(history: Array<{ role: "user"|"assistant"; content: string }>) {
   for (let i = history.length - 1; i >= 0; i--) {
     const m = history[i];
     if (m.role === "assistant") {
-      const match = m.content.match(/\[\[STEP:(\d+)\]\]/);
-      if (match) return Number(match[1]);
+      const mt = m.content.match(STEP_RE);
+      if (mt) return { idx: i, step: Number(mt[1]) };
     }
   }
+  return { idx: -1, step: -1 };
+}
+
+function lastUserIndex(history: Array<{ role: "user"|"assistant"; content: string }>) {
+  for (let i = history.length - 1; i >= 0; i--) if (history[i].role === "user") return i;
   return -1;
 }
 
-function normalize(s: string) {
-  return (s || "").toLowerCase().trim();
-}
-
-function matchedKeywords(user: string, expected: string[] = []) {
-  if (!expected?.length) return true;
-  const msg = normalize(user);
-  return expected.some(k => msg.includes(k.toLowerCase()));
-}
-
 function empathyLine(user: string): string | null {
-  for (const [re, line] of EMPATHY) {
-    if (re.test(user)) return line;
-  }
+  for (const [re, line] of EMPATHY) if (re.test(user)) return line;
   return null;
 }
 
 function faqHit(user: string) {
-  const u = normalize(user);
+  const u = norm(user);
   let best: { a: string; score: number } | null = null;
   for (const f of faqs as Array<{ q: string; a: string; keywords?: string[] }>) {
     const kws = (f.keywords || []).map(k => k.toLowerCase());
     let score = 0;
     for (const k of kws) if (u.includes(k)) score += 1;
     if (u.endsWith("?")) score += 0.5;
-    if (score > 1 && (!best || score > best.score)) {
-      best = { a: f.a, score };
-    }
+    if (score > 1 && (!best || score > best.score)) best = { a: f.a, score };
   }
   return best?.a || null;
+}
+
+function isGreeting(s: string) {
+  const u = norm(s);
+  if (GREETINGS.has(u)) return true;
+  return /^(hi|hello|hey|good (morning|afternoon|evening))\b/i.test(u);
 }
 
 function isAffirmative(s: string) {
   return /(yes|ok|okay|sure|go ahead|open|start|set up|yep|yeah|please|do it)\b/i.test(s);
 }
 
-function isGreeting(s: string) {
-  const nm = normalize(s);
-  return GREETINGS.has(nm) || /^(hi|hello|hey|good (morning|afternoon|evening))\b/i.test(s);
+/* ---- step validators ---- */
+function stepAnswered(step: Step, user: string): boolean {
+  // If step provides keywords, require at least one match.
+  if (step.keywords && step.keywords.length > 0) {
+    const u = norm(user);
+    return step.keywords.some(k => u.includes(k.toLowerCase()));
+  }
+  // If no keywords, DO NOT auto-advance — we’ll treat it as custom per-step (e.g. step 0 name).
+  return false;
 }
 
-/* ---------------- API Handler ----------------- */
+function extractName(s: string): string | null {
+  const txt = s.trim();
+  const rx = /(my name is|i am|i'm|im|it's|its|call me)\s+([a-z][a-z\s'’-]{1,60})/i;
+  const m = txt.match(rx);
+  if (m && m[2]) {
+    const raw = m[2].replace(/\s+/g, " ").trim();
+    return raw.split(" ").map(w => w ? w[0].toUpperCase() + w.slice(1).toLowerCase() : "").join(" ");
+  }
+  // fallback: a single or double word starting with caps
+  const m2 = txt.match(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b/);
+  if (m2) return m2[1];
+  return null;
+}
+
+/* -------------------- Handler -------------------- */
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).end();
 
   try {
     const sessionId = String(req.body.sessionId || "");
     const userMessage = String(req.body.userMessage || req.body.message || "").trim();
-    const language = String(req.body.language || "English");
-
     if (!sessionId) return res.status(400).json({ reply: "Missing session.", openPortal: false });
 
-    // Load history from existing 'messages' table
+    // Load history
     let history = await loadMessages(sessionId);
 
-    // Bootstrapping: if history is empty, send opening once and store it
+    // Bootstrap: if empty, post the opening once
     if (history.length === 0) {
-      // No 🌍 line to avoid TTS saying “globe”.
       await appendMessage(sessionId, "assistant", `${STEP_TAG(-1)} ${OPENING}`);
       return res.status(200).json({ reply: OPENING, openPortal: false });
     }
 
-    // Append user message (and store it) if present
+    // Store new user message if provided
     if (userMessage) {
       await appendMessage(sessionId, "user", userMessage);
       history.push({ role: "user", content: userMessage });
     }
 
-    // Determine where we are in the script
-    let lastIdx = lastScriptedStepFromHistory(history); // -1 means only opening sent
-    let currentIdx = Math.max(0, lastIdx + 1);
-    if (currentIdx >= SCRIPT.length) currentIdx = SCRIPT.length - 1;
-    let currentStep = SCRIPT[currentIdx];
+    // Find last assistant step we actually asked
+    const { idx: lastAssistIdx, step: lastAsked } = lastAssistantStep(history);
+    const lastUserIdx = lastUserIndex(history);
+    const latestUser = lastUserIdx >= 0 ? history[lastUserIdx].content : "";
 
-    let replyParts: string[] = [];
-    let openPortal = false;
-
-    // Friendly greeting response — but do NOT reset to opening
-    if (isGreeting(userMessage) && lastIdx < 0) {
-      // We have only the opening above; proceed to step 0
-      currentIdx = 0;
-      currentStep = SCRIPT[currentIdx];
-      const line = "Hi — you’re in the right place.";
-      const out = `${line} ${currentStep.prompt}`;
-      await appendMessage(sessionId, "assistant", `${STEP_TAG(currentStep.id)} ${out}`);
+    // If we only ever sent the opening (step -1), next we must ASK step 0 (don’t evaluate yet)
+    if (lastAsked < 0) {
+      const greet = isGreeting(latestUser) ? "Hi — you’re in the right place." : "Thanks for telling me.";
+      const step0 = SCRIPT[0];
+      const out = `${greet} ${step0.prompt}`;
+      await appendMessage(sessionId, "assistant", `${STEP_TAG(step0.id)} ${out}`);
       return res.status(200).json({ reply: out, openPortal: false });
     }
 
-    // Empathy nudge
-    const emp = empathyLine(userMessage);
-    if (emp) replyParts.push(emp);
+    // We have asked some step N (>=0). Only evaluate if the user spoke AFTER that assistant turn.
+    if (lastUserIdx > lastAssistIdx) {
+      const askedStep = SCRIPT.find(s => s.id === lastAsked) || SCRIPT[Math.max(0, Math.min(lastAsked, SCRIPT.length - 1))];
+      let replyParts: string[] = [];
+      let openPortal = false;
 
-    // If user asked a question, try FAQ without advancing step
-    if (/\?$/.test(userMessage) || /(what|how|can|will|do|is|are)\b/i.test(userMessage)) {
-      const fa = faqHit(userMessage);
-      if (fa) {
-        replyParts.push(fa);
-        replyParts.push(currentStep.prompt);
-        const out = replyParts.join(" ");
-        await appendMessage(sessionId, "assistant", `${STEP_TAG(currentStep.id)} ${out}`);
-        return res.status(200).json({ reply: out, openPortal: false });
-      }
-    }
+      // Empathy hint (non-blocking)
+      const emp = empathyLine(latestUser);
+      if (emp) replyParts.push(emp);
 
-    // If the user answered the current step, progress
-    const answered = matchedKeywords(userMessage, currentStep.keywords || []);
-    if (answered) {
-      // Compute next step
-      let nextIdx = Math.min(currentIdx + 1, SCRIPT.length - 1);
-      let nextStep = SCRIPT[nextIdx];
-
-      // If next step is the portal invite BUT we haven’t reached the minimum index yet, skip forward until >= MIN_PORTAL_INVITE_INDEX
-      if (nextStep.openPortal && nextIdx < MIN_PORTAL_INVITE_INDEX) {
-        nextIdx = MIN_PORTAL_INVITE_INDEX;
-        nextStep = SCRIPT[nextIdx] || nextStep;
+      // Contextual FAQs (non-blocking)
+      if (/\?$/.test(latestUser) || /(what|how|can|will|do|is|are)\b/i.test(latestUser)) {
+        const ans = faqHit(latestUser);
+        if (ans) replyParts.push(ans);
       }
 
-      // If current step IS the portal invite, only open on explicit yes
-      if (currentStep.openPortal) {
-        if (isAffirmative(userMessage)) {
-          openPortal = true;
-          // Move to portal follow-up (or next)
-          const pf = SCRIPT.find(s => s.name === "portal_followup") || nextStep;
-          replyParts.push(pf.prompt);
-          const out = replyParts.join(" ");
-          await appendMessage(sessionId, "assistant", `${STEP_TAG(pf.id)} ${out}`);
-          return res.status(200).json({ reply: out, openPortal });
+      // Step-specific validation
+      let moveNext = false;
+
+      if (askedStep.id === 0) {
+        // NAME step
+        const name = extractName(latestUser);
+        if (name) {
+          replyParts.push(`Nice to meet you, ${name}.`);
+          moveNext = true;
         } else {
-          replyParts.push("No problem — we can open it later when you’re ready.");
-          // Ask the next non-portal step
-          const nxt = SCRIPT.find(s => s.id > currentStep.id && !s.openPortal) || nextStep;
-          replyParts.push(nxt.prompt);
-          const out = replyParts.join(" ");
-          await appendMessage(sessionId, "assistant", `${STEP_TAG(nxt.id)} ${out}`);
+          // re-ask gently, do not advance
+          replyParts.push("Got it — just so I can address you properly, what’s your name?");
+          const out = `${replyParts.join(" ")}`;
+          await appendMessage(sessionId, "assistant", `${STEP_TAG(askedStep.id)} ${out}`);
           return res.status(200).json({ reply: out, openPortal: false });
+        }
+      } else if (askedStep.openPortal) {
+        // Portal invite — only open on explicit yes
+        if (isAffirmative(latestUser)) {
+          openPortal = true;
+          moveNext = true;
+        } else {
+          replyParts.push("No worries — we can do that later when you’re ready.");
+          moveNext = true; // continue the script
+        }
+      } else {
+        // Generic step: if keywords exist, require a match; otherwise accept any non-empty
+        if ((askedStep.keywords && askedStep.keywords.length > 0)) {
+          if (stepAnswered(askedStep, latestUser)) moveNext = true;
+          else {
+            replyParts.push("Thanks — to help me tailor this properly:");
+            replyParts.push(askedStep.prompt);
+            const out = replyParts.join(" ");
+            await appendMessage(sessionId, "assistant", `${STEP_TAG(askedStep.id)} ${out}`);
+            return res.status(200).json({ reply: out, openPortal: false });
+          }
+        } else {
+          // accept any reply for steps without keywords
+          moveNext = latestUser.length > 0;
         }
       }
 
-      // Otherwise, normal advance
-      replyParts.push(nextStep.prompt);
+      // Advance
+      let nextIndex = SCRIPT.findIndex(s => s.id === askedStep.id) + 1;
+      if (nextIndex >= SCRIPT.length) nextIndex = SCRIPT.length - 1;
+      let nextStep = SCRIPT[nextIndex];
+
+      // Enforce portal minimum index
+      if (nextStep.openPortal && nextIndex < MIN_PORTAL_INVITE_INDEX) {
+        nextIndex = MIN_PORTAL_INVITE_INDEX;
+        nextStep = SCRIPT[nextIndex] || nextStep;
+      }
+
+      // If the current step WAS the portal invite and user said yes, keep portal closed in UI until the client confirms
+      if (askedStep.openPortal && isAffirmative(latestUser)) {
+        // Say the follow-up and signal UI to open
+        const pf = SCRIPT.find(s => s.name === "portal_followup") || nextStep;
+        replyParts.push(pf.prompt);
+        const out = replyParts.join(" ");
+        await appendMessage(sessionId, "assistant", `${STEP_TAG(pf.id)} ${out}`);
+        return res.status(200).json({ reply: out, openPortal: true });
+      }
+
+      // Normal progression
+      if (moveNext) {
+        replyParts.push(nextStep.prompt);
+        const out = replyParts.join(" ");
+        await appendMessage(sessionId, "assistant", `${STEP_TAG(nextStep.id)} ${out}`);
+        return res.status(200).json({ reply: out, openPortal: false });
+      }
+
+      // If we got here, we didn’t moveNext (shouldn’t happen), re-ask
+      replyParts.push(askedStep.prompt);
       const out = replyParts.join(" ");
-      await appendMessage(sessionId, "assistant", `${STEP_TAG(nextStep.id)} ${out}`);
+      await appendMessage(sessionId, "assistant", `${STEP_TAG(askedStep.id)} ${out}`);
       return res.status(200).json({ reply: out, openPortal: false });
     }
 
-    // Off-script / small talk: steer back using a short LLM sentence, then re-ask current prompt
-    try {
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        temperature: 0.4,
-        messages: [
-          {
-            role: "system",
-            content:
-              "You are Mark, a professional, empathetic UK debt advisor. The user went off-script; reply in ONE short, natural sentence that acknowledges what they said and gently steers back to the current question. Do not repeat the question verbatim; keep it warm and human."
-          },
-          {
-            role: "user",
-            content: `Current question: "${currentStep.prompt}". User said: "${userMessage}".`
-          }
-        ]
-      });
-      const steer = completion.choices[0]?.message?.content?.trim();
-      if (steer) replyParts.push(steer);
-    } catch {
-      // ignore LLM failure; fall back
-    }
-
-    if (!replyParts.length) replyParts.push("Thanks for sharing — shall we keep going?");
-    replyParts.push(currentStep.prompt);
-    const out = replyParts.join(" ");
-    await appendMessage(sessionId, "assistant", `${STEP_TAG(currentStep.id)} ${out}`);
+    // No new user turn since we last asked — just re-emit the same step prompt gently
+    const current = SCRIPT.find(s => s.id === lastAsked) || SCRIPT[0];
+    const out = `${current.prompt}`;
+    await appendMessage(sessionId, "assistant", `${STEP_TAG(current.id)} ${out}`);
     return res.status(200).json({ reply: out, openPortal: false });
 
-  } catch (err: any) {
-    console.error("❌ chat.ts error:", err?.message || err);
-    return res.status(500).json({ reply: "Sorry — something went wrong on my end. Let’s try that again." });
+  } catch (e: any) {
+    console.error("chat api error:", e?.message || e);
+    return res.status(200).json({ reply: "Sorry — something went wrong on my end. Let’s try again.", openPortal: false });
   }
 }
