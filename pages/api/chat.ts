@@ -5,7 +5,7 @@ import OpenAI from "openai";
 import scriptJson from "../../utils/full_script_logic.json";
 import faqs from "../../utils/faqs.json";
 
-// ---------- Setup ----------
+/** ========================= Setup ========================= */
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const supabase = createClient(
@@ -17,11 +17,11 @@ type ChatMsg = { role: "user" | "assistant"; content: string };
 
 type Step = {
   id: number;
-  name: string;           // logical name of the step
-  prompt: string;         // what we ask next
-  keywords?: string[];    // heuristics for “answered”
-  openPortal?: boolean;
-  auto_advance?: boolean; // auto-advance once we arrive here
+  name?: string;          // optional (we’ll fallback by index)
+  prompt: string;
+  keywords?: string[];
+  openPortal?: boolean;   // only honored on the "invite_portal" step
+  auto_advance?: boolean; // not commonly used but supported
 };
 
 type Script = {
@@ -32,62 +32,73 @@ type Script = {
 
 const S = scriptJson as Script;
 
-// ---------- Utilities ----------
+/** ========================= Helpers ========================= */
 const clean = (s: any) => (s ?? "").toString().trim();
 const normalize = (s: string) => clean(s).toLowerCase();
+const STEP_TAG = (id: number) => `<!--STEP:${id}-->`;
+const readStepTag = (t: string) => {
+  const m = t.match(/<!--STEP:(\d+)-->/);
+  return m ? parseInt(m[1], 10) : null;
+};
+
 const matchAny = (s: string, arr: string[] = []) => {
   if (!arr?.length) return true;
   const low = normalize(s);
   return arr.some(k => low.includes(k.toLowerCase()));
 };
 
-const STEP_TAG = (id: number) => `<!--STEP:${id}-->`;
-function readStepTag(text: string): number | null {
-  const m = text.match(/<!--STEP:(\d+)-->/);
-  return m ? parseInt(m[1], 10) : null;
+const nameByIndex = (id: number) => {
+  // Fallback mapping if your JSON doesn’t include "name"
+  const map: Record<number, string> = {
+    0: "name",
+    1: "concern",
+    2: "more_detail",
+    3: "affordability",
+    4: "urgent_check",
+    5: "invite_portal",
+    6: "portal_followup",
+    7: "regulatory_note",
+    8: "docs_request",
+    9: "wrap_up"
+  };
+  return map[id] || `step_${id}`;
+};
+
+const currentStepName = (st: Step) => st.name || nameByIndex(st.id);
+
+function isPureGreeting(s: string): boolean {
+  const g = S.small_talk?.greetings || ["hi","hello","hey","good morning","good afternoon","good evening"];
+  const low = normalize(s);
+  // “pure” = short & doesn’t carry a debt intent
+  const short = low.split(/\s+/).length <= 4;
+  const hasDebtWords = /(debt|card|loan|arrears|missed|repay|interest|bailiff|ccj)/i.test(s);
+  return short && !hasDebtWords && g.some(w => low.startsWith(w));
 }
 
-// Pure greeting (short, doesn’t answer)
-function isGreeting(s: string, S: Script): boolean {
-  const g = S.small_talk?.greetings || [];
-  const low = s.trim().toLowerCase();
-  return g.some(w => low.startsWith(w));
-}
-function greetAck(S: Script): string {
-  const acks = S.small_talk?.ack || [];
-  return acks.length ? acks[Math.floor(Math.random() * acks.length)] : "Hi there — I’m here to help.";
-}
-
-// New: reciprocal small-talk Q&A (answer then steer back)
 function smallTalkAnswer(s: string): string | null {
   const low = s.toLowerCase();
-  // “how are you” / “how’s your day”
-  if (/(^|\b)how('?s|\s+is)?\s+(your|ya)\s+(day|evening|morning)?\b/.test(low) || /\bhow are you\b/.test(low)) {
-    return "I’m good, thanks for asking — more importantly, let’s focus on you.";
+  if (/\bhow (are|r) you\b/.test(low) || /how('?s|\s+is)\s+(your|ya)\s+(day|evening|morning)?\b/.test(low)) {
+    return "I’m good, thanks for asking — more importantly, let’s focus on getting you the help you need.";
   }
-  // “who are you / what’s your name”
   if (/\bwho (are|r) you\b/.test(low) || /\bwhat('?s|\s+is)\s+your\s+name\b/.test(low)) {
     return "I’m Mark, your UK debt advisor in this chat.";
   }
-  // “where are you based”
   if (/\bwhere (are|r) you based\b/.test(low)) {
-    return "I’m a UK-based digital advisor, here to help wherever you are.";
+    return "I’m a UK-based digital advisor.";
   }
-  // “are you real / human”
   if (/\b(are you (real|human)|is this real)\b/.test(low)) {
-    return "I’m a virtual advisor — friendly, trained on UK guidance, and here to support you.";
+    return "I’m a virtual advisor trained on UK guidance — here to support you.";
   }
   return null;
 }
 
-function empathyBlurb(s: string, S: Script): string | null {
-  if (!S.empathy) return null;
-  for (const e of S.empathy) {
-    try {
-      const rx = new RegExp(e.re, "i");
-      if (rx.test(s)) return e.msg;
-    } catch {}
-  }
+function empathyBlurb(s: string): string | null {
+  const low = s.toLowerCase();
+  // Quick, intent-specific empathy (short & upbeat; no “thanks”)
+  if (/bailiff|enforcement|ccj|default|court/.test(low)) return "That’s stressful — we’ll take it one step at a time and protect essentials.";
+  if (/miss(ed)? payment|arrears|late fee/.test(low)) return "I’m sorry that’s been happening — we’ll steady things from here.";
+  if (/interest|charges|high payment|repay/.test(low)) return "I’m sorry it’s felt heavy — I’ll do my best to help reduce the pressure.";
+  if (/debt|card|loan|overdraft|catalogue|finance/.test(low)) return "I’m sorry to hear that — we’ll work out the best route forward together.";
   return null;
 }
 
@@ -121,23 +132,23 @@ function pickFaq(userMsg: string): string | null {
 }
 
 async function briefSteer(currentPrompt: string, userMsg: string): Promise<string> {
-  if (!process.env.OPENAI_API_KEY) return `Let’s keep on track: ${currentPrompt}`;
+  if (!process.env.OPENAI_API_KEY) return `Let’s come back to this: ${currentPrompt}`;
   try {
     const r = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       temperature: 0.3,
       messages: [
-        { role: "system", content: "Be a UK debt advisor named Mark. Reply in one short, kind sentence, and steer them back to the current question without repeating it verbatim." },
-        { role: "user", content: `Current question:\n${currentPrompt}\nUser said:\n${userMsg}\nGive one gentle sentence to guide them back.` }
+        { role: "system", content: "You are a kind, concise UK debt advisor named Mark. In one short sentence, acknowledge briefly then steer the user back to the current question without repeating it verbatim." },
+        { role: "user", content: `Current question:\n${currentPrompt}\nUser said:\n${userMsg}\nGive one short sentence to guide them back.` }
       ]
     });
-    return r.choices[0]?.message?.content?.trim() || `Let’s keep on track: ${currentPrompt}`;
+    return r.choices[0]?.message?.content?.trim() || `Let’s come back to this: ${currentPrompt}`;
   } catch {
-    return `Let’s keep on track: ${currentPrompt}`;
+    return `Let’s come back to this: ${currentPrompt}`;
   }
 }
 
-// ---------- DB (messages table) ----------
+/** =============== DB (messages) =============== */
 async function loadHistory(sessionId: string): Promise<ChatMsg[]> {
   const { data } = await supabase
     .from("messages")
@@ -146,11 +157,9 @@ async function loadHistory(sessionId: string): Promise<ChatMsg[]> {
     .order("created_at", { ascending: true });
   return (data || []) as ChatMsg[];
 }
-
 async function appendMessage(sessionId: string, role: "user" | "assistant", content: string) {
   await supabase.from("messages").insert({ session_id: sessionId, role, content });
 }
-
 function lastStepFromHistory(history: ChatMsg[]): number | null {
   for (let i = history.length - 1; i >= 0; i--) {
     if (history[i].role !== "assistant") continue;
@@ -159,7 +168,6 @@ function lastStepFromHistory(history: ChatMsg[]): number | null {
   }
   return null;
 }
-
 function extractNameFromHistory(history: ChatMsg[]): string | undefined {
   for (let i = history.length - 1; i >= 0; i--) {
     if (history[i].role === "user") {
@@ -170,48 +178,47 @@ function extractNameFromHistory(history: ChatMsg[]): string | undefined {
   return undefined;
 }
 
-// ---------- Handler ----------
+/** =============== Handler =============== */
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).end();
-
   try {
     const sessionId = clean(req.body.sessionId) || Math.random().toString(36).slice(2);
     const userMessage = clean(req.body.userMessage || req.body.message);
 
-    // Load history from existing `messages` table
+    // Load history
     let history = await loadHistory(sessionId);
 
-    // FIRST TURN: seed with intro (no globe line)
+    // First turn → seed with step 0 prompt (no extra lines)
     if (!history.length) {
-      const intro = S.steps[0]?.prompt || "Hello! What prompted you to seek help today?";
+      const intro = S.steps[0]?.prompt || "Hello — what prompted you to seek help with your debts today?";
       const marked = `${intro}\n${STEP_TAG(0)}`;
       await appendMessage(sessionId, "assistant", marked);
       return res.status(200).json({ reply: intro, sessionId, stepIndex: 0, totalSteps: S.steps.length });
     }
 
-    // Append user input
+    // Save user input
     if (userMessage) await appendMessage(sessionId, "user", userMessage);
 
-    // Compute current step
+    // Determine current step
     history = await loadHistory(sessionId);
-    let currentStepIdx = lastStepFromHistory(history);
-    if (currentStepIdx == null) currentStepIdx = 0;
-    const currentStep = S.steps[currentStepIdx] || S.steps[0];
+    let currentIdx = lastStepFromHistory(history);
+    if (currentIdx == null) currentIdx = 0;
+    const currentStep = S.steps[currentIdx] || S.steps[0];
+    const currentName = currentStepName(currentStep);
 
-    // Determine if the user already answered the current step
+    // Decide whether the user answered the current step
     const answeredCurrent = matchAny(userMessage, currentStep.keywords || []);
     const tokenCount = userMessage.split(/\s+/).filter(Boolean).length;
 
-    // Pure greeting (short + not answering)
-    const pureGreeting = isGreeting(userMessage, S) && !answeredCurrent && tokenCount <= 4;
-    if (pureGreeting && currentStepIdx <= 1) {
-      const reply = `${greetAck(S)}\n${currentStep.prompt}`;
+    // If pure greeting AND we’re still early, acknowledge briefly then ask the same step
+    if (isPureGreeting(userMessage) && !answeredCurrent && currentIdx <= 1) {
+      const reply = `Hi — I’m here to help. ${personalise(currentStep.prompt, extractNameFromHistory(history))}`;
       const marked = `${reply}\n${STEP_TAG(currentStep.id)}`;
       await appendMessage(sessionId, "assistant", marked);
       return res.status(200).json({ reply, sessionId, stepIndex: currentStep.id, totalSteps: S.steps.length });
     }
 
-    // New: reciprocal small-talk Q (brief answer, stay on the SAME step)
+    // Small-talk Q (e.g., “how are you?”) → answer briefly, keep same step (no “thanks”)
     const smallQA = smallTalkAnswer(userMessage);
     if (smallQA && !answeredCurrent) {
       const reply = `${smallQA} ${personalise(currentStep.prompt, extractNameFromHistory(history))}`;
@@ -220,28 +227,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(200).json({ reply, sessionId, stepIndex: currentStep.id, totalSteps: S.steps.length, openPortal: false });
     }
 
-    // Empathy + FAQ candidates
-    const empath = empathyBlurb(userMessage, S);
-    const faq = pickFaq(userMessage);
+    // Lightweight empathy (only once per turn, short, no “thanks”)
+    const empath = empathyBlurb(userMessage);
 
-    // Name capture
+    // Name capture if we’re at name step
     let nameState = extractNameFromHistory(history);
-    if (!nameState && currentStep.name === "name") {
+    if (!nameState && currentName === "name") {
       const n = extractName(userMessage);
       if (n) nameState = n;
     }
 
-    // Advance logic
-    let nextIdx = currentStepIdx;
+    // Should we advance?
+    let nextIdx = currentIdx;
     if (currentStep.auto_advance || answeredCurrent) {
-      nextIdx = Math.min(currentStepIdx + 1, S.steps.length - 1);
+      nextIdx = Math.min(currentIdx + 1, S.steps.length - 1);
     }
 
-    // Portal gating at the dedicated step ONLY
-    if (currentStep.name === "invite_portal") {
-      const agree = /^(y(es)?|ok(ay)?|sure|go ahead|open|start|portal|set up)/i.test(userMessage.trim());
-      if (!agree) {
-        const reply = "No problem — I’ll keep the portal closed for now. When you’re ready just say “open the portal”.";
+    // Portal invite step: only move if they agree; don’t pop early
+    if (currentName === "invite_portal") {
+      const agree = /^(y(es)?|ok(ay)?|sure|go ahead|open|start|portal|set up)/i.test(userMessage);
+      if (!agree && !answeredCurrent) {
+        const reply = (empath ? empath + " " : "") + "No problem — I’ll keep the portal closed for now. When you’re ready just say “open the portal”.";
         const marked = `${reply}\n${STEP_TAG(currentStep.id)}`;
         await appendMessage(sessionId, "assistant", marked);
         return res.status(200).json({ reply, sessionId, stepIndex: currentStep.id, totalSteps: S.steps.length, openPortal: false });
@@ -249,25 +255,54 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     const nextStep = S.steps[nextIdx];
-    let reply = personalise(nextStep.prompt, nameState);
+    const nextName = currentStepName(nextStep);
 
-    if (!currentStep.auto_advance && !answeredCurrent && nextIdx === currentStepIdx) {
-      // Didn’t match → steer back to current step
+    // Acknowledgement style per step (no generic “Thanks — that helps.”)
+    const ACK: Record<string, string> = {
+      name: "",            // user just told us their name → no “thanks”, we’ll be warm in the next line
+      concern: empath || "Got it.",
+      more_detail: empath || "Understood.",
+      affordability: "Understood.",
+      urgent_check: "Thanks — noted.",
+      invite_portal: empath || "",
+      portal_followup: "",
+      regulatory_note: "",
+      docs_request: "",
+      wrap_up: ""
+    };
+
+    let reply: string;
+
+    if (!currentStep.auto_advance && !answeredCurrent && nextIdx === currentIdx) {
+      // Didn’t answer → gentle steer
       const steer = await briefSteer(currentStep.prompt, userMessage);
-      reply = [empath, faq, steer].filter(Boolean).join(" ");
+      // Prefer empathy first, then steer, maybe append an FAQ if appropriate
+      const faq = pickFaq(userMessage);
+      reply = [empath, steer, faq].filter(Boolean).join(" ");
+      const marked = `${reply}\n${STEP_TAG(currentStep.id)}`;
+      await appendMessage(sessionId, "assistant", marked);
+      return res.status(200).json({ reply, sessionId, stepIndex: currentStep.id, totalSteps: S.steps.length, openPortal: false });
     } else {
-      // Advanced → add soft acknowledgement
-      const soft = empath || (currentStepIdx > 0 ? "Thanks — that helps." : "");
-      reply = [soft, reply].filter(Boolean).join(" ");
+      // Advancing to next step
+      // Empathy for hardship shares on early steps; otherwise use short ACK from table
+      let head = "";
+      if (currentName === "name") {
+        // Use a friendly line right after learning the name
+        const nm = nameState ? `Nice to meet you, ${nameState}.` : "Nice to meet you.";
+        head = nm;
+      } else {
+        head = ACK[currentName] || "";
+      }
+
+      reply = [head, personalise(nextStep.prompt, nameState)].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
     }
 
-    // Decide whether to open portal (only on invite_portal and only after agreement)
+    // Portal opens ONLY on invite step and ONLY when we just agreed
     let openPortal = false;
-    if (currentStep.name === "invite_portal" && currentStep.openPortal) {
+    if (currentName === "invite_portal" && currentStep.openPortal) {
       openPortal = true;
     }
 
-    // Tag with the *next* step we’re asking
     const marked = `${reply}\n${STEP_TAG(nextStep.id)}`;
     await appendMessage(sessionId, "assistant", marked);
 
