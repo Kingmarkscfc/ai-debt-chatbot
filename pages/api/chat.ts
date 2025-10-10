@@ -17,12 +17,13 @@ type ChatMsg = { role: "user" | "assistant"; content: string };
 
 type Step = {
   id: number;
-  name: string;
-  prompt: string;
-  keywords?: string[];
+  name: string;           // logical name of the step
+  prompt: string;         // what we ask next
+  keywords?: string[];    // heuristics for “answered”
   openPortal?: boolean;
-  auto_advance?: boolean;
+  auto_advance?: boolean; // auto-advance once we arrive here
 };
+
 type Script = {
   steps: Step[];
   small_talk?: { greetings?: string[]; ack?: string[] };
@@ -32,13 +33,13 @@ type Script = {
 const S = scriptJson as Script;
 
 // ---------- Utilities ----------
-function clean(s: any) { return (s ?? "").toString().trim(); }
-function normalize(s: string) { return clean(s).toLowerCase(); }
-function matchAny(s: string, arr: string[] = []) {
+const clean = (s: any) => (s ?? "").toString().trim();
+const normalize = (s: string) => clean(s).toLowerCase();
+const matchAny = (s: string, arr: string[] = []) => {
   if (!arr?.length) return true;
   const low = normalize(s);
   return arr.some(k => low.includes(k.toLowerCase()));
-}
+};
 
 const STEP_TAG = (id: number) => `<!--STEP:${id}-->`;
 function readStepTag(text: string): number | null {
@@ -46,6 +47,7 @@ function readStepTag(text: string): number | null {
   return m ? parseInt(m[1], 10) : null;
 }
 
+// Pure greeting (short, doesn’t answer)
 function isGreeting(s: string, S: Script): boolean {
   const g = S.small_talk?.greetings || [];
   const low = s.trim().toLowerCase();
@@ -54,6 +56,28 @@ function isGreeting(s: string, S: Script): boolean {
 function greetAck(S: Script): string {
   const acks = S.small_talk?.ack || [];
   return acks.length ? acks[Math.floor(Math.random() * acks.length)] : "Hi there — I’m here to help.";
+}
+
+// New: reciprocal small-talk Q&A (answer then steer back)
+function smallTalkAnswer(s: string): string | null {
+  const low = s.toLowerCase();
+  // “how are you” / “how’s your day”
+  if (/(^|\b)how('?s|\s+is)?\s+(your|ya)\s+(day|evening|morning)?\b/.test(low) || /\bhow are you\b/.test(low)) {
+    return "I’m good, thanks for asking — more importantly, let’s focus on you.";
+  }
+  // “who are you / what’s your name”
+  if (/\bwho (are|r) you\b/.test(low) || /\bwhat('?s|\s+is)\s+your\s+name\b/.test(low)) {
+    return "I’m Mark, your UK debt advisor in this chat.";
+  }
+  // “where are you based”
+  if (/\bwhere (are|r) you based\b/.test(low)) {
+    return "I’m a UK-based digital advisor, here to help wherever you are.";
+  }
+  // “are you real / human”
+  if (/\b(are you (real|human)|is this real)\b/.test(low)) {
+    return "I’m a virtual advisor — friendly, trained on UK guidance, and here to support you.";
+  }
+  return null;
 }
 
 function empathyBlurb(s: string, S: Script): string | null {
@@ -90,7 +114,7 @@ function pickFaq(userMsg: string): string | null {
     const low = normalize(userMsg);
     for (const f of (faqs as any[])) {
       const keys: string[] = Array.isArray(f.keywords) ? f.keywords : [];
-      if (keys.some(k => low.includes(k.toLowerCase()))) return f.a as string;
+      if (keys.some(k => low.includes(k.toLowerCase()))) return (f as any).a as string;
     }
   } catch {}
   return null;
@@ -169,7 +193,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (userMessage) await appendMessage(sessionId, "user", userMessage);
 
     // Compute current step
-    history = await loadHistory(sessionId); // reload with latest user row
+    history = await loadHistory(sessionId);
     let currentStepIdx = lastStepFromHistory(history);
     if (currentStepIdx == null) currentStepIdx = 0;
     const currentStep = S.steps[currentStepIdx] || S.steps[0];
@@ -177,9 +201,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Determine if the user already answered the current step
     const answeredCurrent = matchAny(userMessage, currentStep.keywords || []);
     const tokenCount = userMessage.split(/\s+/).filter(Boolean).length;
-    const pureGreeting = isGreeting(userMessage, S) && !answeredCurrent && tokenCount <= 4;
 
-    // Friendly small-talk ONLY for pure greeting (short + not answering)
+    // Pure greeting (short + not answering)
+    const pureGreeting = isGreeting(userMessage, S) && !answeredCurrent && tokenCount <= 4;
     if (pureGreeting && currentStepIdx <= 1) {
       const reply = `${greetAck(S)}\n${currentStep.prompt}`;
       const marked = `${reply}\n${STEP_TAG(currentStep.id)}`;
@@ -187,7 +211,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(200).json({ reply, sessionId, stepIndex: currentStep.id, totalSteps: S.steps.length });
     }
 
-    // Empathy + FAQ
+    // New: reciprocal small-talk Q (brief answer, stay on the SAME step)
+    const smallQA = smallTalkAnswer(userMessage);
+    if (smallQA && !answeredCurrent) {
+      const reply = `${smallQA} ${personalise(currentStep.prompt, extractNameFromHistory(history))}`;
+      const marked = `${reply}\n${STEP_TAG(currentStep.id)}`;
+      await appendMessage(sessionId, "assistant", marked);
+      return res.status(200).json({ reply, sessionId, stepIndex: currentStep.id, totalSteps: S.steps.length, openPortal: false });
+    }
+
+    // Empathy + FAQ candidates
     const empath = empathyBlurb(userMessage, S);
     const faq = pickFaq(userMessage);
 
@@ -204,11 +237,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       nextIdx = Math.min(currentStepIdx + 1, S.steps.length - 1);
     }
 
-    // Portal gating: only step with name invite_portal, only if agreed
+    // Portal gating at the dedicated step ONLY
     if (currentStep.name === "invite_portal") {
       const agree = /^(y(es)?|ok(ay)?|sure|go ahead|open|start|portal|set up)/i.test(userMessage.trim());
       if (!agree) {
-        // hold position; don’t advance
         const reply = "No problem — I’ll keep the portal closed for now. When you’re ready just say “open the portal”.";
         const marked = `${reply}\n${STEP_TAG(currentStep.id)}`;
         await appendMessage(sessionId, "assistant", marked);
@@ -229,10 +261,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       reply = [soft, reply].filter(Boolean).join(" ");
     }
 
-    // Decide whether to open portal
+    // Decide whether to open portal (only on invite_portal and only after agreement)
     let openPortal = false;
     if (currentStep.name === "invite_portal" && currentStep.openPortal) {
-      openPortal = true; // only reached when user agreed above
+      openPortal = true;
     }
 
     // Tag with the *next* step we’re asking
