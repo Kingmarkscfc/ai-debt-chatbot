@@ -2,70 +2,67 @@
   "steps": [
     {
       "id": 0,
-      "name": "name",
+      "name": "get_name",
       "prompt": "Great, I look forward to helping you clear your debts. Can you let me know who I’m speaking to?",
-      "keywords": ["name","i am","i'm","im","my name is","it's","its","call me","mr","mrs","ms","dr"]
+      "expects": "name",
+      "keywords": ["name","i am","i'm","im","my name is","it's","its","call me","mr","mrs","ms"]
     },
     {
       "id": 1,
-      "name": "concern",
+      "name": "main_concern",
       "prompt": "Just so I can point you in the right direction, what would you say your main concern is with the debts?",
-      "keywords": ["bailiff","bailiffs","default","ccj","missed","late","interest","charges","arrears","rent","council","gas","electric","water","card","loan","overdraft","catalogue","finance","worry","concern","stress","repayment","payment"]
+      "expects": "concern",
+      "keywords": ["bailiff","bailiffs","default","ccj","missed","late","interest","charges","arrears","rent","council","gas","electric","water","card","loan","overdraft","catalogue","finance","stress","worry","repayments","afford"]
     },
     {
       "id": 2,
-      "name": "more_detail",
-      "prompt": "Thanks — that helps. Which debts are causing the most pressure right now (e.g. credit cards, personal loans, overdraft, car finance)?",
-      "keywords": ["credit","card","cards","loan","loans","overdraft","car finance","catalogue","store card","hire purchase","hp","payday","buy now pay later","klarna","afterpay"]
+      "name": "payment_levels",
+      "prompt": "Thanks — that helps. Roughly how much do you pay towards all debts each month, and what would feel affordable for you?",
+      "expects": "amounts",
+      "keywords": ["£","gbp","per month","month","afford","affordable","pay","payment","repay"]
     },
     {
       "id": 3,
-      "name": "affordability",
-      "prompt": "Roughly how much do you pay towards all debts each month, and what would feel affordable for you?",
-      "keywords": ["per month","monthly","pay","payment","repay","afford","affordable","budget","£","gbp","pounds","amount"]
+      "name": "urgency_check",
+      "prompt": "Understood. Is there anything urgent we should know about — like enforcement/bailiff action, court or default notices, or missed priority bills (rent, council tax, utilities)?",
+      "expects": "urgency",
+      "keywords": ["bailiff","enforcement","ccj","default","missed","priority","rent","council tax","gas","electric","water","no","none","not"]
     },
     {
       "id": 4,
-      "name": "urgent_check",
-      "prompt": "Is there anything urgent we should know about — like enforcement/bailiff action, court or default notices, or missed priority bills (rent, council tax, utilities)?",
-      "keywords": ["bailiff","enforcement","court","ccj","default","summons","warrant","eviction","rent","council tax","gas","electric","water","priority","arrears","missed","behind"]
+      "name": "acknowledgement",
+      "prompt": "Before we proceed, there’s no obligation to act on any advice today, and there are free sources of debt advice available at MoneyHelper. Shall we carry on?",
+      "expects": "ack",
+      "keywords": ["yes","carry on","continue","ok","okay","proceed","yep","yeah","sure"]
     },
     {
       "id": 5,
-      "name": "regulatory_note",
-      "prompt": "Before we proceed, there’s no obligation to act on any advice today, and there are free sources of debt advice available at MoneyHelper. Shall we carry on?",
-      "keywords": ["yes","ok","okay","proceed","continue","carry on","sure","go ahead"]
+      "name": "portal_invite",
+      "prompt": "Let’s set up your secure Client Portal so you can add details, upload documents, and check progress. Shall I open it now?",
+      "expects": "portalInvite",
+      "openPortal": true,
+      "keywords": ["yes","ok","okay","sure","go ahead","open","start","portal","set up","yep","yeah","please"]
     },
     {
       "id": 6,
-      "name": "health_disclosure",
-      "prompt": "Do you have any health or personal circumstances we should be aware of (for example a medical condition or vulnerability)? If you tell me, are you happy for us to save this and share it with trusted partners if necessary?",
-      "keywords": ["yes","no","prefer not","health","condition","vulnerable","disability","mental","anxiety","depression","consent","share","save"]
+      "name": "portal_followup",
+      "prompt": "While you’re in the portal, I’ll stay here to guide you. You can come back to the chat anytime using the button in the top-right corner. Please follow the outstanding tasks so we can understand your situation. Once you’ve saved your details, say “done” and we’ll continue.",
+      "expects": "free",
+      "keywords": ["done","saved","submitted","uploaded","finished","complete"]
     },
     {
       "id": 7,
-      "name": "invite_portal",
-      "prompt": "Let’s set up your secure Client Portal so you can add details, upload documents, and check progress. Shall I open it now?",
-      "keywords": ["yes","ok","okay","sure","go ahead","open","start","portal","set up"],
-      "openPortal": true
-    },
-    {
-      "id": 8,
-      "name": "portal_followup",
-      "prompt": "While you’re in the portal, I’ll stay here to guide you. You can return to the chat any time using the button in the top-right corner. Please follow the outstanding tasks so we can understand your situation. When you’ve saved your details, just say “done” and we’ll continue.",
-      "keywords": ["done","saved","submitted","uploaded","finished","complete","completed"]
-    },
-    {
-      "id": 9,
-      "name": "docs_request",
-      "prompt": "To assess the best solution and reduce your monthly outgoings, please upload: proof of ID; last 3 months’ bank statements; payslips (3 months or 12 weeks if weekly) if employed; last year’s tax return if self-employed; Universal Credit statements (12 months + latest full statement) if applicable; car finance docs if applicable; and any creditor letters or statements.",
+      "name": "documents_request",
+      "prompt": "To assess the best solution and save you money each month, please upload: proof of ID; last 3 months’ bank statements; payslips (3 months or 12 weeks if weekly) if employed; last year’s tax return if self-employed; Universal Credit statements (12 months + latest statement) if applicable; car finance docs if applicable; and any creditor letters or statements.",
+      "expects": "free",
       "keywords": ["uploaded","id","bank","payslip","sa302","uc","universal credit","car","finance","letters","statements","docs","documents"]
     },
     {
-      "id": 10,
+      "id": 8,
       "name": "wrap_up",
-      "prompt": "Brilliant — our assessment team will now review your case and come back with next steps. You can check progress in your portal any time. Is there anything else you’d like to ask before we wrap up?",
-      "keywords": ["no","that’s all","finish","goodbye","thanks","thank you","end","nothing"]
+      "prompt": "Brilliant — our assessment team will now review your case and come back with next steps. You can check progress in your portal anytime. Is there anything else you’d like to ask before we wrap up?",
+      "expects": "free",
+      "keywords": ["no","that’s all","finish","goodbye","thanks","thank you","end"]
     }
   ],
   "small_talk": {
