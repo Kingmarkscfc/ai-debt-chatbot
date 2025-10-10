@@ -29,7 +29,7 @@
       "id": 4,
       "name": "reassure",
       "prompt": "Don’t worry, {name} — we’re going to help you with your debts today.",
-      "keywords": [ "*" ],
+      "keywords": ["*"],
       "auto_advance": true
     },
     {
