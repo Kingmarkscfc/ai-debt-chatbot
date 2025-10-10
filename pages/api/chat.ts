@@ -2,38 +2,33 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { createClient } from "@supabase/supabase-js";
 import scriptJson from "../../utils/full_script_logic.json";
 
-// --- Supabase ---
-const supabase = createClient(
-  process.env.SUPABASE_URL || "",
-  (process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.SUPABASE_ANON_KEY ||
-    "")
-);
-
-// --- Types ---
 type Step = {
   id: number;
   name?: string;
   prompt: string;
   keywords?: string[];
   openPortal?: boolean;
-  expects?: "name"|"concern"|"amounts"|"urgency"|"ack"|"portalInvite"|"free";
+  expects?: "name" | "concern" | "amounts" | "urgency" | "ack" | "portalInvite" | "free";
 };
 type ScriptShape = { steps: Step[]; small_talk?: { greetings?: string[] } };
 
-const SCRIPT = (scriptJson as ScriptShape).steps;
-const GREETINGS = new Set(
-  ((scriptJson as ScriptShape).small_talk?.greetings || ["hi","hello","hey","good morning","good afternoon","good evening"])
-    .map(s => s.toLowerCase())
+const supabase = createClient(
+  process.env.SUPABASE_URL || "",
+  (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || "")
 );
 
-// --- Constants ---
+const SCRIPT = (scriptJson as ScriptShape).steps;
+const GREETINGS = new Set(
+  ((scriptJson as ScriptShape).small_talk?.greetings ||
+    ["hi", "hello", "hey", "good morning", "good afternoon", "good evening"]
+  ).map(s => s.toLowerCase())
+);
+
 const STEP_TAG = (n: number) => `[[STEP:${n}]]`;
 const STEP_RE = /\[\[STEP:(-?\d+)\]\]/;
 const OPENING = "Hello! My name’s Mark. What prompted you to seek help with your debts today?";
-const PORTAL_MIN_INDEX = 5; // explicit: portal step 5
+const PORTAL_MIN_INDEX = 5;
 
-// --- DB helpers ---
 async function loadHistory(sessionId: string) {
   const { data } = await supabase
     .from("messages")
@@ -43,14 +38,13 @@ async function loadHistory(sessionId: string) {
     .limit(400);
   return (data || []).map(m => ({ role: m.role as "user" | "assistant", content: String(m.content || "") }));
 }
-async function append(sessionId: string, role: "user"|"assistant", content: string) {
+async function append(sessionId: string, role: "user" | "assistant", content: string) {
   await supabase.from("messages").insert({ session_id: sessionId, role, content });
 }
 
-// --- Utils ---
 const norm = (s: string) => (s || "").toLowerCase().trim();
 
-function assistantSteps(history: Array<{role:"user"|"assistant"; content:string}>): number[] {
+function assistantSteps(history: Array<{ role: "user" | "assistant"; content: string }>): number[] {
   const ids: number[] = [];
   for (const h of history) {
     if (h.role !== "assistant") continue;
@@ -59,7 +53,7 @@ function assistantSteps(history: Array<{role:"user"|"assistant"; content:string}
   }
   return ids;
 }
-function lastAssistantStep(history: Array<{role:"user"|"assistant"; content:string}>) {
+function lastAssistantStep(history: Array<{ role: "user" | "assistant"; content: string }>) {
   for (let i = history.length - 1; i >= 0; i--) {
     if (history[i].role === "assistant") {
       const m = history[i].content.match(STEP_RE);
@@ -68,13 +62,10 @@ function lastAssistantStep(history: Array<{role:"user"|"assistant"; content:stri
   }
   return { idx: -1, step: -1 };
 }
-function lastUserIdx(history: Array<{role:"user"|"assistant"; content:string}>) {
+function lastUserIdx(history: Array<{ role: "user" | "assistant"; content: string }>) {
   for (let i = history.length - 1; i >= 0; i--) if (history[i].role === "user") return i;
   return -1;
 }
-
-// Find the earliest missing step (0..n)
-// If none missing, returns next after the max we’ve seen (capped to last step)
 function earliestMissingStep(seen: number[]): number {
   const maxId = Math.max(...SCRIPT.map(s => s.id));
   const set = new Set(seen);
@@ -84,19 +75,18 @@ function earliestMissingStep(seen: number[]): number {
   return Math.min(maxId, Math.max(...seen, -1) + 1);
 }
 
-// Extractors/validators
 function extractName(s: string): string | null {
   const rx = /(my name is|i am|i'm|im|it's|its|call me)\s+([a-z][a-z\s'’-]{1,60})/i;
   const m = s.match(rx);
   if (m?.[2]) {
-    const raw = m[2].replace(/\s+/g," ").trim();
-    return raw.split(" ").map(w => w ? w[0].toUpperCase()+w.slice(1).toLowerCase() : "").join(" ");
+    const raw = m[2].replace(/\s+/g, " ").trim();
+    return raw.split(" ").map(w => w ? w[0].toUpperCase() + w.slice(1).toLowerCase() : "").join(" ");
   }
   const m2 = s.match(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b/);
   return m2?.[1] || null;
 }
 function amountsAnswered(s: string) {
-  const nums = (s.match(/£?\s*([0-9]+(?:\.[0-9]{1,2})?)/gi) || []).map(x => Number(x.replace(/[^0-9.]/g,"")));
+  const nums = (s.match(/£?\s*([0-9]+(?:\.[0-9]{1,2})?)/gi) || []).map(x => Number(x.replace(/[^0-9.]/g, "")));
   return nums.length >= 2;
 }
 function urgencyAnswered(s: string) {
@@ -117,8 +107,7 @@ function keywordsHit(step: Step, s: string) {
   return step.keywords.some(k => u.includes(k.toLowerCase()));
 }
 
-// Empathy (optional line; never drives step)
-const EMPATHY: Array<[RegExp,string]> = [
+const EMPATHY: Array<[RegExp, string]> = [
   [/bailiff|enforcement/i, "I know bailiff contact is stressful — we’ll get protections in place quickly."],
   [/ccj|county court|default/i, "Court or default letters can be worrying — we’ll address that in your plan."],
   [/miss(ed)?\s+payments?|arrears|late fees?/i, "Missed payments happen — we’ll focus on stabilising things now."],
@@ -130,7 +119,6 @@ function empathy(s: string) {
   return null;
 }
 
-// --- Handler ---
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).end();
 
@@ -139,7 +127,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const userMessage = String(req.body.userMessage || req.body.message || "").trim();
     if (!sessionId) return res.status(400).json({ reply: "Missing session.", openPortal: false });
 
-    // hard reset command
+    // hard reset
     if (/^(reset|restart|start again)$/i.test(userMessage)) {
       await append(sessionId, "assistant", `${STEP_TAG(-1)} ${OPENING}`);
       return res.status(200).json({ reply: OPENING, openPortal: false });
@@ -148,7 +136,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Load history
     let history = await loadHistory(sessionId);
 
-    // First time: send the opener
+    // First time: send opener
     if (history.length === 0) {
       await append(sessionId, "assistant", `${STEP_TAG(-1)} ${OPENING}`);
       return res.status(200).json({ reply: OPENING, openPortal: false });
@@ -161,13 +149,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     const seenSteps = assistantSteps(history).filter(n => n >= 0);
-    const { idx: lastAIdx, step: lastAskedRaw } = lastAssistantStep(history);
-    const lastAsked = lastAskedRaw;
+    const { idx: lastAIdx, step: lastAsked } = lastAssistantStep(history);
     const uIdx = lastUserIdx(history);
     const latestUser = uIdx >= 0 ? history[uIdx].content : "";
 
-    // If the only assistant message is the opener (STEP:-1) or there are no valid step markers yet,
-    // start at step 0 when the user replies.
+    // If we’ve only shown the opener (STEP:-1), move to step 0 on first user message
     if (seenSteps.length === 0) {
       const greet = GREETINGS.has(norm(latestUser)) ? "Hi — you’re in the right place." : "Thanks for telling me.";
       const step0 = SCRIPT[0];
@@ -176,34 +162,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(200).json({ reply: out, openPortal: false });
     }
 
-    // Defensive recovery:
-    // If history contains out-of-order steps (e.g. 4 without 0..3), rewind to earliest missing.
+    // Recovery to the earliest missing step
     const expected = earliestMissingStep(seenSteps);
-    let targetStepId = expected;
-
-    // If user already answered up to the last asked step correctly, we’ll advance; else we’ll re-ask target.
-    let askedStep = SCRIPT.find(s => s.id === lastAsked) || SCRIPT[0];
-
-    // If last asked is ahead of the expected chain (gap), force re-ask the target step
-    if (lastAsked >= 0 && lastAsked !== targetStepId) {
-      askedStep = SCRIPT.find(s => s.id === targetStepId) || SCRIPT[0];
-      // explain gently only if user just spoke something unrelated
-      const out = `${askedStep.prompt}`;
-      await append(sessionId, "assistant", `${STEP_TAG(askedStep.id)} ${out}`);
-      return res.status(200).json({ reply: out, openPortal: false });
+    if (lastAsked !== expected) {
+      const asked = SCRIPT.find(s => s.id === expected) || SCRIPT[0];
+      await append(sessionId, "assistant", `${STEP_TAG(asked.id)} ${asked.prompt}`);
+      return res.status(200).json({ reply: asked.prompt, openPortal: false });
     }
 
-    // Proceed normally: the user must have spoken after the last assistant step
+    // If the last user message occurred before the last assistant step, re-ask the same step
     if (uIdx <= lastAIdx) {
-      const out = `${askedStep.prompt}`;
-      await append(sessionId, "assistant", `${STEP_TAG(askedStep.id)} ${out}`);
-      return res.status(200).json({ reply: out, openPortal: false });
+      const asked = SCRIPT.find(s => s.id === lastAsked) || SCRIPT[0];
+      await append(sessionId, "assistant", `${STEP_TAG(asked.id)} ${asked.prompt}`);
+      return res.status(200).json({ reply: asked.prompt, openPortal: false });
     }
 
-    // Validate answer for the asked step
+    // Validate the answer to the currently asked step
+    const askedStep = SCRIPT.find(s => s.id === lastAsked) || SCRIPT[0];
+
     let moveNext = false;
     let openPortal = false;
-    let replyParts: string[] = [];
+    const replyParts: string[] = [];
 
     const em = empathy(latestUser);
     if (em) replyParts.push(em);
@@ -221,7 +200,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
       case "concern": {
         moveNext = keywordsHit(askedStep, latestUser);
-        if (!moveNext) replyParts.push("Thanks — to help me tailor this properly:", askedStep.prompt);
+        if (!moveNext) replyParts.push("Thanks — to help me tailor this properly, what’s the main concern with the debts?");
         break;
       }
       case "amounts": {
@@ -252,18 +231,26 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     }
 
-    // Decide next step index
     const askedIdx = SCRIPT.findIndex(s => s.id === askedStep.id);
-    let nextIdx = Math.min(askedIdx + (moveNext ? 1 : 0), SCRIPT.length - 1);
+
+    // If the user hasn't answered adequately, re-ask WITHOUT adding another prompt line
+    if (!moveNext) {
+      const out = replyParts.join(" ");
+      await append(sessionId, "assistant", `${STEP_TAG(askedStep.id)} ${out}`);
+      return res.status(200).json({ reply: out, openPortal: false });
+    }
+
+    // Otherwise, advance
+    let nextIdx = Math.min(askedIdx + 1, SCRIPT.length - 1);
     let nextStep = SCRIPT[nextIdx];
 
-    // Enforce portal ordering (don’t allow opening earlier than step 5)
+    // Enforce portal ordering
     if (nextStep.openPortal && nextIdx < PORTAL_MIN_INDEX) {
       nextIdx = PORTAL_MIN_INDEX;
       nextStep = SCRIPT[nextIdx] || nextStep;
     }
 
-    // If answered portal invite with "yes": open portal and move to follow-up
+    // If we've just answered the portal invite with "yes"
     if (askedStep.expects === "portalInvite" && openPortal) {
       const follow = SCRIPT.find(s => s.name === "portal_followup") || nextStep;
       replyParts.push(follow.prompt);
