@@ -21,13 +21,13 @@ type Script = { steps: Step[]; small_talk?: { greetings?: string[] } };
 const SCRIPT = (fullScript as Script).steps;
 const GREETINGS = new Set((fullScript as Script).small_talk?.greetings?.map(s => s.toLowerCase()) || []);
 
-// empathetic nudges (regex -> sentence)
+// empathetic nudges (regex -> sentence) — FIXED bracket style
 const EMPATHY: Array<[RegExp, string]> = [
   [/bailiff|enforcement/i, "I know bailiff contact is stressful — we’ll get protections in place quickly."],
   [/ccj|county court|default/i, "Court or default letters can be worrying — we’ll address that in your plan."],
-  (/miss(ed)?\s+payments?|arrears|late fees?/i as unknown as RegExp, "Missed payments happen — we’ll focus on stabilising things now."),
-  (/rent|council\s*tax|water|gas|electric/i as unknown as RegExp, "We’ll make sure essentials like housing and utilities are prioritised."),
-  (/credit\s*card|loan|overdraft|catalogue|car\s*finance/i as unknown as RegExp, "We’ll take this step by step and ease the pressure."),
+  [/miss(ed)?\s+payments?|arrears|late fees?/i, "Missed payments happen — we’ll focus on stabilising things now."],
+  [/rent|council\s*tax|water|gas|electric/i, "We’ll make sure essentials like housing and utilities are prioritised."],
+  [/credit\s*card|loan|overdraft|catalogue|car\s*finance/i, "We’ll take this step by step and ease the pressure."],
 ];
 
 const HUMOUR_LITE = [
@@ -39,7 +39,6 @@ const STEP_TAG = (n: number) => `[[STEP:${n}]]`;
 
 /* --------------- Helpers (pure) --------------- */
 function lastScriptedStep(history: ChatCompletionMessageParam[]): number {
-  // Find last assistant message that carries a [[STEP:n]] tag
   for (let i = history.length - 1; i >= 0; i--) {
     const m = history[i];
     if (m.role === "assistant" && typeof m.content === "string") {
@@ -86,7 +85,6 @@ function empathyLine(user: string): string | null {
 
 function faqHit(user: string) {
   const u = normalize(user);
-  // prefer questions and explicit keywords
   let best: { a: string; score: number } | null = null;
   for (const f of faqs as Array<{ q: string; a: string; keywords?: string[] }>) {
     const kws = (f.keywords || []).map(k => k.toLowerCase());
@@ -120,7 +118,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     let history: ChatCompletionMessageParam[] = (historyRow?.messages as any[]) || [];
 
-    // Initialise conversation (no 🌍/globe sentence to avoid TTS saying 'globe')
+    // Initialise conversation (no 🌍 line so TTS doesn’t say “globe”)
     if (!history.length) {
       const opening = "Hello! My name’s Mark. What prompted you to seek help with your debts today?";
       history = [{ role: "assistant", content: `${STEP_TAG(-1)} ${opening}` }];
@@ -137,7 +135,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Fast path for emoji
     if (isEmojiOnly(userMessage)) {
       const reply = emojiReply(userMessage);
-      // Always follow with the current question
       const curStepIdx = Math.max(0, lastScriptedStep(history) + 1);
       const step = SCRIPT[Math.min(curStepIdx, SCRIPT.length - 1)];
       const out = `${reply} ${step.prompt}`;
@@ -148,7 +145,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Greeting small talk: acknowledge, then immediately ask Step 0
     const nm = normalize(userMessage);
-    if (GREETINGS.has(nm) || /^(hi|hello|hey)\b/i.test(userMessage)) {
+    if (GREETINGS.has(nm) || /^(hi|hello|hey|good (morning|afternoon|evening))\b/i.test(userMessage)) {
       const line = "Hi — you’re in the right place.";
       const step0 = SCRIPT[0];
       const out = `${line} ${step0.prompt}`;
@@ -165,16 +162,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const currentStep = SCRIPT[currentStepIndex];
 
-    // If the user perfectly answers the current step (keyword match), move forward
+    // If the user answers the current step (keyword match), move forward
     const answered = matchedKeywords(userMessage, currentStep.keywords || []);
 
-    // FAQ interjection (but do not advance step because we still need the answer)
+    // FAQ interjection (without advancing step)
     let faq = null as string | null;
     if (/\?$/.test(userMessage) || /(what|how|can|will|do|is|are)\b/i.test(userMessage)) {
       faq = faqHit(userMessage);
     }
 
-    // Build the reply ensuring: Empathy (if any) + answer (FAQ or brief steer) + ALWAYS end with a question (the script prompt)
     let openPortal = false;
     let replyParts: string[] = [];
 
@@ -183,9 +179,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (emp) replyParts.push(emp);
 
     if (faq) {
-      // Give short answer then restate the current (or next) question
       replyParts.push(faq);
-      // do not advance; ask current step question
+      // Re-ask current question
       replyParts.push(currentStep.prompt);
       history.push({ role: "assistant", content: `${STEP_TAG(currentStep.id)} ${replyParts.join(" ")}` });
     } else if (answered) {
@@ -193,21 +188,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const nextIdx = Math.min(currentStepIndex + 1, SCRIPT.length - 1);
       const nextStep = SCRIPT[nextIdx];
 
-      // Special gate: Only open portal when the *invite_portal* step is answered affirmatively
       if (nextStep.openPortal) {
-        // We are *arriving* at the invite step — we still need to ask it, not open yet.
+        // Arriving at portal INVITE step — ask it (do not open yet)
         replyParts.push(nextStep.prompt);
         history.push({ role: "assistant", content: `${STEP_TAG(nextStep.id)} ${replyParts.join(" ")}` });
       } else if (currentStep.openPortal) {
-        // Current step is the portal invite — only open if user said yes
+        // We are ON the invite step — only open on affirmative
         if (/(yes|ok|okay|sure|go ahead|open|start|set up|yep|yeah)/i.test(userMessage)) {
           openPortal = true;
-          // Move to portal follow-up step and ask it
+          // Move to the portal follow-up step and ask it
           const pf = SCRIPT.find(s => s.name === "portal_followup") || SCRIPT[nextIdx];
           replyParts.push(pf.prompt);
           history.push({ role: "assistant", content: `${STEP_TAG(pf.id)} ${replyParts.join(" ")}` });
         } else {
-          // User declined or unsure — acknowledge and keep flow (ask next non-portal step or repeat politely)
           replyParts.push("No problem — we can open it later when you’re ready.");
           const nxt = SCRIPT.find(s => s.id > currentStep.id && !s.openPortal) || currentStep;
           replyParts.push(nxt.prompt);
@@ -219,7 +212,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         history.push({ role: "assistant", content: `${STEP_TAG(nextStep.id)} ${replyParts.join(" ")}` });
       }
     } else {
-      // Not clearly answering the expected step — use a brief steer (LLM for tone), then re-ask current step
+      // Off-script steer using a short LLM sentence, then re-ask current prompt
       const systemPrompt =
         "You are Mark, a professional, empathetic UK debt advisor. The user went off-script; reply in ONE short, natural sentence that acknowledges what they said and gently steers back to the current question. Do not repeat the question verbatim; keep it warm and human.";
       try {
@@ -234,10 +227,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const steer = completion.choices[0]?.message?.content?.trim();
         if (steer) replyParts.push(steer);
       } catch {
-        // silent; fallback below
+        // silent; fallback
       }
-      if (!replyParts.length) replyParts.push("Got it — that’s useful to know.");
-      // ALWAYS end with the current question so the convo never stalls
+      if (!replyParts.length) replyParts.push("Got it — that’s helpful.");
       replyParts.push(currentStep.prompt);
       history.push({ role: "assistant", content: `${STEP_TAG(currentStep.id)} ${replyParts.join(" ")}` });
     }
