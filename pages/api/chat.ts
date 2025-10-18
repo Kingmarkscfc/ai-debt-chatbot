@@ -19,15 +19,13 @@ type Step = {
 };
 type ScriptShape = { steps: Step[]; small_talk?: { greetings?: string[] } };
 
-// --- Supabase (service role if present) ---
+// ---- Supabase (use service-role if present) ----
 const supabase = createClient(
   process.env.SUPABASE_URL || "",
-  process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.SUPABASE_ANON_KEY ||
-    ""
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || ""
 );
 
-// --- Script + greetings ---
+// ---- Script / Constants ----
 const SCRIPT = (scriptJson as ScriptShape).steps;
 const GREETINGS = new Set(
   (
@@ -42,14 +40,14 @@ const GREETINGS = new Set(
   ).map((s) => s.toLowerCase())
 );
 
-// --- Markers & constants ---
-const STEP_TAG = (n: number) => `[[STEP:${n}]]`;
-const STEP_RE = /\[\[STEP:(-?\d+)\]\]/;
+const BOT_NAME = "Mark";
 const OPENING =
   "Hello! My name’s Mark. What prompted you to seek help with your debts today?";
-const PORTAL_MIN_INDEX = 5; // guard: never open portal before step 5
+const STEP_TAG = (n: number) => `[[STEP:${n}]]`;
+const STEP_RE = /\[\[STEP:(-?\d+)\]\]/;
+const PORTAL_MIN_INDEX = 5; // never open portal before this index
 
-// --- DB helpers ---
+// ---- DB helpers ----
 async function loadHistory(sessionId: string) {
   const { data } = await supabase
     .from("messages")
@@ -70,7 +68,7 @@ async function append(
   await supabase.from("messages").insert({ session_id: sessionId, role, content });
 }
 
-// --- utilities ---
+// ---- Utils ----
 const norm = (s: string) => (s || "").toLowerCase().trim();
 
 function assistantSteps(history: Array<{ role: "user" | "assistant"; content: string }>): number[] {
@@ -98,58 +96,68 @@ function lastUserIdx(history: Array<{ role: "user" | "assistant"; content: strin
 function earliestMissingStep(seen: number[]): number {
   const maxId = Math.max(...SCRIPT.map((s) => s.id));
   const set = new Set(seen);
-  for (let i = 0; i <= maxId; i++) {
-    if (!set.has(i)) return i;
-  }
+  for (let i = 0; i <= maxId; i++) if (!set.has(i)) return i;
   return Math.min(maxId, Math.max(...seen, -1) + 1);
 }
 
-function extractName(s: string): string | null {
-  const rx =
-    /(my name is|i am|i'm|im|it's|its|call me)\s+([a-z][a-z\s'’-]{1,60})/i;
-  const m = s.match(rx);
-  if (m?.[2]) {
-    const raw = m[2].replace(/\s+/g, " ").trim();
-    return raw
-      .split(" ")
-      .map((w) =>
-        w ? w[0].toUpperCase() + w.slice(1).toLowerCase() : ""
-      )
-      .join(" ");
-  }
-  // single / double capitalised word (e.g., "Mark" or "Mark Hughes")
-  const m2 = s.match(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b/);
-  return m2?.[1] || null;
+// Friendly bridge phrases (avoids “Thanks — that helps” spam)
+const BRIDGES = [
+  "Got it.",
+  "Understood.",
+  "Appreciate you sharing that.",
+  "That’s useful.",
+  "Thanks for being clear.",
+  "Noted.",
+];
+
+function pickBridge(seed: number) {
+  return BRIDGES[seed % BRIDGES.length];
 }
+
+function extractName(s: string): string | null {
+  // common patterns
+  const rx = /(my name is|i am|i'm|im|it's|its|call me)\s+([a-z][a-z\s'’-]{1,60})/i;
+  const m = s.match(rx);
+  if (m?.[2]) return tidyName(m[2]);
+
+  // “my name is also …” / “I’m also Mark”
+  const rxAlso = /(also\s+)?(my name is|i am|i'm|im)\s+([a-z][a-z\s'’-]{1,60})/i;
+  const m2 = s.match(rxAlso);
+  if (m2?.[3]) return tidyName(m2[3]);
+
+  // single/double capitalised
+  const m3 = s.match(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b/);
+  return m3?.[1] ? tidyName(m3[1]) : null;
+}
+function tidyName(raw: string) {
+  const cleaned = raw.replace(/\s+/g, " ").trim();
+  return cleaned
+    .split(" ")
+    .map((w) => (w ? w[0].toUpperCase() + w.slice(1).toLowerCase() : ""))
+    .join(" ");
+}
+
 function amountsAnswered(s: string) {
   const nums =
     s.match(/£?\s*([0-9]+(?:\.[0-9]{1,2})?)/gi)?.map((x) =>
       Number(x.replace(/[^0-9.]/g, ""))
     ) || [];
-  return nums.length >= 2; // current & affordable
+  return nums.length >= 2; // current + affordable
 }
 function urgencyAnswered(s: string) {
   const u = norm(s);
   if (/\b(no|none|nothing|not really|all good)\b/.test(u)) return true;
-  if (
-    /(bailiff|enforcement|ccj|default|court|missed|rent|council\s*tax|gas|electric|water)/i.test(
-      u
-    )
-  )
-    return true;
+  if (/(bailiff|enforcement|ccj|default|court|missed|rent|council\s*tax|gas|electric|water)/i.test(u)) return true;
   return false;
 }
 function ackYes(s: string) {
   return /\b(yes|ok|okay|sure|carry on|continue|proceed|yep|yeah)\b/i.test(s);
 }
 function affirmative(s: string) {
-  return /\b(yes|ok|okay|sure|go ahead|open|start|set up|yep|yeah|please)\b/i.test(
-    s
-  );
+  return /\b(yes|ok|okay|sure|go ahead|open|start|set up|yep|yeah|please)\b/i.test(s);
 }
 function keywordsHit(step: Step, s: string) {
-  if (!step.keywords || step.keywords.length === 0)
-    return s.trim().length > 0;
+  if (!step.keywords || step.keywords.length === 0) return s.trim().length > 0;
   const u = norm(s);
   return step.keywords.some((k) => u.includes(k.toLowerCase()));
 }
@@ -165,12 +173,11 @@ function empathy(s: string) {
   for (const [re, line] of EMPATHY) if (re.test(s)) return line;
   return null;
 }
-
-// --- small-talk detector ---
 function isHowAreYou(s: string) {
   return /\b(how (are|r) (you|u)|you ok\??|how’s things|hows things)\b/i.test(s);
 }
 
+// ---- Handler ----
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).end();
 
@@ -179,7 +186,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const userMessage = String(req.body.userMessage || req.body.message || "").trim();
     if (!sessionId) return res.status(400).json({ reply: "Missing session.", openPortal: false });
 
-    // TRUE RESET: delete prior rows so stale step markers can't jump the flow
+    // Hard reset command
     if (/^(reset|restart|start again)$/i.test(userMessage)) {
       await supabase.from("messages").delete().eq("session_id", sessionId);
       await append(sessionId, "assistant", `${STEP_TAG(-1)} ${OPENING}`);
@@ -189,13 +196,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Load history
     let history = await loadHistory(sessionId);
 
-    // First-time session → send opener and stop
+    // First-time session → send opener
     if (history.length === 0) {
       await append(sessionId, "assistant", `${STEP_TAG(-1)} ${OPENING}`);
       return res.status(200).json({ reply: OPENING, openPortal: false });
     }
 
-    // Record this user message
+    // Record latest user message
     if (userMessage) {
       await append(sessionId, "user", userMessage);
       history.push({ role: "user", content: userMessage });
@@ -205,42 +212,42 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const { idx: lastAIdx, step: lastAsked } = lastAssistantStep(history);
     const uIdx = lastUserIdx(history);
     const latestUser = uIdx >= 0 ? history[uIdx].content : "";
+    const seed = history.length;
 
-    // If only the opener has been sent, go to step 0 on first user message
+    // If only the opener was sent, move to step 0 with a friendly bridge (not repetitive)
     if (seenSteps.length === 0) {
       const greet = GREETINGS.has(norm(latestUser))
         ? "Hi — you’re in the right place."
-        : "Thanks for sharing that.";
+        : pickBridge(seed);
       const step0 = SCRIPT[0];
       const out = `${greet} ${step0.prompt}`;
       await append(sessionId, "assistant", `${STEP_TAG(step0.id)} ${out}`);
       return res.status(200).json({ reply: out, openPortal: false });
     }
 
-    // Which step is expected next?
+    // Anchoring: determine which step we should be on
     const expected = earliestMissingStep(seenSteps);
 
-    // Keep us anchored to the expected step (no jumping)
+    // If last asked is not the expected step, ask expected (prevents jumps/loops)
     if (lastAsked !== expected) {
-      const asked = SCRIPT.find((s) => s.id === expected) || SCRIPT[0];
-      await append(sessionId, "assistant", `${STEP_TAG(asked.id)} ${asked.prompt}`);
-      return res.status(200).json({ reply: asked.prompt, openPortal: false });
+      const ask = SCRIPT.find((s) => s.id === expected) || SCRIPT[0];
+      await append(sessionId, "assistant", `${STEP_TAG(ask.id)} ${ask.prompt}`);
+      return res.status(200).json({ reply: ask.prompt, openPortal: false });
     }
 
-    // If user hasn't spoken since last assistant message, repeat same step
+    // If user hasn’t spoken since last assistant message, repeat that step
     if (uIdx <= lastAIdx) {
-      const asked = SCRIPT.find((s) => s.id === lastAsked) || SCRIPT[0];
-      await append(sessionId, "assistant", `${STEP_TAG(asked.id)} ${asked.prompt}`);
-      return res.status(200).json({ reply: asked.prompt, openPortal: false });
+      const ask = SCRIPT.find((s) => s.id === lastAsked) || SCRIPT[0];
+      await append(sessionId, "assistant", `${STEP_TAG(ask.id)} ${ask.prompt}`);
+      return res.status(200).json({ reply: ask.prompt, openPortal: false });
     }
 
-    // Validate answer to the currently asked step
+    // Validate the answer to the current step
     const askedStep = SCRIPT.find((s) => s.id === lastAsked) || SCRIPT[0];
 
-    // Small-talk interjection: answer “how are you?” but keep current step
+    // Small talk: “how are you?”
     if (isHowAreYou(latestUser)) {
-      const friendly =
-        "I’m good thanks — more importantly, I’m here to help you today.";
+      const friendly = "I’m good thanks — more importantly, I’m here to help you today.";
       const out = `${friendly} ${askedStep.prompt}`;
       await append(sessionId, "assistant", `${STEP_TAG(askedStep.id)} ${out}`);
       return res.status(200).json({ reply: out, openPortal: false });
@@ -249,62 +256,63 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     let moveNext = false;
     let openPortal = false;
     const replyParts: string[] = [];
-
     const em = empathy(latestUser);
     if (em) replyParts.push(em);
 
     switch (askedStep.expects) {
       case "name": {
-        const name =
-          extractName(latestUser) ||
-          (norm(latestUser).split(" ").length <= 3 ? latestUser.trim() : null);
+        const name = extractName(latestUser) || (norm(latestUser).split(" ").length <= 3 ? tidyName(latestUser) : null);
         if (name) {
-          // friendlier pacing before moving on
+          // If they share the bot’s name (Mark), add a friendly aside
+          if (name.toLowerCase().startsWith(BOT_NAME.toLowerCase())) {
+            replyParts.push(`Nice — two ${BOT_NAME}s are better than one 😄`);
+          }
           replyParts.push(`Nice to meet you, ${name}. How are you today?`);
           moveNext = true;
         } else {
-          replyParts.push(
-            "Got it — just so I can address you properly, what’s your name?"
-          );
+          replyParts.push("Got it — just so I can address you properly, what’s your name?");
         }
         break;
       }
+
       case "concern": {
+        // gentle, varied bridge; avoid “Thanks — that helps”
+        replyParts.push(pickBridge(seed));
         moveNext = keywordsHit(askedStep, latestUser);
-        if (!moveNext)
-          replyParts.push(
-            "Thanks — to help me tailor this properly, what’s the main concern with the debts?"
-          );
+        if (!moveNext) {
+          replyParts.push("What’s the main concern with the debts?");
+        }
         break;
       }
+
       case "amounts": {
         moveNext = amountsAnswered(latestUser);
-        if (!moveNext)
-          replyParts.push(
-            "No problem — roughly how much do you pay monthly across all debts, and what would feel affordable?"
-          );
+        if (!moveNext) {
+          replyParts.push("Roughly how much do you pay monthly across all debts, and what would feel affordable?");
+        }
         break;
       }
+
       case "urgency": {
         moveNext = urgencyAnswered(latestUser);
-        if (!moveNext)
-          replyParts.push(
-            "Is anything urgent like enforcement, court/default notices, or missed priority bills?"
-          );
+        if (!moveNext) {
+          replyParts.push("Is anything urgent like enforcement, court/default notices, or missed priority bills?");
+        }
         break;
       }
+
       case "ack": {
         moveNext = ackYes(latestUser);
         if (!moveNext) replyParts.push("Totally fine — shall we carry on?");
         break;
       }
+
       case "portalInvite": {
-        // only proceed/open on clear affirmative to THIS invite
+        // Only “yes” to THIS invite opens it
         if (affirmative(latestUser)) {
           openPortal = true;
           moveNext = true;
-        } else if (GREETINGS.has(norm(latestUser)) || /hello|\?/.test(norm(latestUser))) {
-          // lightweight nudge if they said “hello” or noise instead of yes/no
+        } else if (GREETINGS.has(norm(latestUser)) || /\bhello\b|\?/.test(norm(latestUser))) {
           replyParts.push("When you’re ready, just say “yes” and I’ll open it.");
           moveNext = false;
         } else {
@@ -313,6 +321,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
         break;
       }
+
       case "free":
       default: {
         moveNext = latestUser.trim().length > 0;
@@ -323,26 +332,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const askedIdx = SCRIPT.findIndex((s) => s.id === askedStep.id);
 
-    // If the user hasn't answered adequately, re-ask the same step
     if (!moveNext) {
       const out = replyParts.join(" ");
       await append(sessionId, "assistant", `${STEP_TAG(askedStep.id)} ${out}`);
       return res.status(200).json({ reply: out, openPortal: false });
     }
 
-    // Advance to the next step
+    // Advance to next step (with portal ordering guard)
     let nextIdx = Math.min(askedIdx + 1, SCRIPT.length - 1);
     let nextStep = SCRIPT[nextIdx];
 
-    // Enforce portal ordering: never show portal before step 5
     if (nextStep.openPortal && nextIdx < PORTAL_MIN_INDEX) {
       nextIdx = PORTAL_MIN_INDEX;
       nextStep = SCRIPT[nextIdx] || nextStep;
     }
 
-    // If we've just answered the portal invite with "yes"
+    // If we just accepted the portal invite
     if (askedStep.expects === "portalInvite" && openPortal) {
-      // find a specific follow-up step by name, else use next step
       const follow = SCRIPT.find((s) => s.name === "portal_followup") || nextStep;
       replyParts.push(
         follow.prompt ||
@@ -360,12 +366,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(200).json({ reply: out, openPortal: false });
   } catch (e: any) {
     console.error("chat api error:", e?.message || e);
-    return res
-      .status(200)
-      .json({
-        reply:
-          "Sorry — something went wrong on my end. Let’s try again from here.",
-        openPortal: false,
-      });
+    return res.status(200).json({
+      reply: "Sorry — something went wrong on my end. Let’s try again from here.",
+      openPortal: false,
+    });
   }
 }
