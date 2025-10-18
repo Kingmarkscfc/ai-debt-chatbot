@@ -2,79 +2,48 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { createClient } from "@supabase/supabase-js";
 import rawScript from "../../utils/full_script_logic.json";
 
-/* ---------------- Types ---------------- */
+/** Types **/
 type Step = {
   id: number;
   name?: string;
   prompt: string;
   keywords?: string[];
   openPortal?: boolean;
-  expects?: "name" | "concern" | "amounts" | "urgency" | "ack" | "portalInvite" | "free";
+  expects?: "name" | "concern" | "amounts" | "urgency" | "ack" | "portalInvite" | "docs" | "free";
 };
 type ScriptShape = { steps: Step[]; small_talk?: { greetings?: string[] } };
 type Msg = { role: "user" | "assistant"; content: string; created_at?: string };
 
-/* ---------------- Supabase ---------------- */
+/** Supabase **/
 const supabase = createClient(
   process.env.SUPABASE_URL || "",
   process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || ""
 );
 
-/* ---------------- Script + constants ---------------- */
+/** Script & constants **/
 const SCRIPT_IN: ScriptShape = rawScript as any;
-
-// Normalize / backfill expected types by id if not provided in JSON
-const SCRIPT: Step[] = (SCRIPT_IN.steps || []).map((s) => {
-  if (s.expects) return s;
-  const map: Record<number, Step["expects"]> = {
-    0: "name",
-    1: "concern",
-    2: "amounts",
-    3: "urgency",
-    4: "ack",
-    5: "portalInvite",
-  };
-  return { ...s, expects: map[s.id] || "free" };
-});
-
-// Hard rule: portal invite must not appear before id >= 5 and only after 0..4 are completed
-const PORTAL_MIN_ID = 5;
-const PREPORTAL_IDS = new Set([0, 1, 2, 3, 4]);
-
+const SCRIPT: Step[] = (SCRIPT_IN.steps || []).map((s) => s);
 const GREETINGS = new Set(
-  (SCRIPT_IN.small_talk?.greetings || [
-    "hi",
-    "hello",
-    "hey",
-    "good morning",
-    "good afternoon",
-    "good evening",
-  ]).map((s) => s.toLowerCase())
+  (SCRIPT_IN.small_talk?.greetings || ["hi", "hello", "hey", "good morning", "good afternoon", "good evening"]).map(
+    (s) => s.toLowerCase()
+  )
 );
-
 const BOT_NAME = "Mark";
 const OPENING = "Hello! My name’s Mark. What prompted you to seek help with your debts today?";
 const STEP_TAG = (n: number) => `[[STEP:${n}]]`;
 const STEP_RE = /\[\[STEP:(-?\d+)\]\]/;
 
-/* ---------------- Empathy + bridges ---------------- */
-const EMPATHY: Array<[RegExp, string, string]> = [
-  [/bailiff|enforcement/i, "I know bailiff contact is stressful — we’ll get protections in place quickly.", "bailiff"],
-  [/ccj|county court|default/i, "Court or default letters can be worrying — we’ll address that in your plan.", "court"],
-  [/miss(ed)?\s+payments?|arrears|late fees?/i, "Missed payments happen — we’ll focus on stabilising things now.", "missed"],
-  [/rent|council\s*tax|water|gas|electric/i, "We’ll make sure essentials like housing and utilities are prioritised.", "priority"],
-  [/credit\s*card|loan|overdraft|catalogue|car\s*finance/i, "We’ll take this step by step and ease the pressure.", "consumer"],
+/** Empathy lines (non-jumping, purely additive) **/
+const EMPATHY: Array<[RegExp, string]> = [
+  [/bailiff|enforcement/i, "I know bailiff contact is stressful — we’ll get protections in place quickly."],
+  [/ccj|county court|default/i, "Court or default letters can be worrying — we’ll address that in your plan."],
+  [/miss(ed)?\s+payments?|arrears|late fees?/i, "Missed payments happen — we’ll focus on stabilising things now."],
+  [/rent|council\s*tax|water|gas|electric/i, "We’ll make sure essentials like housing and utilities are prioritised."],
+  [/credit\s*card|loan|overdraft|catalogue|car\s*finance/i, "We’ll take this step by step and ease the pressure."]
 ];
-const BRIDGES = [
-  "Got it.",
-  "Understood.",
-  "Appreciate you sharing that.",
-  "That’s helpful.",
-  "Thanks for being clear.",
-  "Noted.",
-];
+const BRIDGES = ["Got it.", "Understood.", "Thanks for sharing.", "Appreciate that.", "Noted."];
 
-/* ---------------- DB helpers ---------------- */
+/** DB helpers **/
 async function loadHistory(sessionId: string): Promise<Msg[]> {
   const { data } = await supabase
     .from("messages")
@@ -85,7 +54,7 @@ async function loadHistory(sessionId: string): Promise<Msg[]> {
   return (data || []).map((m) => ({
     role: m.role as any,
     content: String(m.content || ""),
-    created_at: m.created_at || undefined,
+    created_at: m.created_at || undefined
   }));
 }
 async function append(sessionId: string, role: "user" | "assistant", content: string) {
@@ -95,13 +64,12 @@ async function telemetry(sessionId: string, event_type: string, payload: any) {
   try {
     await supabase.from("chat_telemetry").insert({ session_id: sessionId, event_type, payload });
   } catch {
-    // best effort
+    /* best effort */
   }
 }
 
-/* ---------------- Utils ---------------- */
+/** Utils **/
 const norm = (s: string) => (s || "").toLowerCase().trim();
-
 function assistantSteps(history: Msg[]): number[] {
   const ids: number[] = [];
   for (const h of history) {
@@ -124,32 +92,12 @@ function lastUserIdx(history: Msg[]) {
   for (let i = history.length - 1; i >= 0; i--) if (history[i].role === "user") return i;
   return -1;
 }
-function isContiguousFromZero(ids: number[]) {
-  // Keep only non-negative steps, sort unique
-  const uniq = Array.from(new Set(ids.filter((n) => n >= 0))).sort((a, b) => a - b);
-  for (let i = 0; i < uniq.length; i++) if (uniq[i] !== i) return false;
-  return true;
-}
-function earliestMissingStep(seen: number[]): number {
-  const allIds = SCRIPT.map((s) => s.id).sort((a, b) => a - b);
-  const set = new Set(seen);
-  for (const id of allIds) if (!set.has(id)) return id;
-  return allIds[allIds.length - 1] ?? 0;
-}
-function completedPrePortal(seen: number[]) {
-  return [0, 1, 2, 3, 4].every((id) => seen.includes(id));
-}
-function guardEarlyPortal(seen: number[], candidate: Step) {
-  if (!candidate.openPortal) return candidate;
-  if (!completedPrePortal(seen)) {
-    // Force back to first missing pre-portal step
-    const missing = [0, 1, 2, 3, 4].find((id) => !seen.includes(id))!;
-    return SCRIPT.find((s) => s.id === missing) || candidate;
-  }
-  return candidate;
-}
-function pickBridge(seed: number) {
-  return BRIDGES[seed % BRIDGES.length];
+function tidyName(raw: string) {
+  const cleaned = raw.replace(/\s+/g, " ").trim();
+  return cleaned
+    .split(" ")
+    .map((w) => (w ? w[0].toUpperCase() + w.slice(1).toLowerCase() : ""))
+    .join(" ");
 }
 function extractName(s: string): string | null {
   const rx = /(my name is|i am|i'm|im|it's|its|call me)\s+([a-z][a-z\s'’-]{1,60})/i;
@@ -158,17 +106,9 @@ function extractName(s: string): string | null {
   const m2 = s.match(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b/);
   return m2?.[1] ? tidyName(m2[1]) : null;
 }
-function tidyName(raw: string) {
-  const cleaned = raw.replace(/\s+/g, " ").trim();
-  return cleaned
-    .split(" ")
-    .map((w) => (w ? w[0].toUpperCase() + w.slice(1).toLowerCase() : ""))
-    .join(" ");
-}
 function amountsAnswered(s: string) {
-  const nums =
-    s.match(/£?\s*([0-9]+(?:\.[0-9]{1,2})?)/gi)?.map((x) => Number(x.replace(/[^0-9.]/g, ""))) || [];
-  return nums.length >= 2;
+  const nums = s.match(/£?\s*([0-9]+(?:\.[0-9]{1,2})?)/gi)?.map((x) => Number(x.replace(/[^0-9.]/g, ""))) || [];
+  return nums.length >= 2; // pays now + feels affordable
 }
 function urgencyAnswered(s: string) {
   const u = norm(s);
@@ -182,24 +122,15 @@ function ackYes(s: string) {
 function affirmative(s: string) {
   return /\b(yes|ok|okay|sure|go ahead|open|start|set up|yep|yeah|please)\b/i.test(s);
 }
-function keywordsHit(step: Step, s: string) {
-  if (!step.keywords || step.keywords.length === 0) return s.trim().length > 0;
-  const u = norm(s);
-  return step.keywords.some((k) => u.includes(k.toLowerCase()));
-}
-function isHowAreYou(s: string) {
-  return /\b(how (are|r) (you|u)|you ok\??|how’s things|hows things)\b/i.test(s);
-}
 function empathyLine(s: string) {
   for (const [re, line] of EMPATHY) if (re.test(s)) return line;
   return null;
 }
-function empathyKey(s: string) {
-  for (const [re, _line, key] of EMPATHY) if (re.test(s)) return key;
-  return "none";
+function isHowAreYou(s: string) {
+  return /\b(how (are|r) (you|u)|you ok\??|how’s things|hows things)\b/i.test(s);
 }
 
-/* ---------------- Handler ---------------- */
+/** Core handler **/
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).end();
 
@@ -209,7 +140,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const language = String(req.body.language || "English");
     if (!sessionId) return res.status(400).json({ reply: "Missing session.", openPortal: false });
 
-    // Reset
+    // reset
     if (/^(reset|restart|start again)$/i.test(userMessage)) {
       await supabase.from("messages").delete().eq("session_id", sessionId);
       const opener = `${STEP_TAG(-1)} ${OPENING}`;
@@ -218,10 +149,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(200).json({ reply: OPENING, openPortal: false });
     }
 
-    // History
+    // history
     let history = await loadHistory(sessionId);
 
-    // First time → opener
+    // first time → opener
     if (history.length === 0) {
       const opener = `${STEP_TAG(-1)} ${OPENING}`;
       await append(sessionId, "assistant", opener);
@@ -229,23 +160,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(200).json({ reply: OPENING, openPortal: false });
     }
 
-    // Add user message
+    // add user message
     if (userMessage) {
       await append(sessionId, "user", userMessage);
       history.push({ role: "user", content: userMessage });
     }
 
-    const seenStepsRaw = assistantSteps(history).filter((n) => n >= 0);
-    // Contiguity guard: if history contains step ids that aren't contiguous from 0 (e.g. jumped to 5),
-    // trim to the largest contiguous prefix.
-    let seenSteps = Array.from(new Set(seenStepsRaw)).sort((a, b) => a - b);
-    if (!isContiguousFromZero(seenSteps)) {
-      const contiguous: number[] = [];
-      for (let i = 0; i < seenSteps.length; i++) {
-        if (seenSteps[i] === i) contiguous.push(i);
-        else break;
-      }
-      seenSteps = contiguous;
+    // Determine last asked step & contiguous sequence
+    const seen = assistantSteps(history).filter((n) => n >= 0).sort((a, b) => a - b);
+    let contiguous: number[] = [];
+    for (let i = 0; i < seen.length; i++) {
+      if (seen[i] === i) contiguous.push(i);
+      else break;
     }
 
     const { idx: lastAIdx, step: lastAsked } = lastAssistantStep(history);
@@ -253,11 +179,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const latestUser = uIdx >= 0 ? history[uIdx].content : "";
     const seed = history.length;
 
-    // After the opener, we always ask step 0
-    if (seenSteps.length === 0) {
-      const greet = GREETINGS.has(norm(latestUser)) || isHowAreYou(latestUser)
-        ? "Hi — you’re in the right place."
-        : pickBridge(seed);
+    // After the opener, always begin at step 0
+    if (contiguous.length === 0) {
+      const greet =
+        GREETINGS.has(norm(latestUser)) || isHowAreYou(latestUser) ? "Hi — you’re in the right place." : BRIDGES[seed % BRIDGES.length];
       const step0 = SCRIPT.find((s) => s.id === 0) || SCRIPT[0];
       const out = `${greet} ${step0.prompt}`;
       await append(sessionId, "assistant", `${STEP_TAG(step0.id)} ${out}`);
@@ -265,19 +190,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(200).json({ reply: out, openPortal: false });
     }
 
-    const expected = earliestMissingStep(seenSteps);
-
-    // If the last asked step is not the expected one, realign
-    if (lastAsked !== expected) {
-      // Additionally, if the "expected" is portal but pre-portal not complete, force the earliest missing pre-portal
-      const realTarget = guardEarlyPortal(seenSteps, SCRIPT.find((s) => s.id === expected) || SCRIPT[0]);
-      const outPrompt = realTarget.prompt;
-      await append(sessionId, "assistant", `${STEP_TAG(realTarget.id)} ${outPrompt}`);
-      await telemetry(sessionId, "step_shown", { step: realTarget.id, reason: "realign" });
-      return res.status(200).json({ reply: outPrompt, openPortal: false });
-    }
-
-    // If user hasn't replied since last assistant → repeat same step
+    // If user hasn't replied since last assistant → repeat same
     if (uIdx <= lastAIdx) {
       const ask = SCRIPT.find((s) => s.id === lastAsked) || SCRIPT[0];
       await append(sessionId, "assistant", `${STEP_TAG(ask.id)} ${ask.prompt}`);
@@ -285,31 +198,26 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(200).json({ reply: ask.prompt, openPortal: false });
     }
 
-    // Validate current step
     const step = SCRIPT.find((s) => s.id === lastAsked) || SCRIPT[0];
     const replyParts: string[] = [];
 
-    // Answer "how are you?"
+    // conversational niceties
     if (isHowAreYou(latestUser)) replyParts.push("I’m good thanks — more importantly, I’m here to help you today.");
 
-    // Inject empathy line if relevant
-    const emKey = empathyKey(latestUser);
+    // add empathy if relevant
     const emLine = empathyLine(latestUser);
     if (emLine) replyParts.push(emLine);
 
+    // validate current step (NO jumping)
     let moveNext = false;
     let openPortal = false;
 
     switch (step.expects) {
       case "name": {
-        const name =
-          extractName(latestUser) ||
-          (norm(latestUser).split(" ").length <= 3 ? tidyName(latestUser) : null);
+        const name = extractName(latestUser) || (norm(latestUser).split(" ").length <= 3 ? tidyName(latestUser) : null);
         if (name) {
-          if (name.toLowerCase().startsWith(BOT_NAME.toLowerCase())) {
-            replyParts.push(`Two ${BOT_NAME}s — love it 😄`);
-          }
-          replyParts.push(`Nice to meet you, ${name}. How are you today?`);
+          if (name.toLowerCase() === BOT_NAME.toLowerCase()) replyParts.push(`Two ${BOT_NAME}s — love it 😄`);
+          replyParts.push(`Nice to meet you, ${name}.`);
           moveNext = true;
           await telemetry(sessionId, "step_completed", { step: step.id, signal: "name_captured", name });
         } else {
@@ -319,24 +227,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
 
       case "concern": {
-        replyParts.push(pickBridge(seed));
-        moveNext = keywordsHit(step, latestUser);
-        await telemetry(sessionId, "user_answered", { step: step.id, ok: moveNext, empathy: emKey });
+        // any non-empty answer counts, but we prefer matches
+        moveNext = latestUser.trim().length > 0;
         if (!moveNext) replyParts.push("What’s the main concern with the debts?");
         break;
       }
 
       case "amounts": {
         moveNext = amountsAnswered(latestUser);
-        await telemetry(sessionId, "user_answered", { step: step.id, ok: moveNext });
         if (!moveNext)
-          replyParts.push("Roughly how much do you pay each month across all debts, and what would feel affordable?");
+          replyParts.push(
+            "Roughly how much do you pay each month across all debts, and what would feel affordable?"
+          );
         break;
       }
 
       case "urgency": {
         moveNext = urgencyAnswered(latestUser);
-        await telemetry(sessionId, "user_answered", { step: step.id, ok: moveNext, empathy: emKey });
         if (!moveNext)
           replyParts.push("Is anything urgent like enforcement, court/default letters, or missed priority bills?");
         break;
@@ -344,20 +251,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       case "ack": {
         moveNext = ackYes(latestUser);
-        await telemetry(sessionId, "user_answered", { step: step.id, ok: moveNext });
         if (!moveNext) replyParts.push("Totally fine — shall we carry on?");
         break;
       }
 
       case "portalInvite": {
-        // Absolute guard: don't allow portal until 0..4 seen
-        if (!completedPrePortal(seenSteps)) {
-          const missing = [0, 1, 2, 3, 4].find((id) => !seenSteps.includes(id))!;
+        // Only after 0..4 are actually completed in order
+        const preDone = [0, 1, 2, 3, 4].every((id) => contiguous.includes(id));
+        if (!preDone) {
+          // realign back to earliest missing
+          const missing = [0, 1, 2, 3, 4].find((id) => !contiguous.includes(id))!;
           const back = SCRIPT.find((s) => s.id === missing)!;
-          replyParts.push(back.prompt);
-          await append(sessionId, "assistant", `${STEP_TAG(back.id)} ${replyParts.join(" ")}`);
+          await append(sessionId, "assistant", `${STEP_TAG(back.id)} ${back.prompt}`);
           await telemetry(sessionId, "step_shown", { step: back.id, reason: "preportal_not_complete" });
-          return res.status(200).json({ reply: replyParts.join(" "), openPortal: false });
+          return res.status(200).json({ reply: back.prompt, openPortal: false });
         }
         if (affirmative(latestUser)) {
           openPortal = true;
@@ -365,8 +272,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           await telemetry(sessionId, "portal_opened", { at_step: step.id });
         } else {
           replyParts.push("No worries — we can open it later when you’re ready.");
-          moveNext = true; // still progress to follow-up text
+          moveNext = true; // still progress to follow-up
         }
+        break;
+      }
+
+      case "docs": {
+        // simple acks like "uploaded" or any text moves on
+        moveNext = latestUser.trim().length > 0;
         break;
       }
 
@@ -377,7 +290,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     }
 
-    // If we didn't satisfy the step → stay on it
+    // If not satisfied, stay on this step
     if (!moveNext) {
       const out = replyParts.join(" ");
       await append(sessionId, "assistant", `${STEP_TAG(step.id)} ${out}`);
@@ -385,31 +298,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(200).json({ reply: out, openPortal: false });
     }
 
-    // Move to next step (strict)
+    // Move strictly to the next step
     let nextIndex = SCRIPT.findIndex((s) => s.id === step.id) + 1;
     if (nextIndex >= SCRIPT.length) nextIndex = SCRIPT.length - 1;
-    let nextStep = SCRIPT[nextIndex];
-
-    // Guard: if next would be portal and pre-portal not done, redirect to earliest missing pre-portal
-    if (nextStep.openPortal && !completedPrePortal(seenSteps)) {
-      const missing = [0, 1, 2, 3, 4].find((id) => !seenSteps.includes(id))!;
-      nextStep = SCRIPT.find((s) => s.id === missing) || nextStep;
-    }
+    const nextStep = SCRIPT[nextIndex];
 
     // If we just accepted the portal invite
     if (step.expects === "portalInvite" && openPortal) {
-      const follow =
-        SCRIPT.find((s) => s.name === "portal_followup") ||
-        nextStep ||
-        step;
-
-      replyParts.push(
-        follow?.prompt ||
-          "While you’re in the portal, I’ll stay here to guide you. You can come back to the chat any time using the button in the top-right corner. Please follow the Outstanding Tasks so we can understand your situation."
-      );
-
+      // show follow-up text (step 6)
+      const follow = SCRIPT.find((s) => s.name === "portal_followup") || nextStep;
+      replyParts.push(follow.prompt);
       const out = replyParts.join(" ");
-      await append(sessionId, "assistant", `${STEP_TAG(follow.id ?? step.id)} ${out}`);
+      await append(sessionId, "assistant", `${STEP_TAG(follow.id)} ${out}`);
       return res.status(200).json({ reply: out, openPortal: true });
     }
 
