@@ -44,12 +44,12 @@ const stripPunc = (s: string) => s.replace(/[^\p{L}\p{N}\s£\.]/gu, " ").replace
 function looksLikeNameRaw(raw: string): boolean {
   const t = normalize(raw);
 
-  // Hard filters: greetings or obvious non-name content
+  // Block greetings/small talk so we don't say "Nice to meet you, Hello."
   if (/(^|\s)(hi|hello|hey|good (morning|afternoon|evening)|how are you|you ok)(\s|$)/.test(t)) return false;
-  if (/[?@#:/\\]/.test(t)) return false; // likely not a bare name
+  if (/[?@#:/\\]/.test(t)) return false;
   if (t.length < 2 || t.length > 40) return false;
 
-  // Accept one or two tokens of letters/hyphens/apostrophes
+  // One or two tokens of letters/hyphens/apostrophes
   const tokens = t.split(/\s+/).slice(0, 2);
   if (tokens.length === 0 || tokens.length > 2) return false;
   if (!tokens.every(x => /^[a-z][a-z'\-]*$/i.test(x))) return false;
@@ -65,18 +65,17 @@ function toTitleCaseName(raw: string): string {
 function extractNameFromMessage(msg: string): string | null {
   const s = msg.trim();
 
-  // Patterned forms
+  // Pattern forms
   const p = s.match(/\b(my name is|i'?m|i am|it'?s|call me)\s+([a-z][a-z\s'\-]{1,40})/i);
   if (p) {
     const n = p[2].trim().split(/\s+/).slice(0, 2).join(" ");
     return toTitleCaseName(n);
   }
 
-  // Bare name (e.g., "Mark" or "Mark Hughes")
+  // Bare name
   if (looksLikeNameRaw(s)) {
     return toTitleCaseName(s);
   }
-
   return null;
 }
 
@@ -96,12 +95,13 @@ function isSmallTalk(s: string): boolean {
   return /^(hi|hello|hey|good (morning|afternoon|evening)|how are you|you ok)\b/.test(t);
 }
 
-function greetVariant(user: string): string {
+function greetVariant(user: string, name?: string): string {
   const t = normalize(user);
   const timey = /good (morning|afternoon|evening)/.exec(t)?.[0];
-  if (timey) return timey.replace(/\b\w/g, c => c.toUpperCase()) + "!";
-  if (/how are you/.test(t)) return "I’m good thanks — more importantly, I’m here to help you today.";
-  return "Hi!";
+  const withName = name ? ` ${name}` : "";
+  if (timey) return `${timey.replace(/\b\w/g, c => c.toUpperCase())}! Nice to meet you${withName}.`;
+  if (/how are you/.test(t)) return `I’m good, thanks — and it’s great to meet you${withName}. I’m here to help.`;
+  return `Hi${withName ? " " + name : ""}!`;
 }
 
 function empatheticAck(user: string): string | null {
@@ -142,42 +142,45 @@ function deriveState(history: string[], latest: string): Derived {
   // Was the "name" question asked already?
   const askedName = history.some(x => x.includes(SCRIPT.steps[0].prompt));
 
-  // Try to find a name in the whole convo
+  // Find a name in recent lines or this one
   let name: string | undefined;
-  // 1) Look through history lines for explicit "my name is …"
-  for (const line of history.slice(-6)) { // recent window
+  for (const line of history.slice(-6)) {
     const n = extractNameFromMessage(line);
     if (n) { name = n; break; }
   }
-  // 2) If still none, try latest message
   if (!name) {
     const n2 = extractNameFromMessage(latest);
     if (n2) name = n2;
   }
-
   const haveName = !!name;
 
   // Concern detection
   const concern = /(bailiff|default|ccj|missed|interest|charges|arrears|rent|council|gas|electric|card|loan|overdraft|catalogue|finance|curious|better deal)/.test(full + "\n" + latestStripped);
 
-  // Money window
+  // Money extraction (windowed)
   let monthly: number | undefined;
   let affordable: number | undefined;
   const linesToScan = history.concat(latest).slice(-10);
   for (const line of linesToScan) {
     const ln = line.toLowerCase();
-    if (/(pay|repay|towards|per month|monthly)/.test(ln)) {
-      const nums = extractMoney(ln);
-      if (nums.length === 1) {
-        if (!monthly && nums[0] >= 50) monthly = nums[0];
-      } else if (nums.length >= 2) {
-        const sorted = [...nums].sort((a, b) => b - a);
-        monthly = sorted[0];
-        affordable = sorted[sorted.length - 1];
-      }
-    } else if (/afford|affordable|can manage|could do/.test(ln)) {
+
+    // If user mentions "afford/affordable" we treat that number as affordable
+    if (/afford|affordable|can manage|could do/.test(ln)) {
       const nums = extractMoney(ln);
       if (nums.length) affordable = nums[0];
+    }
+
+    // If user mentions pay/repay/monthly etc, treat those numbers as current monthly(s)
+    if (/(pay|repay|towards|per month|monthly)/.test(ln)) {
+      const nums = extractMoney(ln);
+      if (nums.length) {
+        // take the largest as current total payment (typical)
+        monthly = Math.max(...nums);
+        // if there are at least two numbers present, smallest is likely affordable
+        if (nums.length >= 2) {
+          affordable = Math.min(...nums);
+        }
+      }
     }
   }
 
@@ -195,41 +198,58 @@ function deriveState(history: string[], latest: string): Derived {
 
 /** ---------------- Script driver ---------------- */
 function nextPrompt(d: Derived): string {
-  // If we asked for the name, and now we have a name, move on (do NOT re-ask)
+  // Name
   if (!d.haveName) return SCRIPT.steps[0].prompt;
+
+  // Concern
   if (!d.haveConcern) return SCRIPT.steps[1].prompt;
-  if (!d.monthly && !d.affordable) return SCRIPT.steps[2].prompt;
-  if (d.monthly && !d.affordable) return "Thanks — and what would feel affordable for you each month?";
+
+  // Money: ask only what is missing
+  if (d.monthly == null && d.affordable == null) return SCRIPT.steps[2].prompt;
+  if (d.monthly == null && d.affordable != null) return "Thanks — and roughly how much are you currently paying across all debts each month?";
+  if (d.monthly != null && d.affordable == null) return "Thanks — and what would feel affordable for you each month?";
+
+  // Urgent
   if (!d.askedUrgent || !d.urgentAnswered) return SCRIPT.steps[3].prompt;
+
+  // Acknowledgement
   if (!d.ackAccepted) return SCRIPT.steps[4].prompt;
+
+  // Portal invite (only after ack)
   if (!d.invitedPortal) return SCRIPT.steps[5].prompt;
   if (d.invitedPortal && !d.portalOpened) return "No problem — I’ll open it whenever you say “open portal”. Meanwhile, would you like a quick summary of options?";
+
+  // Post-portal
   return SCRIPT.steps[6].prompt;
 }
 
 function stitchReply(user: string, d: Derived): { reply: string; openPortal?: boolean; displayName?: string } {
   const parts: string[] = [];
 
-  // Human niceties
-  if (isSmallTalk(user)) parts.push(greetVariant(user));
-  const empathy = empatheticAck(user);
-  if (empathy) parts.push(empathy);
-
-  // Only greet-by-name if we just captured one AND we’re not re-asking
+  // Did we just capture a name from this message?
   const possibleName = extractNameFromMessage(user);
+
+  // Human niceties (small talk + include name if we have it)
+  if (isSmallTalk(user)) {
+    parts.push(greetVariant(user, possibleName || d.name));
+  }
+
+  // If a name was given now (e.g., "john") and we didn't have it before, greet explicitly
   if (!d.haveName && possibleName) {
     parts.push(`Nice to meet you, ${possibleName}.`);
   }
 
-  // FAQ hook (kept short so it doesn't derail the script)
+  // Empathy + FAQ hook
+  const empathy = empatheticAck(user);
+  if (empathy) parts.push(empathy);
   const faq = faqAnswer(user);
   if (faq) parts.push(faq);
 
-  // Drive script
+  // Drive script with updated name state
   const prompt = nextPrompt({ ...d, haveName: d.haveName || !!possibleName, name: d.name ?? possibleName ?? undefined });
   parts.push(prompt);
 
-  // Only open the portal if current prompt is the invite AND the user said yes-now
+  // Only open portal when explicitly invited AND user says yes in the same turn
   const wantsPortal = /\b(yes|ok|okay|sure|open|go ahead|please do)\b/i.test(user);
   const isInvite = /secure client portal/i.test(prompt);
   const openPortal = isInvite && wantsPortal;
@@ -252,14 +272,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(200).json({ reply: "Hello! My name’s Mark. What prompted you to seek help with your debts today?" });
     }
 
-    // Derive state from (history + current)
     const derived = deriveState(history, userMessage);
-
-    // Build reply
     const out = stitchReply(userMessage, derived);
     return res.status(200).json(out);
   } catch {
-    // Never surface a 500—return a safe intro so the chat continues
     return res.status(200).json({ reply: "Hello! My name’s Mark. What prompted you to seek help with your debts today?" });
   }
 }
