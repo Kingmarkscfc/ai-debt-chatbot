@@ -10,7 +10,6 @@ type Step = {
   prompt: string;
   keywords?: string[];
   openPortal?: boolean;
-  // Optional: we infer if missing
   expects?: "name" | "concern" | "amounts" | "urgency" | "ack" | "portalInvite" | "docs" | "free";
 };
 type ScriptShape = { steps: Step[] };
@@ -24,7 +23,7 @@ const supabase = createClient(
 
 /** Load & normalize script **/
 const SCRIPT_IN: ScriptShape = rawScript as any;
-const SCRIPT: Step[] = (SCRIPT_IN.steps || []).map((s) => ({ ...s }));
+const SCRIPT: Step[] = (SCRIPT_IN.steps || []).map((s, i) => ({ id: s.id ?? i, ...s }));
 
 // Heuristic: infer expects if not set
 for (const s of SCRIPT) {
@@ -41,8 +40,8 @@ for (const s of SCRIPT) {
   }
 }
 
-// Explicit portal invite anchor (move if your script changes)
-const PORTAL_INVITE_ID = 4;
+// The portal invite step index (adjust if your script moves it)
+const PORTAL_INVITE_ID = SCRIPT.find((s) => s.expects === "portalInvite")?.id ?? 4;
 
 /** Opening line (no globe) **/
 const OPENING = "Hello! My name’s Mark. What prompted you to seek help with your debts today?";
@@ -118,9 +117,15 @@ const isQuestion = (s: string) => s.includes("?");
 const ackYes = (s: string) => /\b(yes|ok|okay|sure|carry on|continue|proceed|yep|yeah|go ahead)\b/i.test(s);
 const affirmative = (s: string) => /\b(yes|ok|okay|sure|go ahead|open|start|set up|yep|yeah|please)\b/i.test(s);
 
-/** Amount parsing & windowing **/
-function numbersIn(text: string): number[] {
-  return text.match(/£?\s*([0-9]+(?:\.[0-9]{1,2})?)/gi)?.map((x) => Number(x.replace(/[^0-9.]/g, ""))) || [];
+/** History scanning helpers **/
+function iterAssistantSteps(history: Msg[]) {
+  const out: Array<{ step: number; idx: number }> = [];
+  history.forEach((h, idx) => {
+    if (h.role !== "assistant") return;
+    const m = h.content.match(STEP_RE);
+    if (m) out.push({ step: Number(m[1]), idx });
+  });
+  return out;
 }
 function lastAssistantStepIdx(history: Msg[], stepId: number): number {
   for (let i = history.length - 1; i >= 0; i--) {
@@ -131,17 +136,54 @@ function lastAssistantStepIdx(history: Msg[], stepId: number): number {
   }
   return -1;
 }
-function collectUserSince(history: Msg[], startIdx: number): string[] {
-  const out: string[] = [];
+function firstAssistantStepIdxFromBlock(history: Msg[], stepId: number): number {
+  // Walk backwards to find the *earliest* assistant message of the current contiguous block for this step.
+  let foundAt = -1;
+  for (let i = history.length - 1; i >= 0; i--) {
+    const h = history[i];
+    if (h.role !== "assistant") continue;
+    const m = h.content.match(STEP_RE);
+    if (!m) continue;
+    const sid = Number(m[1]);
+    if (sid === stepId) {
+      foundAt = i;
+      continue; // keep going to see if there was an earlier assistant prompt *for the same step*
+    }
+    if (sid !== stepId && foundAt !== -1) {
+      // We crossed into a different step after having seen this step — stop.
+      return foundAt;
+    }
+  }
+  return foundAt;
+}
+function collectUserSinceStepStart(history: Msg[], stepId: number): string[] {
+  const startIdx = firstAssistantStepIdxFromBlock(history, stepId);
+  if (startIdx === -1) return [];
+  const texts: string[] = [];
   for (let i = startIdx + 1; i < history.length; i++) {
     const h = history[i];
-    if (h.role === "assistant") break; // stop at next assistant prompt
-    if (h.role === "user") out.push(h.content);
+    if (h.role === "assistant") {
+      // another assistant message — if it's a different step, stop window
+      const m = h.content.match(STEP_RE);
+      if (m && Number(m[1]) !== stepId) break;
+      // if it's the same step, continue collecting user messages after it
+      continue;
+    }
+    if (h.role === "user") texts.push(h.content);
   }
-  return out;
+  return texts;
 }
-function findStepByExpect(ex: Step["expects"]): Step | undefined {
-  return SCRIPT.find((s) => s.expects === ex);
+
+/** Amount parsing **/
+function numbersIn(text: string): number[] {
+  return text.match(/£?\s*([0-9]+(?:\.[0-9]{1,2})?)/gi)?.map((x) => Number(x.replace(/[^0-9.]/g, ""))) || [];
+}
+function amountsAnsweredWindow(history: Msg[], stepId: number): { have: number[]; ok: boolean } {
+  const texts = collectUserSinceStepStart(history, stepId);
+  const nums: number[] = [];
+  texts.forEach((t) => nums.push(...numbersIn(t)));
+  const clean = nums.filter((n) => Number.isFinite(n));
+  return { have: clean.slice(0, 4), ok: clean.length >= 2 };
 }
 
 /** Intent detection **/
@@ -167,33 +209,7 @@ function detectIntents(s: string): Intents {
   };
 }
 
-/** Step helpers **/
-function iterAssistantSteps(history: Msg[]) {
-  const out: Array<{ step: number; idx: number }> = [];
-  history.forEach((h, idx) => {
-    if (h.role !== "assistant") return;
-    const m = h.content.match(STEP_RE);
-    if (m) out.push({ step: Number(m[1]), idx });
-  });
-  return out;
-}
-function userAfter(history: Msg[], idx: number): { idx: number; text: string } | null {
-  for (let i = idx + 1; i < history.length; i++) {
-    if (history[i].role === "user") return { idx: i, text: history[i].content };
-  }
-  return null;
-}
-
 /** Validation **/
-function amountsAnsweredWindow(history: Msg[], stepId: number): { have: number[]; ok: boolean } {
-  const startIdx = lastAssistantStepIdx(history, stepId);
-  if (startIdx === -1) return { have: [], ok: false };
-  const texts = collectUserSince(history, startIdx);
-  const nums: number[] = [];
-  texts.forEach((t) => nums.push(...numbersIn(t)));
-  // Two distinct numbers = current + affordable captured
-  return { have: nums.slice(0, 3), ok: nums.filter((n) => !Number.isNaN(n)).length >= 2 };
-}
 function urgencyAnswered(s: string) {
   const u = norm(s);
   if (/\b(no|none|nothing|not really|all good|fine)\b/.test(u)) return true;
@@ -215,16 +231,24 @@ function validate(stepId: number, txt: string, history: Msg[]): boolean {
   }
 }
 
-/** Next required step (strict) */
+/** Decide next required step (strict) */
 function nextRequiredStep(history: Msg[]): number {
-  const askedSteps = iterAssistantSteps(history).filter((s) => s.step >= 0);
-  for (let id = 0; id < SCRIPT.length; id++) {
-    const asked = askedSteps.find((x) => x.step === id);
-    if (!asked) return id;
-    const ua = userAfter(history, asked.idx);
-    if (!ua || !validate(id, ua.text, history)) return id;
+  const asked = iterAssistantSteps(history).filter((s) => s.step >= 0);
+  if (asked.length === 0) return SCRIPT[0]?.id ?? 0; // Intro guard — always start at step 0
+  // Walk from step 0 upward and find the first unasked or unvalidated step.
+  for (let idx = 0; idx < SCRIPT.length; idx++) {
+    const stepId = SCRIPT[idx].id;
+    const lastAsk = asked.find((x) => x.step === stepId);
+    if (!lastAsk) return stepId;
+    // Find the first user message after lastAsk.idx
+    let uaText = "";
+    for (let i = lastAsk.idx + 1; i < history.length; i++) {
+      if (history[i].role === "assistant") break;
+      if (history[i].role === "user") { uaText = history[i].content; break; }
+    }
+    if (!uaText || !validate(stepId, uaText, history)) return stepId;
   }
-  return Math.min(SCRIPT.length - 1, SCRIPT.length);
+  return SCRIPT[SCRIPT.length - 1]?.id ?? 0;
 }
 
 /** Small talk/FAQ blend that DOESN’T advance */
@@ -296,37 +320,41 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       await saveNameIfNew(sessionId, undefined, displayName);
     }
 
-    // decide which step is required
+    // which step is required
     const needId = nextRequiredStep(history);
-    const needStep = SCRIPT.find((s) => s.id === needId) || SCRIPT[0];
+    const idxInScript = SCRIPT.findIndex((s) => s.id === needId);
+    const needStep = SCRIPT[idxInScript] || SCRIPT[0];
 
-    // Special handling for AMOUNTS (prevent loop by asking only what's missing)
+    // amounts step: collect across the whole step block to avoid partial-loop
     if (needStep.expects === "amounts") {
       const window = amountsAnsweredWindow(history, needStep.id);
-      if (window.have.length === 0) {
-        const out = needStep.prompt; // original combined prompt
-        await append(sessionId, "assistant", `${STEP_TAG(needStep.id)} ${out}`);
-        await telemetry(sessionId, "step_shown", { step: needStep.id, mode: "amounts-none" });
+      if (window.have.length >= 2) {
+        // Advance to next step
+        const nextStep = SCRIPT[idxInScript + 1] || SCRIPT[idxInScript]; // safe fallback
+        const out = nextStep.prompt;
+        await append(sessionId, "assistant", `${STEP_TAG(nextStep.id)} ${out}`);
+        await telemetry(sessionId, "step_advance", { from: needStep.id, to: nextStep.id, have: window.have.slice(0, 2) });
         return res.status(200).json({ reply: out, displayName, openPortal: false });
       }
       if (window.have.length === 1) {
         // Ask only for the missing piece
-        const single = window.have[0];
-        // Heuristic: if user said "I pay X", next we want "what would feel affordable?"
-        // If they said "I can afford X", next we want "what do you currently pay?"
         const lastChunk = history[history.length - 1]?.content.toLowerCase() || "";
-        const asked =
+        const ask =
           /afford|affordable|want to pay|can pay|could pay/.test(lastChunk)
             ? "Thanks — and roughly how much do you pay across all debts each month right now?"
             : "Thanks — and what would feel affordable for you each month?";
-        await append(sessionId, "assistant", `${STEP_TAG(needStep.id)} ${asked}`);
-        await telemetry(sessionId, "step_shown", { step: needStep.id, mode: "amounts-partial", have: single });
-        return res.status(200).json({ reply: asked, displayName, openPortal: false });
+        await append(sessionId, "assistant", `${STEP_TAG(needStep.id)} ${ask}`);
+        await telemetry(sessionId, "step_shown", { step: needStep.id, mode: "amounts-partial" });
+        return res.status(200).json({ reply: ask, displayName, openPortal: false });
       }
-      // have >= 2 → proceed (fall through to normal prompt of next step by tricking validator)
+      // none captured yet → ask full combined prompt
+      const out = needStep.prompt;
+      await append(sessionId, "assistant", `${STEP_TAG(needStep.id)} ${out}`);
+      await telemetry(sessionId, "step_shown", { step: needStep.id, mode: "amounts-none" });
+      return res.status(200).json({ reply: out, displayName, openPortal: false });
     }
 
-    // Side Q&A that shouldn't advance: how-are-you / FAQ / arbitrary questions mid-step
+    // Small talk/FAQ that shouldn't advance
     const lastUser = history.slice(-1)[0];
     const userTxt = lastUser?.role === "user" ? lastUser.content : "";
     const looksSide =
@@ -345,7 +373,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Portal invite step: open only on explicit yes
     if (needStep.id === PORTAL_INVITE_ID || needStep.expects === "portalInvite") {
       if (affirmative(userTxt)) {
-        const follow = SCRIPT.find((s) => s.name === "portal_followup") || SCRIPT.find((s) => s.id === PORTAL_INVITE_ID + 1);
+        const follow = SCRIPT.find((s) => s.name === "portal_followup") || SCRIPT[idxInScript + 1];
         const out =
           follow?.prompt ||
           "While you’re in the portal, I’ll stay here to guide you. You can come back to the chat anytime using the button in the top-right corner. Please follow the outstanding tasks so we can better understand your situation. Once you’ve saved your details, say “done” and we’ll continue.";
