@@ -15,7 +15,7 @@ function safeLoadJSON<T>(rel: string, fallback: T): T {
   return fallback;
 }
 
-/** Defaults used if files are missing/broken */
+/** Defaults if files are missing/broken */
 const SCRIPT_DEFAULT = {
   steps: [
     { id: 0, prompt: "Great, I look forward to helping you clear your debts. Can you let me know who I’m speaking to?" },
@@ -41,14 +41,43 @@ const FAQS = safeLoadJSON("utils/faqs.json", FAQS_DEFAULT) as typeof FAQS_DEFAUL
 const normalize = (s: string) => (s || "").trim().toLowerCase();
 const stripPunc = (s: string) => s.replace(/[^\p{L}\p{N}\s£\.]/gu, " ").replace(/\s+/g, " ").trim();
 
-function titleCaseName(raw: string): string {
-  let s = (raw || "").trim();
-  s = s.replace(/\b(too|also|as well)\b\.?$/i, "").trim();
-  s = s.replace(/^(my name is|i'm|i am|it'?s|call me)\s+/i, "").trim();
-  s = s.replace(/\b(and|but|because|,)\b.*$/i, "").trim();
-  s = s.split(/\s+/).slice(0, 3).join(" ");
-  if (!s) return "";
-  return s.toLowerCase().split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+function looksLikeNameRaw(raw: string): boolean {
+  const t = normalize(raw);
+
+  // Hard filters: greetings or obvious non-name content
+  if (/(^|\s)(hi|hello|hey|good (morning|afternoon|evening)|how are you|you ok)(\s|$)/.test(t)) return false;
+  if (/[?@#:/\\]/.test(t)) return false; // likely not a bare name
+  if (t.length < 2 || t.length > 40) return false;
+
+  // Accept one or two tokens of letters/hyphens/apostrophes
+  const tokens = t.split(/\s+/).slice(0, 2);
+  if (tokens.length === 0 || tokens.length > 2) return false;
+  if (!tokens.every(x => /^[a-z][a-z'\-]*$/i.test(x))) return false;
+
+  return true;
+}
+
+function toTitleCaseName(raw: string): string {
+  const cleaned = raw.trim().split(/\s+/).slice(0, 2).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
+  return cleaned;
+}
+
+function extractNameFromMessage(msg: string): string | null {
+  const s = msg.trim();
+
+  // Patterned forms
+  const p = s.match(/\b(my name is|i'?m|i am|it'?s|call me)\s+([a-z][a-z\s'\-]{1,40})/i);
+  if (p) {
+    const n = p[2].trim().split(/\s+/).slice(0, 2).join(" ");
+    return toTitleCaseName(n);
+  }
+
+  // Bare name (e.g., "Mark" or "Mark Hughes")
+  if (looksLikeNameRaw(s)) {
+    return toTitleCaseName(s);
+  }
+
+  return null;
 }
 
 function extractMoney(s: string): number[] {
@@ -64,7 +93,7 @@ function extractMoney(s: string): number[] {
 
 function isSmallTalk(s: string): boolean {
   const t = normalize(s);
-  return /^(hi|hello|hey|good (morning|afternoon|evening)|how are you|you ok)/.test(t);
+  return /^(hi|hello|hey|good (morning|afternoon|evening)|how are you|you ok)\b/.test(t);
 }
 
 function greetVariant(user: string): string {
@@ -96,6 +125,7 @@ function faqAnswer(user: string): string | null {
 
 /** ---------------- Derive state from history ---------------- */
 type Derived = {
+  askedName: boolean;
   haveName: boolean; name?: string;
   haveConcern: boolean;
   monthly?: number; affordable?: number;
@@ -104,25 +134,40 @@ type Derived = {
   invitedPortal: boolean; portalOpened: boolean;
 };
 
-function deriveState(history: string[]): Derived {
+function deriveState(history: string[], latest: string): Derived {
   const h = history.map(x => stripPunc(String(x).toLowerCase()));
   const full = h.join("\n");
+  const latestStripped = stripPunc(latest.toLowerCase());
 
-  // Name detection
-  const nameMatch =
-    full.match(/\b(my name is|i'?m|i am|call me)\s+([a-z][a-z\s\-']{1,40})/i) ||
-    full.match(/\b(thanks|thank you),?\s+([a-z][a-z\s\-']{1,40})$/i);
-  const name = nameMatch ? titleCaseName(nameMatch[2] || "") : undefined;
+  // Was the "name" question asked already?
+  const askedName = history.some(x => x.includes(SCRIPT.steps[0].prompt));
+
+  // Try to find a name in the whole convo
+  let name: string | undefined;
+  // 1) Look through history lines for explicit "my name is …"
+  for (const line of history.slice(-6)) { // recent window
+    const n = extractNameFromMessage(line);
+    if (n) { name = n; break; }
+  }
+  // 2) If still none, try latest message
+  if (!name) {
+    const n2 = extractNameFromMessage(latest);
+    if (n2) name = n2;
+  }
+
+  const haveName = !!name;
 
   // Concern detection
-  const concern = /(bailiff|default|ccj|missed|interest|charges|arrears|rent|council|gas|electric|card|loan|overdraft|catalogue|finance|curious|better deal)/.test(full);
+  const concern = /(bailiff|default|ccj|missed|interest|charges|arrears|rent|council|gas|electric|card|loan|overdraft|catalogue|finance|curious|better deal)/.test(full + "\n" + latestStripped);
 
   // Money window
   let monthly: number | undefined;
   let affordable: number | undefined;
-  for (const line of h) {
-    if (/(pay|repay|towards|per month|monthly)/.test(line)) {
-      const nums = extractMoney(line);
+  const linesToScan = history.concat(latest).slice(-10);
+  for (const line of linesToScan) {
+    const ln = line.toLowerCase();
+    if (/(pay|repay|towards|per month|monthly)/.test(ln)) {
+      const nums = extractMoney(ln);
       if (nums.length === 1) {
         if (!monthly && nums[0] >= 50) monthly = nums[0];
       } else if (nums.length >= 2) {
@@ -130,26 +175,27 @@ function deriveState(history: string[]): Derived {
         monthly = sorted[0];
         affordable = sorted[sorted.length - 1];
       }
-    } else if (/afford|affordable|can manage|could do/.test(line)) {
-      const nums = extractMoney(line);
+    } else if (/afford|affordable|can manage|could do/.test(ln)) {
+      const nums = extractMoney(ln);
       if (nums.length) affordable = nums[0];
     }
   }
 
   const askedUrgent = /anything urgent.*(enforcement|bailiff|court|default|priority)/i.test(full);
-  const urgentAnswered = askedUrgent && /\b(no|none|nothing|not really|yes|bailiff|ccj|default|missed)\b/i.test(full);
+  const urgentAnswered = askedUrgent && /\b(no|none|nothing|not really|yes|bailiff|ccj|default|missed)\b/i.test(full + " " + latestStripped);
 
   const ackShown = /no obligation.*moneyhelper/i.test(full);
-  const ackAccepted = ackShown && /\b(yes|ok|okay|carry on|continue|proceed|yep|sure)\b/i.test(full);
+  const ackAccepted = ackShown && /\b(yes|ok|okay|carry on|continue|proceed|yep|sure)\b/i.test(full + " " + latestStripped);
 
   const invitedPortal = /secure client portal/i.test(full);
-  const portalOpened = invitedPortal && /\b(yes|ok|okay|open|go ahead|please do|sure)\b/i.test(full);
+  const portalOpened = invitedPortal && /\b(yes|ok|okay|open|go ahead|please do|sure)\b/i.test(full + " " + latestStripped);
 
-  return { haveName: !!name, name, haveConcern: concern, monthly, affordable, askedUrgent, urgentAnswered, ackAccepted, invitedPortal, portalOpened };
+  return { askedName, haveName, name, haveConcern: concern, monthly, affordable, askedUrgent, urgentAnswered, ackAccepted, invitedPortal, portalOpened };
 }
 
 /** ---------------- Script driver ---------------- */
 function nextPrompt(d: Derived): string {
+  // If we asked for the name, and now we have a name, move on (do NOT re-ask)
   if (!d.haveName) return SCRIPT.steps[0].prompt;
   if (!d.haveConcern) return SCRIPT.steps[1].prompt;
   if (!d.monthly && !d.affordable) return SCRIPT.steps[2].prompt;
@@ -164,35 +210,39 @@ function nextPrompt(d: Derived): string {
 function stitchReply(user: string, d: Derived): { reply: string; openPortal?: boolean; displayName?: string } {
   const parts: string[] = [];
 
+  // Human niceties
   if (isSmallTalk(user)) parts.push(greetVariant(user));
   const empathy = empatheticAck(user);
   if (empathy) parts.push(empathy);
 
-  const maybeName = titleCaseName(user);
-  if (!d.haveName && maybeName) parts.push(`Nice to meet you, ${maybeName}.`);
+  // Only greet-by-name if we just captured one AND we’re not re-asking
+  const possibleName = extractNameFromMessage(user);
+  if (!d.haveName && possibleName) {
+    parts.push(`Nice to meet you, ${possibleName}.`);
+  }
 
+  // FAQ hook (kept short so it doesn't derail the script)
   const faq = faqAnswer(user);
   if (faq) parts.push(faq);
 
-  const prompt = nextPrompt(d);
+  // Drive script
+  const prompt = nextPrompt({ ...d, haveName: d.haveName || !!possibleName, name: d.name ?? possibleName ?? undefined });
   parts.push(prompt);
 
+  // Only open the portal if current prompt is the invite AND the user said yes-now
   const wantsPortal = /\b(yes|ok|okay|sure|open|go ahead|please do)\b/i.test(user);
   const isInvite = /secure client portal/i.test(prompt);
   const openPortal = isInvite && wantsPortal;
 
-  return { reply: parts.join(" "), openPortal, displayName: d.name };
+  return { reply: parts.join(" "), openPortal, displayName: d.name ?? possibleName ?? undefined };
 }
 
 /** ---------------- Handler ---------------- */
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
-    // Healthcheck
     if (req.method === "GET") return res.status(200).json({ ok: true });
-
     if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-    // Body guard (handle empty/invalid JSON)
     const body = (req.body && typeof req.body === "object") ? req.body : {};
     const userMessage = String(body.userMessage ?? "").trim();
     const history: string[] = Array.isArray(body.history) ? body.history.map(String) : [];
@@ -203,9 +253,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     // Derive state from (history + current)
-    const derived = deriveState(history.concat(userMessage));
+    const derived = deriveState(history, userMessage);
 
-    // Build reply (never throws)
+    // Build reply
     const out = stitchReply(userMessage, derived);
     return res.status(200).json(out);
   } catch {
