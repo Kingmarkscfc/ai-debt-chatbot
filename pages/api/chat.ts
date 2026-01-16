@@ -21,14 +21,19 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || ""
 );
 
-/** Script & constants **/
+/** Script **/
 const SCRIPT_IN: ScriptShape = rawScript as any;
 const SCRIPT: Step[] = (SCRIPT_IN.steps || []).map((s) => s);
+
+// Make sure the portal invite step is explicitly at id 4 (as requested)
+const PORTAL_INVITE_ID = 4;
+
+/** Opening line (no globe text) **/
 const OPENING = "Hello! My name’s Mark. What prompted you to seek help with your debts today?";
 const STEP_TAG = (n: number) => `[[STEP:${n}]]`;
 const STEP_RE = /\[\[STEP:(-?\d+)\]\]/;
 
-/** Empathy & bridges **/
+/** Light empathy + bridges **/
 const EMPATHY: Array<[RegExp, string]> = [
   [/bailiff|enforcement/i, "I know bailiff contact is stressful — we’ll get protections in place quickly."],
   [/ccj|county court|default/i, "Court or default letters can be worrying — we’ll address that in your plan."],
@@ -36,9 +41,14 @@ const EMPATHY: Array<[RegExp, string]> = [
   [/rent|council\s*tax|water|gas|electric/i, "We’ll make sure essentials like housing and utilities are prioritised."],
   [/credit\s*card|loan|overdraft|catalogue|car\s*finance/i, "We’ll take this step by step and ease the pressure."]
 ];
-const BRIDGES = ["Got it.", "Understood.", "Thanks for sharing.", "Appreciate that."];
+const BRIDGES = [
+  "Got it.",
+  "Understood.",
+  "Thanks for sharing.",
+  "I appreciate the context."
+];
 
-/** FAQ matcher (very light) **/
+/** FAQ (keyword) **/
 type FAQ = { q: string; a: string; keywords?: string[] };
 const FAQS: FAQ[] = (faqs as unknown as FAQ[]) || [];
 function faqAnswer(u: string): string | null {
@@ -93,8 +103,11 @@ function extractName(s: string): string | null {
   const rx = /(my name is|i am|i'm|im|it's|its|call me)\s+([a-z][a-z\s'’-]{1,60})/i;
   const m = s.match(rx);
   if (m?.[2]) return tidyName(m[2]);
+  // bare short name (“Mark”, “Mark Hughes”)
   const simple = s.trim();
-  if (simple && simple.split(/\s+/).length <= 3) return tidyName(simple);
+  if (/^[a-z][a-z\s'’-]{1,60}$/i.test(simple) && simple.split(/\s+/).length <= 3) {
+    return tidyName(simple);
+  }
   return null;
 }
 function amountsAnswered(s: string) {
@@ -107,12 +120,39 @@ function urgencyAnswered(s: string) {
   if (/(bailiff|enforcement|ccj|default|court|missed|rent|council\s*tax|gas|electric|water)/i.test(u)) return true;
   return false;
 }
-const ackYes = (s: string) => /\b(yes|ok|okay|sure|carry on|continue|proceed|yep|yeah|go ahead)\b/i.test(s);
-const affirmative = (s: string) => /\b(yes|ok|okay|sure|go ahead|open|start|set up|yep|yeah|please)\b/i.test(s);
 const isHowAreYou = (s: string) => /\b(how (are|r) (you|u)|you ok\??|how’s things|hows things)\b/i.test(s);
 const isQuestion = (s: string) => s.includes("?");
+const ackYes = (s: string) => /\b(yes|ok|okay|sure|carry on|continue|proceed|yep|yeah|go ahead)\b/i.test(s);
+const affirmative = (s: string) => /\b(yes|ok|okay|sure|go ahead|open|start|set up|yep|yeah|please)\b/i.test(s);
 
-/** History parsing helpers **/
+/** Intent detection **/
+type Intents = {
+  greet: boolean;
+  howAreYou: boolean;
+  provideName: string | null;
+  amounts: boolean;
+  urgency: boolean;
+  question: boolean;
+  yes: boolean;
+  no: boolean;
+};
+function detectIntents(s: string): Intents {
+  const u = s.trim();
+  const l = norm(u);
+  const provideName = extractName(u);
+  return {
+    greet: /\b(hi|hello|hey|good (morning|afternoon|evening)|greetings)\b/i.test(u),
+    howAreYou: isHowAreYou(u),
+    provideName,
+    amounts: amountsAnswered(u),
+    urgency: urgencyAnswered(u),
+    question: isQuestion(u),
+    yes: ackYes(u),
+    no: /\b(no|nope|nah|not now)\b/i.test(l)
+  };
+}
+
+/** History helpers **/
 function iterAssistantSteps(history: Msg[]) {
   const out: Array<{ step: number; idx: number }> = [];
   history.forEach((h, idx) => {
@@ -129,7 +169,7 @@ function userAfter(history: Msg[], idx: number): { idx: number; text: string } |
   return null;
 }
 
-/** Validate a user's reply for a particular step id */
+/** Validation **/
 function validate(stepId: number, txt: string): boolean {
   const s = SCRIPT.find((x) => x.id === stepId);
   if (!s) return false;
@@ -139,30 +179,26 @@ function validate(stepId: number, txt: string): boolean {
     case "amounts": return amountsAnswered(txt);
     case "urgency": return urgencyAnswered(txt);
     case "ack": return ackYes(txt);
-    case "portalInvite": return affirmative(txt); // only true means “yes, open”
+    case "portalInvite": return affirmative(txt); // only “yes” counts
     case "docs": return txt.trim().length > 0;
     default: return txt.trim().length > 0;
   }
 }
 
-/** Compute the NEXT REQUIRED STEP (strict) by validating each step against the user's reply that followed it */
+/** Compute next required step strictly by validation */
 function nextRequiredStep(history: Msg[]): number {
-  // find the opener; if none, we still start at step 0
-  const aSteps = iterAssistantSteps(history).filter((s) => s.step >= 0);
-  // validation pass: for steps 0..n, check whether they were asked and then answered acceptably
-  let expect = 0;
+  const askedSteps = iterAssistantSteps(history).filter((s) => s.step >= 0);
   for (let id = 0; id < SCRIPT.length; id++) {
-    const asked = aSteps.find((x) => x.step === id);
-    if (!asked) return id; // never asked → we need to ask it
+    const asked = askedSteps.find((x) => x.step === id);
+    if (!asked) return id;
     const ua = userAfter(history, asked.idx);
-    if (!ua || !validate(id, ua.text)) return id; // asked but not validly answered
-    expect = id + 1;
+    if (!ua || !validate(id, ua.text)) return id;
   }
-  return Math.min(expect, SCRIPT.length - 1);
+  return Math.min(SCRIPT.length - 1, SCRIPT.length); // safety
 }
 
-/** Build a side answer for Q&A, then restate the current step (does not advance). */
-function sideAnswerThen(stepPrompt: string, user: string): string {
+/** Build side answer and then restate current step (no advance) */
+function sideAnswerThen(stepPrompt: string, user: string, displayName?: string): string {
   const parts: string[] = [];
 
   if (isHowAreYou(user)) {
@@ -176,12 +212,38 @@ function sideAnswerThen(stepPrompt: string, user: string): string {
   if (faq) parts.push(faq);
 
   if (parts.length === 0 && isQuestion(user)) {
-    parts.push("Good question — here’s a quick answer: we’ll tailor a plan to lower payments and stop the spiral.");
+    parts.push("Good question — short answer: we’ll tailor a plan to lower payments and steady things.");
   }
 
-  // Always guide back to the script step prompt
-  parts.push(stepPrompt);
+  const greetName = displayName ? ` ${displayName}` : "";
+  parts.push(`${BRIDGES[Math.floor(Math.random()*BRIDGES.length)]} ${stepPrompt.replace("Can you let me know who I’m speaking to?", `Can you let me know who I’m speaking to${greetName ? ","+greetName : ""}?`)}`);
+
   return parts.join(" ");
+}
+
+/** Persist light profile fields (best-effort) */
+async function saveNameIfNew(sessionId: string, email: string | undefined, displayName: string) {
+  try {
+    // store in chat_telemetry + clients table (best-effort; ignore errors)
+    await supabase.from("chat_telemetry").insert({
+      session_id: sessionId,
+      event_type: "set_name",
+      payload: { displayName }
+    });
+    await supabase
+      .from("clients")
+      .upsert(
+        { session_id: sessionId, full_name: displayName },
+        { onConflict: "session_id" as any }
+      );
+    if (email) {
+      await supabase
+        .from("client_profiles")
+        .upsert({ email, full_name: displayName }, { onConflict: "email" as any });
+    }
+  } catch {
+    /* ignore */
+  }
 }
 
 /** Core handler **/
@@ -191,9 +253,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     const sessionId = String(req.body.sessionId || "");
     const userMessage = String(req.body.userMessage || req.body.message || "").trim();
+    const providedDisplayName = String(req.body.displayName || "").trim() || undefined;
     if (!sessionId) return res.status(400).json({ reply: "Missing session.", openPortal: false });
 
-    // reset command
+    // reset
     if (/^(reset|restart|start again)$/i.test(userMessage)) {
       await supabase.from("messages").delete().eq("session_id", sessionId);
       const opener = `${STEP_TAG(-1)} ${OPENING}`;
@@ -202,10 +265,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(200).json({ reply: OPENING, openPortal: false });
     }
 
-    // load history
+    // load history or start
     let history = await loadHistory(sessionId);
-
-    // first time → opener
     if (history.length === 0) {
       const opener = `${STEP_TAG(-1)} ${OPENING}`;
       await append(sessionId, "assistant", opener);
@@ -213,52 +274,67 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(200).json({ reply: OPENING, openPortal: false });
     }
 
-    // append user input to history
+    // append user
     if (userMessage) {
       await append(sessionId, "user", userMessage);
       history.push({ role: "user", content: userMessage });
     }
 
-    // Compute which step is required *now*
+    // detect intents
+    const intents = detectIntents(userMessage);
+
+    // capture name anywhere (without advancing)
+    let displayName = providedDisplayName;
+    if (!displayName && intents.provideName) {
+      displayName = intents.provideName;
+      await saveNameIfNew(sessionId, undefined, displayName);
+    }
+
+    // compute required step
     const needId = nextRequiredStep(history);
     const needStep = SCRIPT.find((s) => s.id === needId) || SCRIPT[0];
 
-    // Did the user just ask a side question / small talk?
-    const justAsked = iterAssistantSteps(history).slice(-1)[0]; // last assistant step asked
+    // If user asked side question / said how-are-you / provided name while step expects something else:
     const lastUser = history.slice(-1)[0];
     const userTxt = lastUser?.role === "user" ? lastUser.content : "";
-
     const looksLikeSideQA =
-      isQuestion(userTxt) || isHowAreYou(userTxt) || (!!faqAnswer(userTxt) && !validate(needId, userTxt));
+      intents.howAreYou ||
+      intents.question ||
+      (!!faqAnswer(userTxt) && !validate(needId, userTxt)) ||
+      (!!intents.provideName && needStep.expects !== "name");
 
     if (looksLikeSideQA) {
-      // Give a short answer, then restate the current step prompt (no advance)
-      const blended = sideAnswerThen(needStep.prompt, userTxt);
+      let prefix = "";
+      if (intents.provideName) {
+        prefix = `Nice to meet you, ${displayName || intents.provideName}. `;
+      }
+      const blended = prefix + sideAnswerThen(needStep.prompt, userTxt, displayName);
       await append(sessionId, "assistant", `${STEP_TAG(needStep.id)} ${blended}`);
-      await telemetry(sessionId, "side_qa", { at_step: needStep.id });
-      return res.status(200).json({ reply: blended, openPortal: false });
+      await telemetry(sessionId, "side_qa", { at_step: needStep.id, nameSet: !!intents.provideName });
+      return res.status(200).json({ reply: blended, displayName, openPortal: false });
     }
 
-    // If current step is the portal invite, only open when explicit yes/ok…
-    if (needStep.expects === "portalInvite") {
-      const yes = affirmative(userTxt);
-      if (yes) {
-        const follow = SCRIPT.find((s) => s.name === "portal_followup")!;
-        const out = `${follow.prompt}`;
-        await append(sessionId, "assistant", `${STEP_TAG(follow.id)} ${out}`);
+    // Portal invite handling: only open on explicit yes; otherwise ask the invite step
+    if (needStep.id === PORTAL_INVITE_ID || needStep.expects === "portalInvite") {
+      if (affirmative(userTxt)) {
+        // Send follow-up step after portal is opened (do not skip steps)
+        const follow = SCRIPT.find((s) => s.name === "portal_followup") || SCRIPT.find((s) => s.id === PORTAL_INVITE_ID + 1);
+        const out = follow ? follow.prompt : "While you’re in the portal, I’ll stay here to guide you. Once you’ve saved your details, just say “done” and we’ll continue. You can come back to the chat anytime using the button in the top-right corner. Please follow the outstanding tasks so we can better understand your situation.";
+        await append(sessionId, "assistant", `${STEP_TAG(follow ? follow.id : needStep.id)} ${out}`);
         await telemetry(sessionId, "portal_opened", { at_step: needStep.id });
-        return res.status(200).json({ reply: out, openPortal: true });
+        return res.status(200).json({ reply: out, displayName, openPortal: true });
       }
-      // Not affirmative → ask the invite step itself
+      // Not affirmative → ask the invite step (don’t open)
       await append(sessionId, "assistant", `${STEP_TAG(needStep.id)} ${needStep.prompt}`);
       await telemetry(sessionId, "step_shown", { step: needStep.id });
-      return res.status(200).json({ reply: needStep.prompt, openPortal: false });
+      return res.status(200).json({ reply: needStep.prompt, displayName, openPortal: false });
     }
 
-    // Normal case: ask the required step prompt
-    await append(sessionId, "assistant", `${STEP_TAG(needStep.id)} ${needStep.prompt}`);
+    // Normal case: ask the required step prompt (varied bridge if we just confirmed something)
+    const promptOut = needStep.prompt;
+    await append(sessionId, "assistant", `${STEP_TAG(needStep.id)} ${promptOut}`);
     await telemetry(sessionId, "step_shown", { step: needStep.id });
-    return res.status(200).json({ reply: needStep.prompt, openPortal: false });
+    return res.status(200).json({ reply: promptOut, displayName, openPortal: false });
   } catch (e: any) {
     console.error("chat api error:", e?.message || e);
     return res
@@ -266,4 +342,3 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       .json({ reply: "Sorry — something went wrong on my end. Let’s continue from here.", openPortal: false });
   }
 }
-
