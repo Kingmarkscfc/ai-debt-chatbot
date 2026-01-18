@@ -39,26 +39,49 @@ const normalize = (s: string) => (s || "").trim().toLowerCase();
 const stripPunc = (s: string) => s.replace(/[^\p{L}\p{N}\s£\.]/gu, " ").replace(/\s+/g, " ").trim();
 const asUndef = (v: string | null | undefined): string | undefined => (v ?? undefined);
 
-function looksLikeNameRaw(raw: string): boolean {
-  const t = normalize(raw);
-  if (/(^|\s)(hi|hello|hey|good (morning|afternoon|evening)|how are you|you ok)(\s|$)/.test(t)) return false;
-  if (/[?@#:/\\]/.test(t)) return false;
-  if (t.length < 2 || t.length > 40) return false;
-  const tokens = t.split(/\s+/).slice(0, 2);
-  if (tokens.length === 0 || tokens.length > 2) return false;
-  if (!tokens.every(x => /^[a-z][a-z'\-]*$/i.test(x))) return false;
-  return true;
-}
 function toTitleCaseName(raw: string): string {
   return raw.trim().split(/\s+/).slice(0, 2).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
 }
+const NAME_STOPWORDS = new Set([
+  "currently","today","there","here","okay","ok","fine","good","great","thanks","thank","hello","hi","hey",
+  "evening","morning","afternoon","yes","no","later","buddy","mate","pal"
+]);
+
+function looksLikeNameToken(token: string): boolean {
+  if (!/^[a-z][a-z'\-]{1,30}$/i.test(token)) return false;
+  return !NAME_STOPWORDS.has(token.toLowerCase());
+}
+function looksLikeNameRaw(raw: string): boolean {
+  const t = normalize(raw);
+  if (/(^|\s)(hi|hello|hey|good (morning|afternoon|evening)|how are you|you ok)(\s|$)/.test(t)) return false;
+  if (/[?@#:/\\0-9]/.test(t)) return false;
+  if (t.length < 2 || t.length > 40) return false;
+  const tokens = t.split(/\s+/).slice(0, 2);
+  if (tokens.length === 0 || tokens.length > 2) return false;
+  return tokens.every(looksLikeNameToken);
+}
+
 function extractNameFromMessage(msg: string): string | null {
   const s = msg.trim();
-  const p = s.match(/\b(my name is|i'?m|i am|it'?s|call me)\s+([a-z][a-z\s'\-]{1,40})/i);
-  if (p) return toTitleCaseName(p[2]);
+  // “my name is X / call me X”
+  const p1 = s.match(/\b(my name is|call me)\s+([a-z][a-z\s'\-]{1,40})/i);
+  if (p1) {
+    const cand = toTitleCaseName(p1[2]);
+    const ok = cand.split(/\s+/).every(looksLikeNameToken);
+    if (ok) return cand;
+  }
+  // “i’m/i am/it’s X”  — only if X looks like a real name token
+  const p2 = s.match(/\b(i[' ]?m|i am|it[' ]?s)\s+([a-z][a-z'\-]{1,30})(\s+[a-z][a-z'\-]{1,30})?/i);
+  if (p2) {
+    const cand = toTitleCaseName((p2[2] + " " + (p2[3] || "")).trim());
+    const ok = cand.split(/\s+/).every(looksLikeNameToken);
+    if (ok) return cand;
+  }
+  // bare name
   if (looksLikeNameRaw(s)) return toTitleCaseName(s);
   return null;
 }
+
 function extractMoney(s: string): number[] {
   const out: number[] = [];
   const txt = s.replace(/[, ]/g, "");
@@ -108,11 +131,15 @@ type Derived = {
   askedUrgent: boolean; urgentAnswered: boolean;
   ackShown: boolean; ackAccepted: boolean;
   invitedPortal: boolean; portalOpened: boolean; portalDeclined: boolean;
+  lastBot?: string;
 };
 function deriveState(history: string[], latest: string): Derived {
-  const h = history.map(x => stripPunc(String(x).toLowerCase()));
+  const h = history.map(x => String(x));
   const full = h.join("\n");
   const latestStripped = stripPunc(latest.toLowerCase());
+
+  // try to capture last bot line (we alternate; history is plain text array)
+  const lastBot = h.length ? h[h.length - 1] : undefined;
 
   const askedName = history.some(x => x.includes(SCRIPT.steps[0].prompt));
 
@@ -129,7 +156,7 @@ function deriveState(history: string[], latest: string): Derived {
   const haveName = !!name;
 
   // Concern keywords
-  const concern = /(bailiff|default|ccj|missed|interest|charges|arrears|rent|council|gas|electric|card|loan|overdraft|catalogue|finance|curious|better deal)/.test(full + "\n" + latestStripped);
+  const concern = /(bailiff|default|ccj|missed|interest|charges|arrears|rent|council|gas|electric|card|loan|overdraft|catalogue|finance|curious|better deal)/i.test(full + "\n" + latestStripped);
 
   // Money window (last 10 lines + latest)
   let monthly: number | undefined;
@@ -156,11 +183,11 @@ function deriveState(history: string[], latest: string): Derived {
   const ackShown = /no obligation.*moneyhelper/i.test(full);
   const ackAccepted = ackShown && /\b(yes|ok|okay|carry on|continue|proceed|yep|sure)\b/i.test(full + " " + latestStripped);
 
-  const invitedPortal = /secure client portal/i.test(full);
+  const invitedPortal = /secure Client Portal/i.test(full);
   const portalOpened = invitedPortal && /\b(yes|ok|okay|open|go ahead|please do|sure)\b/i.test(full + " " + latestStripped);
   const portalDeclined = invitedPortal && /\b(no|not now|later|do it later|another time)\b/i.test(full + " " + latestStripped);
 
-  return { askedName, haveName, name, haveConcern: concern, monthly, affordable, askedUrgent, urgentAnswered, ackShown, ackAccepted, invitedPortal, portalOpened, portalDeclined };
+  return { askedName, haveName, name, haveConcern: concern, monthly, affordable, askedUrgent, urgentAnswered, ackShown, ackAccepted, invitedPortal, portalOpened, portalDeclined, lastBot };
 }
 
 /* ---------- script driver ---------- */
@@ -197,6 +224,7 @@ function nextPrompt(d: Derived): string {
 
   if (d.portalDeclined) {
     return "No problem — we can keep chatting and I’ll guide you step by step. Would you like a quick summary of options based on what you’ve told me so far?";
+    // user reply "yes" to this is handled in stitchReply()
   }
 
   if (d.invitedPortal && !d.portalOpened) {
@@ -204,6 +232,23 @@ function nextPrompt(d: Derived): string {
   }
 
   return SCRIPT.steps[6].prompt;
+}
+
+/* ---------- summaries ---------- */
+function buildQuickSummary(d: Derived): string {
+  const monthly = d.monthly ?? undefined;
+  const affordable = d.affordable ?? undefined;
+
+  const saving = (monthly && affordable && monthly > affordable) ? ` (targeting a reduction from ~£${monthly.toFixed(0)} to ~£${affordable.toFixed(0)})` : "";
+  const urgent = d.urgentAnswered ? "" : " We’ll also check if anything urgent needs priority protection.";
+  return [
+    "Here’s a quick summary of options:",
+    "• DMP: an informal plan to reduce payments and freeze interest where possible; flexible and can be adjusted.",
+    "• IVA (if suitable): a formal agreement that can stop interest/charges and may write off a portion of debt after fixed affordable payments.",
+    "• Self-help/negotiation: we can help you contact creditors with affordable offers.",
+    "• Bankruptcy/DRO (where appropriate): we’ll explain fully if those are relevant.",
+    `We’ll tailor the choice to your disposable income${saving}.${urgent}`
+  ].join(" ");
 }
 
 /* ---------- compose reply ---------- */
@@ -220,11 +265,23 @@ function stitchReply(user: string, d: Derived): { reply: string; openPortal?: bo
     parts.push(`Nice to meet you, ${possibleName}.`);
   }
 
-  // empathy + faq
+  // empathy + faq (best effort)
   const empathy = empatheticAck(user);
   if (empathy) parts.push(empathy);
   const faq = faqAnswer(user);
   if (faq) parts.push(faq);
+
+  // Handle explicit "yes" to a quick-summary question from the immediately previous bot line
+  const saidYes = /\b(yes|ok|okay|sure|please|go ahead|yep)\b/i.test(user);
+  const prevAskedSummary = d.lastBot && /quick summary of options/i.test(d.lastBot);
+  if (saidYes && prevAskedSummary) {
+    parts.push(buildQuickSummary(d));
+    // After summary, continue flow:
+    // if portal was declined earlier, keep chatting; otherwise, proceed to ACK/portal as per state
+    const tail = nextPrompt(d);
+    if (!/quick summary of options/i.test(tail)) parts.push(tail);
+    return { reply: parts.join(" "), openPortal: false, displayName: asUndef(d.name ?? possibleName) };
+  }
 
   // drive the script (personalised)
   const prompt = personalise(
@@ -234,7 +291,7 @@ function stitchReply(user: string, d: Derived): { reply: string; openPortal?: bo
   parts.push(prompt);
 
   // explicit portal controls
-  const wantsOpen = /\b(open (the )?portal|yes|ok|okay|sure|go ahead|please do)\b/i.test(user);
+  const wantsOpen = /\b(open (the )?portal|yes open|open please)\b/i.test(user) || (/\b(yes|ok|okay|sure|go ahead|please do)\b/i.test(user) && /secure Client Portal/i.test(prompt));
   const saysNo = /\b(no|not now|later|do it later|another time)\b/i.test(user);
   const isPortalInvite = /secure Client Portal/i.test(prompt);
 
