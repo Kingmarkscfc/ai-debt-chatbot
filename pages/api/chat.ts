@@ -70,7 +70,7 @@ function extractNameFromMessage(msg: string): string | null {
     const ok = cand.split(/\s+/).every(looksLikeNameToken);
     if (ok) return cand;
   }
-  // “i’m/i am/it’s X”  — only if X looks like a real name token
+  // “i’m/i am/it’s X”
   const p2 = s.match(/\b(i[' ]?m|i am|it[' ]?s)\s+([a-z][a-z'\-]{1,30})(\s+[a-z][a-z'\-]{1,30})?/i);
   if (p2) {
     const cand = toTitleCaseName((p2[2] + " " + (p2[3] || "")).trim());
@@ -80,6 +80,30 @@ function extractNameFromMessage(msg: string): string | null {
   // bare name
   if (looksLikeNameRaw(s)) return toTitleCaseName(s);
   return null;
+}
+
+/* ---------- NEW: name sanitiser (avoid echoing profanity) ---------- */
+const PROFANE_EXACT = new Set([
+  "shit","fuck","fucker","fucking","cunt","bitch","ass","arse","wanker","twat","prick","dick","douche"
+]);
+// allow legit names that contain those substrings (e.g., Harshit)
+const WHITELIST_SUBSTRINGS = ["harshit","harshita","shittu"]; // extend as needed
+
+function sanitiseName(name: string | null): { safeName?: string; flagged: boolean } {
+  if (!name) return { flagged: false };
+  const raw = name.trim();
+  const lower = raw.toLowerCase();
+
+  // allow-list if any safe substring matches
+  if (WHITELIST_SUBSTRINGS.some(w => lower.includes(w))) {
+    return { safeName: toTitleCaseName(raw), flagged: false };
+  }
+  // exact token profanity check (per token)
+  const tokens = lower.split(/\s+/);
+  if (tokens.some(t => PROFANE_EXACT.has(t))) {
+    return { flagged: true };
+  }
+  return { safeName: toTitleCaseName(raw), flagged: false };
 }
 
 function extractMoney(s: string): number[] {
@@ -138,9 +162,7 @@ function deriveState(history: string[], latest: string): Derived {
   const full = h.join("\n");
   const latestStripped = stripPunc(latest.toLowerCase());
 
-  // try to capture last bot line (we alternate; history is plain text array)
   const lastBot = h.length ? h[h.length - 1] : undefined;
-
   const askedName = history.some(x => x.includes(SCRIPT.steps[0].prompt));
 
   // Name (scan last few lines and current)
@@ -224,7 +246,6 @@ function nextPrompt(d: Derived): string {
 
   if (d.portalDeclined) {
     return "No problem — we can keep chatting and I’ll guide you step by step. Would you like a quick summary of options based on what you’ve told me so far?";
-    // user reply "yes" to this is handled in stitchReply()
   }
 
   if (d.invitedPortal && !d.portalOpened) {
@@ -255,14 +276,23 @@ function buildQuickSummary(d: Derived): string {
 function stitchReply(user: string, d: Derived): { reply: string; openPortal?: boolean; displayName?: string } {
   const parts: string[] = [];
 
-  const possibleName = extractNameFromMessage(user); // string | null
+  // potential name & sanitise
+  const rawPossible = extractNameFromMessage(user); // string | null
+  const { safeName: possibleName, flagged: nameFlagged } = sanitiseName(rawPossible);
 
-  // small talk (warm)
+  // small talk
   if (isSmallTalk(user)) parts.push(greetVariant(user, asUndef(possibleName ?? d.name)));
 
-  // if we just captured a name and didn’t have one, greet and anchor
+  // if we just captured a name and it’s safe, greet and anchor
   if (!d.haveName && possibleName) {
     parts.push(`Nice to meet you, ${possibleName}.`);
+  }
+  // if we captured a profane exact token as a “name”, handle gently
+  if (!d.haveName && nameFlagged) {
+    parts.push("I might have misheard your name — what would you like me to call you?");
+    // Do not proceed to next stages until we have a clean name
+    parts.push(SCRIPT.steps[0].prompt);
+    return { reply: parts.join(" "), openPortal: false, displayName: asUndef(d.name) };
   }
 
   // empathy + faq (best effort)
@@ -271,14 +301,12 @@ function stitchReply(user: string, d: Derived): { reply: string; openPortal?: bo
   const faq = faqAnswer(user);
   if (faq) parts.push(faq);
 
-  // Handle explicit "yes" to a quick-summary question from the immediately previous bot line
+  // Handle explicit "yes" to a quick-summary question from previous bot line
   const saidYes = /\b(yes|ok|okay|sure|please|go ahead|yep)\b/i.test(user);
   const prevAskedSummary = d.lastBot && /quick summary of options/i.test(d.lastBot);
   if (saidYes && prevAskedSummary) {
     parts.push(buildQuickSummary(d));
-    // After summary, continue flow:
-    // if portal was declined earlier, keep chatting; otherwise, proceed to ACK/portal as per state
-    const tail = nextPrompt(d);
+    const tail = nextPrompt({ ...d, haveName: d.haveName || !!possibleName, name: asUndef(d.name ?? possibleName) });
     if (!/quick summary of options/i.test(tail)) parts.push(tail);
     return { reply: parts.join(" "), openPortal: false, displayName: asUndef(d.name ?? possibleName) };
   }
@@ -326,3 +354,4 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(200).json({ reply: "Hello! My name’s Mark. What prompted you to seek help with your debts today?" });
   }
 }
+
