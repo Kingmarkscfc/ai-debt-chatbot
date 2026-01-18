@@ -61,8 +61,25 @@ function looksLikeNameRaw(raw: string): boolean {
   return tokens.every(looksLikeNameToken);
 }
 
+/* ---------- profanity rules for names ---------- */
+const PROFANE_EXACT = new Set([
+  "shit","fuck","fucker","fucking","cunt","bitch","ass","arse","wanker","twat","prick","dick","douche"
+]);
+// allow legit names that contain those substrings (e.g., Harshit)
+const WHITELIST_SUBSTRINGS = ["harshit","harshita","shittu"]; // extend as needed
+
+function isProfaneExactToken(token: string): boolean {
+  return PROFANE_EXACT.has(token.toLowerCase());
+}
+function isWhitelistedNameLike(s: string): boolean {
+  const t = s.toLowerCase();
+  return WHITELIST_SUBSTRINGS.some(w => t.includes(w));
+}
+
+/* Capture a potential name (raw). DO NOT sanitise here; return raw guess or null. */
 function extractNameFromMessage(msg: string): string | null {
   const s = msg.trim();
+
   // “my name is X / call me X”
   const p1 = s.match(/\b(my name is|call me)\s+([a-z][a-z\s'\-]{1,40})/i);
   if (p1) {
@@ -79,28 +96,22 @@ function extractNameFromMessage(msg: string): string | null {
   }
   // bare name
   if (looksLikeNameRaw(s)) return toTitleCaseName(s);
+
   return null;
 }
 
-/* ---------- NEW: name sanitiser (avoid echoing profanity) ---------- */
-const PROFANE_EXACT = new Set([
-  "shit","fuck","fucker","fucking","cunt","bitch","ass","arse","wanker","twat","prick","dick","douche"
-]);
-// allow legit names that contain those substrings (e.g., Harshit)
-const WHITELIST_SUBSTRINGS = ["harshit","harshita","shittu"]; // extend as needed
-
+/* Sanitise a captured name — block exact profanity tokens, but allow legit substrings (Harshit) */
 function sanitiseName(name: string | null): { safeName?: string; flagged: boolean } {
   if (!name) return { flagged: false };
   const raw = name.trim();
   const lower = raw.toLowerCase();
 
-  // allow-list if any safe substring matches
-  if (WHITELIST_SUBSTRINGS.some(w => lower.includes(w))) {
+  if (isWhitelistedNameLike(lower)) {
     return { safeName: toTitleCaseName(raw), flagged: false };
   }
   // exact token profanity check (per token)
   const tokens = lower.split(/\s+/);
-  if (tokens.some(t => PROFANE_EXACT.has(t))) {
+  if (tokens.some(t => isProfaneExactToken(t))) {
     return { flagged: true };
   }
   return { safeName: toTitleCaseName(raw), flagged: false };
@@ -146,10 +157,11 @@ function faqAnswer(user: string): string | null {
   return null;
 }
 
-/* ---------- derive state from history ---------- */
+/* ---------- derive state from history (now also sanitises historical names) ---------- */
 type Derived = {
   askedName: boolean;
   haveName: boolean; name?: string;
+  nameFlagged: boolean;
   haveConcern: boolean;
   monthly?: number; affordable?: number;
   askedUrgent: boolean; urgentAnswered: boolean;
@@ -165,16 +177,18 @@ function deriveState(history: string[], latest: string): Derived {
   const lastBot = h.length ? h[h.length - 1] : undefined;
   const askedName = history.some(x => x.includes(SCRIPT.steps[0].prompt));
 
-  // Name (scan last few lines and current)
-  let name: string | undefined;
+  // Name (scan last few lines and current) + sanitise
+  let rawName: string | undefined;
   for (const line of history.slice(-6)) {
     const n = extractNameFromMessage(line);
-    if (n) { name = n; break; }
+    if (n) { rawName = n; break; }
   }
-  if (!name) {
+  if (!rawName) {
     const n2 = extractNameFromMessage(latest);
-    if (n2) name = n2;
+    if (n2) rawName = n2;
   }
+  const { safeName: histSafeName, flagged: histFlagged } = sanitiseName(rawName ?? null);
+  const name = histFlagged ? undefined : histSafeName;
   const haveName = !!name;
 
   // Concern keywords
@@ -209,7 +223,7 @@ function deriveState(history: string[], latest: string): Derived {
   const portalOpened = invitedPortal && /\b(yes|ok|okay|open|go ahead|please do|sure)\b/i.test(full + " " + latestStripped);
   const portalDeclined = invitedPortal && /\b(no|not now|later|do it later|another time)\b/i.test(full + " " + latestStripped);
 
-  return { askedName, haveName, name, haveConcern: concern, monthly, affordable, askedUrgent, urgentAnswered, ackShown, ackAccepted, invitedPortal, portalOpened, portalDeclined, lastBot };
+  return { askedName, haveName, name, nameFlagged: histFlagged, haveConcern: concern, monthly, affordable, askedUrgent, urgentAnswered, ackShown, ackAccepted, invitedPortal, portalOpened, portalDeclined, lastBot };
 }
 
 /* ---------- script driver ---------- */
@@ -259,7 +273,6 @@ function nextPrompt(d: Derived): string {
 function buildQuickSummary(d: Derived): string {
   const monthly = d.monthly ?? undefined;
   const affordable = d.affordable ?? undefined;
-
   const saving = (monthly && affordable && monthly > affordable) ? ` (targeting a reduction from ~£${monthly.toFixed(0)} to ~£${affordable.toFixed(0)})` : "";
   const urgent = d.urgentAnswered ? "" : " We’ll also check if anything urgent needs priority protection.";
   return [
@@ -276,23 +289,25 @@ function buildQuickSummary(d: Derived): string {
 function stitchReply(user: string, d: Derived): { reply: string; openPortal?: boolean; displayName?: string } {
   const parts: string[] = [];
 
-  // potential name & sanitise
+  // potential name & sanitise (fresh input)
   const rawPossible = extractNameFromMessage(user); // string | null
-  const { safeName: possibleName, flagged: nameFlagged } = sanitiseName(rawPossible);
+  const freshSan = sanitiseName(rawPossible);
+  const possibleName = freshSan.flagged ? undefined : freshSan.safeName;
 
-  // small talk
-  if (isSmallTalk(user)) parts.push(greetVariant(user, asUndef(possibleName ?? d.name)));
-
-  // if we just captured a name and it’s safe, greet and anchor
-  if (!d.haveName && possibleName) {
-    parts.push(`Nice to meet you, ${possibleName}.`);
-  }
-  // if we captured a profane exact token as a “name”, handle gently
-  if (!d.haveName && nameFlagged) {
+  // If user just provided a profane "name", intercept hard and re-ask politely
+  if (!d.haveName && freshSan.flagged) {
     parts.push("I might have misheard your name — what would you like me to call you?");
-    // Do not proceed to next stages until we have a clean name
     parts.push(SCRIPT.steps[0].prompt);
     return { reply: parts.join(" "), openPortal: false, displayName: asUndef(d.name) };
+  }
+
+  // small talk (never echo flagged names)
+  const greetName = d.nameFlagged ? undefined : (possibleName ?? d.name);
+  if (isSmallTalk(user)) parts.push(greetVariant(user, asUndef(greetName)));
+
+  // if we just captured a safe name, greet and anchor
+  if (!d.haveName && possibleName) {
+    parts.push(`Nice to meet you, ${possibleName}.`);
   }
 
   // empathy + faq (best effort)
@@ -306,15 +321,16 @@ function stitchReply(user: string, d: Derived): { reply: string; openPortal?: bo
   const prevAskedSummary = d.lastBot && /quick summary of options/i.test(d.lastBot);
   if (saidYes && prevAskedSummary) {
     parts.push(buildQuickSummary(d));
-    const tail = nextPrompt({ ...d, haveName: d.haveName || !!possibleName, name: asUndef(d.name ?? possibleName) });
+    const tail = nextPrompt({ ...d, haveName: d.haveName || !!possibleName, name: asUndef(d.name ?? possibleName), nameFlagged: false });
     if (!/quick summary of options/i.test(tail)) parts.push(tail);
     return { reply: parts.join(" "), openPortal: false, displayName: asUndef(d.name ?? possibleName) };
   }
 
-  // drive the script (personalised)
+  // drive the script (personalised, never with flagged names)
+  const personaName = d.nameFlagged ? undefined : asUndef(d.name ?? possibleName);
   const prompt = personalise(
-    nextPrompt({ ...d, haveName: d.haveName || !!possibleName, name: asUndef(d.name ?? possibleName) }),
-    asUndef(d.name ?? possibleName)
+    nextPrompt({ ...d, haveName: d.haveName || !!possibleName, name: personaName, nameFlagged: false }),
+    personaName
   );
   parts.push(prompt);
 
@@ -329,7 +345,7 @@ function stitchReply(user: string, d: Derived): { reply: string; openPortal?: bo
     parts.push("I haven’t opened the portal yet. I can open it any time — just say “open portal”.");
   }
 
-  return { reply: parts.join(" "), openPortal, displayName: asUndef(d.name ?? possibleName) };
+  return { reply: parts.join(" "), openPortal, displayName: personaName };
 }
 
 /* ---------- handler ---------- */
@@ -354,4 +370,3 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(200).json({ reply: "Hello! My name’s Mark. What prompted you to seek help with your debts today?" });
   }
 }
-
