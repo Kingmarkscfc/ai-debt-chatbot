@@ -37,6 +37,7 @@ const FAQS = safeLoadJSON("utils/faqs.json", FAQS_DEFAULT) as typeof FAQS_DEFAUL
 /* ---------- helpers ---------- */
 const normalize = (s: string) => (s || "").trim().toLowerCase();
 const stripPunc = (s: string) => s.replace(/[^\p{L}\p{N}\s£\.]/gu, " ").replace(/\s+/g, " ").trim();
+const asUndef = (v: string | null | undefined): string | undefined => (v ?? undefined);
 
 function looksLikeNameRaw(raw: string): boolean {
   const t = normalize(raw);
@@ -78,7 +79,7 @@ function greetVariant(user: string, name?: string): string {
   const withName = name ? ` ${name}` : "";
   if (timey) return `${timey.replace(/\b\w/g, c => c.toUpperCase())}! Nice to meet you${withName}.`;
   if (/how are you/.test(t)) return `I’m good, thanks — and it’s great to meet you${withName}. I’m here to help.`;
-  return `Hi${withName ? " " + name : ""}!`;
+  return `Hi${withName}!`;
 }
 function empatheticAck(user: string): string | null {
   const t = normalize(user);
@@ -165,7 +166,6 @@ function deriveState(history: string[], latest: string): Derived {
 /* ---------- script driver ---------- */
 function personalise(prompt: string, name?: string): string {
   if (!name) return prompt;
-  // Insert name into key early prompts
   if (prompt.startsWith("Just so I can point you in the right direction")) {
     return prompt.replace("direction,", `direction, ${name},`);
   }
@@ -193,20 +193,16 @@ function nextPrompt(d: Derived): string {
 
   if (!d.ackAccepted) return SCRIPT.steps[4].prompt;
 
-  // Portal invite only once, and never force-open
   if (!d.invitedPortal) return SCRIPT.steps[5].prompt;
 
-  // If the user declined, don’t loop — move to a gentle, non-portal track
   if (d.portalDeclined) {
     return "No problem — we can keep chatting and I’ll guide you step by step. Would you like a quick summary of options based on what you’ve told me so far?";
   }
 
-  // If invited and not opened yet, offer a non-pushy alternative
   if (d.invitedPortal && !d.portalOpened) {
     return "Whenever you’re ready just say “open portal”. Meanwhile, would you like a quick summary of options?";
   }
 
-  // After portal
   return SCRIPT.steps[6].prompt;
 }
 
@@ -214,11 +210,10 @@ function nextPrompt(d: Derived): string {
 function stitchReply(user: string, d: Derived): { reply: string; openPortal?: boolean; displayName?: string } {
   const parts: string[] = [];
 
-  // possible name from this turn
-  const possibleName = extractNameFromMessage(user);
+  const possibleName = extractNameFromMessage(user); // string | null
 
   // small talk (warm)
-  if (isSmallTalk(user)) parts.push(greetVariant(user, possibleName || d.name));
+  if (isSmallTalk(user)) parts.push(greetVariant(user, asUndef(possibleName ?? d.name)));
 
   // if we just captured a name and didn’t have one, greet and anchor
   if (!d.haveName && possibleName) {
@@ -233,8 +228,8 @@ function stitchReply(user: string, d: Derived): { reply: string; openPortal?: bo
 
   // drive the script (personalised)
   const prompt = personalise(
-    nextPrompt({ ...d, haveName: d.haveName || !!possibleName, name: d.name ?? possibleName }),
-    d.name ?? possibleName
+    nextPrompt({ ...d, haveName: d.haveName || !!possibleName, name: asUndef(d.name ?? possibleName) }),
+    asUndef(d.name ?? possibleName)
   );
   parts.push(prompt);
 
@@ -245,12 +240,11 @@ function stitchReply(user: string, d: Derived): { reply: string; openPortal?: bo
 
   const openPortal = (isPortalInvite && wantsOpen) || (!isPortalInvite && wantsOpen && d.ackAccepted);
 
-  // handle "done" only if opened before
   if (/\bdone\b/i.test(user) && !d.portalOpened) {
     parts.push("I haven’t opened the portal yet. I can open it any time — just say “open portal”.");
   }
 
-  return { reply: parts.join(" "), openPortal, displayName: d.name ?? possibleName ?? undefined };
+  return { reply: parts.join(" "), openPortal, displayName: asUndef(d.name ?? possibleName) };
 }
 
 /* ---------- handler ---------- */
