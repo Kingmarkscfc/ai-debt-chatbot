@@ -75,33 +75,32 @@ function pickName(s: string): string | null {
 }
 
 // ---------- History inspectors (phrase anchors, no markers) ----------
-function anyBotLine(history: string[], rx: RegExp) {
-  // assume even indices may be bot in your UI, but play safe: scan all
-  return history.some(line => rx.test(line));
+function anyLine(lines: string[], rx: RegExp) {
+  return lines.some(line => rx.test(line));
 }
 
 // “Asked” checks (look for our exact phrasing we send)
 const askedNameRX = /can I take your first name\?/i;
 const askedConcernRX = /what would you say your main concern is with the debts\?/i;
 const askedAmountsRX = /how much do you pay.*each month.*what would feel affordable/i;
-const askedUrgentRX = /is there anything urgent.*enforcement|bailiff|court|default|priority bills/i;
+const askedUrgentRX = /is there anything urgent.*(enforcement|bailiff|court|default|priority bills)/i;
 const askedAckRX = /there’s no obligation.*moneyhelper.*shall we carry on\?/i;
 const askedPortalRX = /shall I open.*client portal.*now\?/i;
 const portalGuideRX = /while you’re in the portal, I’ll stay here to guide you/i;
-const askedDocsRX = /please upload.*proof of id.*bank statements.*payslips/i;
+const askedDocsRX = /please upload:?\s*•?\s*proof of id/i;
 const askedSummaryRX = /would you like a quick summary of options/i;
 
-function wasAsked(history: string[], rx: RegExp) { return anyBotLine(history, rx); }
+function wasAsked(lines: string[], rx: RegExp) { return anyLine(lines, rx); }
 
-function seenName(history: string[]): string | null {
+function seenName(lines: string[]): string | null {
   // find the last line where we greeted “Nice to meet you, NAME”
-  for (let i = history.length - 1; i >= 0; i--) {
-    const m = history[i].match(/Nice to meet you,\s+([A-Z][a-z'\- ]{1,30})/i);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const m = lines[i].match(/Nice to meet you,\s+([A-Z][a-z'\- ]{1,30})/i);
     if (m) return m[1].trim();
   }
-  // or the user declared one earlier
-  for (let i = history.length - 1; i >= 0; i--) {
-    const n = pickName(history[i]);
+  // or the user declared one earlier (not ideal, but fallback)
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const n = pickName(lines[i]);
     if (n) return n;
   }
   return null;
@@ -117,12 +116,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     sessionId?: string;
   };
 
+  // IMPORTANT: evaluate state on PRIOR history only (exclude the current user turn)
+  const historyPrior = history.slice(0, Math.max(0, history.length - 1));
+
   const seed = (sessionId || "seed").split("").reduce((a, c) => a + c.charCodeAt(0), 0);
   const text = norm(String(userMessage || ""));
   const lower = text.toLowerCase();
 
   // Small-talk: reply once, then ask name if we haven’t
-  if (isSmallTalk(text) && !wasAsked(history, askedNameRX) && !seenName(history)) {
+  if (isSmallTalk(text) && !wasAsked(historyPrior, askedNameRX) && !seenName(historyPrior)) {
     const empathy = rot(EMPATHY_ROTATIONS, seed + history.length);
     return res.status(200).json({
       reply: `${empathy} ${rot(TRANSITIONS, seed + history.length)} can I take your first name?`,
@@ -130,22 +132,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   }
 
   // Step 0: Name
-  const haveNameAlready = !!seenName(history);
+  const haveNameAlready = !!seenName(historyPrior);
   const nameNow = pickName(text);
 
-  if (!haveNameAlready && !wasAsked(history, askedNameRX)) {
+  if (!haveNameAlready && !wasAsked(historyPrior, askedNameRX)) {
     const empathy = rot(EMPATHY_ROTATIONS, seed + 1);
     return res.status(200).json({
       reply: `${empathy} ${rot(TRANSITIONS, seed + 1)} can I take your first name?`,
     });
   }
 
-  if (!haveNameAlready && wasAsked(history, askedNameRX)) {
+  if (!haveNameAlready && wasAsked(historyPrior, askedNameRX)) {
     if (nameNow) {
       const salute = /mark\b/i.test(nameNow) ? " — nice to meet a fellow Mark!" : "";
       return res.status(200).json({
         reply:
-          `Nice to meet you, ${nameNow}${salute} ` +
+          `Nice to meet you, ${nameNow}${salute}. ` +
           `${rot(TRANSITIONS, seed + 2)} what would you say your main concern is with the debts?`,
         displayName: nameNow,
       });
@@ -158,13 +160,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   }
 
   // Step 1: Concern
-  if (!wasAsked(history, askedConcernRX)) {
+  if (!wasAsked(historyPrior, askedConcernRX)) {
     return res.status(200).json({
       reply: "Just so I can point you in the right direction, what would you say your main concern is with the debts?",
     });
   }
   // If we asked concern last turn, proceed to amounts with an empathy bridge
-  if (wasAsked(history, askedConcernRX) && !wasAsked(history, askedAmountsRX)) {
+  if (wasAsked(historyPrior, askedConcernRX) && !wasAsked(historyPrior, askedAmountsRX)) {
     const empathy = rot(EMPATHY_ROTATIONS, seed + 3);
     return res.status(200).json({
       reply:
@@ -174,9 +176,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   }
 
   // Step 2: Amounts (windowed)
-  if (wasAsked(history, askedAmountsRX) && !wasAsked(history, askedUrgentRX)) {
+  if (wasAsked(historyPrior, askedAmountsRX) && !wasAsked(historyPrior, askedUrgentRX)) {
     const { current, affordable } = extractAmounts(text);
-    const alreadyMentionedNumbers = /\d/.test(history.slice(-4).join(" "));
+    const alreadyMentionedNumbers = /\d/.test(historyPrior.slice(-4).join(" "));
 
     if ((current || affordable) || alreadyMentionedNumbers) {
       return res.status(200).json({
@@ -185,7 +187,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       });
     }
     // one gentle nudge, then proceed anyway next turn
-    const nudgeSeen = anyBotLine(history, /for example, “i pay £600 and could afford £200/i);
+    const nudgeSeen = anyLine(historyPrior, /for example, “i pay £600 and could afford £200/i);
     if (!nudgeSeen) {
       return res.status(200).json({
         reply:
@@ -200,12 +202,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   }
 
   // Step 3: Urgent
-  if (wasAsked(history, askedUrgentRX) && !wasAsked(history, askedAckRX)) {
+  if (wasAsked(historyPrior, askedUrgentRX) && !wasAsked(historyPrior, askedAckRX)) {
     return res.status(200).json({ reply: MONEYHELPER_ACK });
   }
 
   // Step 4: ACK → expect yes/no → portal offer
-  if (wasAsked(history, askedAckRX) && !wasAsked(history, askedPortalRX)) {
+  if (wasAsked(historyPrior, askedAckRX) && !wasAsked(historyPrior, askedPortalRX)) {
     if (YES.test(lower)) {
       return res.status(200).json({
         reply:
@@ -222,7 +224,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   }
 
   // Step 5: Portal (only open on explicit yes)
-  if (wasAsked(history, askedPortalRX) && !wasAsked(history, portalGuideRX)) {
+  if (wasAsked(historyPrior, askedPortalRX) && !wasAsked(historyPrior, portalGuideRX)) {
     if (YES.test(lower)) {
       return res.status(200).json({
         reply:
@@ -243,7 +245,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   }
 
   // Step 6: Portal guide → wait for "done" then docs
-  if (wasAsked(history, portalGuideRX) && !wasAsked(history, askedDocsRX)) {
+  if (wasAsked(historyPrior, portalGuideRX) && !wasAsked(historyPrior, askedDocsRX)) {
     if (/\b(done|saved|submitted|uploaded|finished|complete)\b/i.test(lower)) {
       return res.status(200).json({
         reply:
@@ -259,7 +261,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   }
 
   // Step 7: Docs → Summary/finish
-  if (wasAsked(history, askedDocsRX) && !wasAsked(history, askedSummaryRX)) {
+  if (wasAsked(historyPrior, askedDocsRX) && !wasAsked(historyPrior, askedSummaryRX)) {
     if (/\b(done|uploaded|finished|complete)\b/i.test(lower)) {
       return res.status(200).json({
         reply:
@@ -275,7 +277,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   }
 
   // Step 8: Summary / closing
-  if (wasAsked(history, askedSummaryRX)) {
+  if (wasAsked(historyPrior, askedSummaryRX)) {
     if (YES.test(lower)) {
       return res.status(200).json({
         reply:
