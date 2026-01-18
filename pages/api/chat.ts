@@ -13,7 +13,7 @@ function safeLoadJSON<T>(rel: string, fallback: T): T {
   return fallback;
 }
 
-/* ---------- defaults (used if your JSONs are missing) ---------- */
+/* ---------- defaults ---------- */
 const SCRIPT_DEFAULT = {
   steps: [
     { id: 0, prompt: "Great, I look forward to helping you clear your debts. Can you let me know who I’m speaking to?" },
@@ -53,10 +53,10 @@ const GENERIC_TOPICS = new Set([
 
 /* ---------- profanity rules for names ---------- */
 const PROFANE_EXACT = new Set([
-  "shit","fuck","fucker","fucking","cunt","bitch","ass","arse","wanker","twat","prick","dick","douche"
+  "shit","fuck","fucker","fucking","cunt","bitch","ass","arse","wanker","twat","prick","dick","douche","crap" // added "crap"
 ]);
 // allow legit names that contain those substrings (e.g., Harshit)
-const WHITELIST_SUBSTRINGS = ["harshit","harshita","shittu"]; // extend as needed
+const WHITELIST_SUBSTRINGS = ["harshit","harshita","shittu"];
 
 function isProfaneExactToken(token: string): boolean {
   return PROFANE_EXACT.has(token.toLowerCase());
@@ -125,6 +125,7 @@ function sanitiseName(name: string | null): { safeName?: string; flagged: boolea
   return { safeName: toTitleCaseName(raw), flagged: false };
 }
 
+/* ---------- small helpers ---------- */
 function extractMoney(s: string): number[] {
   const out: number[] = [];
   const txt = s.replace(/[, ]/g, "");
@@ -165,7 +166,7 @@ function faqAnswer(user: string): string | null {
   return null;
 }
 
-/* ---------- derive state from history ---------- */
+/* ---------- derive + name re-ask counting ---------- */
 type Derived = {
   askedName: boolean;
   haveName: boolean; name?: string;
@@ -176,7 +177,18 @@ type Derived = {
   ackShown: boolean; ackAccepted: boolean;
   invitedPortal: boolean; portalOpened: boolean; portalDeclined: boolean;
   lastBot?: string;
+  nameReaskCount: number; // NEW
 };
+function countNameReasks(history: string[]): number {
+  const patterns = [
+    /i might have misheard your name/i,
+    /just a first name is fine/i,
+    /no worries — just tell me a first name/i,
+    /please share a first name/i,
+    /what would you like me to call you\?/i
+  ];
+  return history.reduce((acc, line) => acc + (patterns.some(r => r.test(line)) ? 1 : 0), 0);
+}
 function deriveState(history: string[], latest: string): Derived {
   const h = history.map(x => String(x));
   const full = h.join("\n");
@@ -231,7 +243,9 @@ function deriveState(history: string[], latest: string): Derived {
   const portalOpened = invitedPortal && /\b(yes|ok|okay|open|go ahead|please do|sure)\b/i.test(full + " " + latestStripped);
   const portalDeclined = invitedPortal && /\b(no|not now|later|do it later|another time)\b/i.test(full + " " + latestStripped);
 
-  return { askedName, haveName, name, nameFlagged: histFlagged, haveConcern: concern, monthly, affordable, askedUrgent, urgentAnswered, ackShown, ackAccepted, invitedPortal, portalOpened, portalDeclined, lastBot };
+  const nameReaskCount = countNameReasks(history);
+
+  return { askedName, haveName, name, nameFlagged: histFlagged, haveConcern: concern, monthly, affordable, askedUrgent, urgentAnswered, ackShown, ackAccepted, invitedPortal, portalOpened, portalDeclined, lastBot, nameReaskCount };
 }
 
 /* ---------- script driver ---------- */
@@ -251,7 +265,6 @@ function personalise(prompt: string, name?: string): string {
   }
   return prompt;
 }
-
 function nextPrompt(d: Derived): string {
   if (!d.haveName) return SCRIPT.steps[0].prompt;
   if (!d.haveConcern) return SCRIPT.steps[1].prompt;
@@ -268,7 +281,7 @@ function nextPrompt(d: Derived): string {
 
   if (d.portalDeclined) {
     return "No problem — we can keep chatting and I’ll guide you step by step. Would you like a quick summary of options based on what you’ve told me so far?";
-  }
+    }
 
   if (d.invitedPortal && !d.portalOpened) {
     return "Whenever you’re ready just say “open portal”. Meanwhile, would you like a quick summary of options?";
@@ -293,21 +306,32 @@ function buildQuickSummary(d: Derived): string {
   ].join(" ");
 }
 
+/* ---------- re-ask name variants ---------- */
+function nameReaskVariant(count: number): string {
+  if (count <= 0) return "I might have misheard your name — what would you like me to call you? (A first name is perfect.)";
+  if (count === 1) return "No worries — just tell me a first name to use (e.g., Sam).";
+  if (count === 2) return "Please share a first name you’re happy with and we’ll continue.";
+  // 3+ : move on gracefully (no loop)
+  return "I’ll call you ‘Friend’ for now so we can keep going. If you prefer a different name later, just say: “Call me …”.";
+}
+
 /* ---------- compose reply ---------- */
 function stitchReply(user: string, d: Derived): { reply: string; openPortal?: boolean; displayName?: string } {
   const parts: string[] = [];
 
   // potential name & sanitise (fresh input)
-  const rawPossible = extractNameFromMessage(user); // string | null
+  const rawPossible = extractNameFromMessage(user);
   const freshSan = sanitiseName(rawPossible);
   const possibleName = freshSan.flagged ? undefined : freshSan.safeName;
 
-  // If user just provided a profane "name", intercept with a single, non-repeating prompt
+  // If user just provided a profane "name", vary re-ask and then stop re-asking after a few tries
   if (!d.haveName && freshSan.flagged) {
-    const alreadyAskedName = d.lastBot && /let me know who I’m speaking to\?/i.test(d.lastBot);
-    const variant = alreadyAskedName
-      ? "No worries — just tell me a first name you’d like me to use (e.g., Sam)."
-      : "I might have misheard your name — what would you like me to call you? (A first name is perfect.)";
+    const variant = nameReaskVariant(d.nameReaskCount);
+    // if we’ve already exhausted re-asks, progress to step 1 so we don’t loop on name forever
+    if (d.nameReaskCount >= 3) {
+      const promptAfter = nextPrompt({ ...d, haveName: true, name: undefined, nameFlagged: false });
+      return { reply: `${variant} ${promptAfter}`, openPortal: false, displayName: undefined };
+    }
     return { reply: variant, openPortal: false, displayName: asUndef(d.name) };
   }
 
@@ -315,7 +339,7 @@ function stitchReply(user: string, d: Derived): { reply: string; openPortal?: bo
   const greetName = d.nameFlagged ? undefined : (possibleName ?? d.name);
   if (isSmallTalk(user)) parts.push(greetVariant(user, asUndef(greetName)));
 
-  // if we just captured a safe name, greet and anchor
+  // if we just captured a safe name, greet and anchor (once)
   if (!d.haveName && possibleName) {
     parts.push(`Nice to meet you, ${possibleName}.`);
   }
@@ -326,7 +350,7 @@ function stitchReply(user: string, d: Derived): { reply: string; openPortal?: bo
   const faq = faqAnswer(user);
   if (faq) parts.push(faq);
 
-  // Handle explicit "yes" to a quick-summary question from previous bot line
+  // quick-summary acceptance
   const saidYes = /\b(yes|ok|okay|sure|please|go ahead|yep)\b/i.test(user);
   const prevAskedSummary = d.lastBot && /quick summary of options/i.test(d.lastBot);
   if (saidYes && prevAskedSummary) {
@@ -336,14 +360,14 @@ function stitchReply(user: string, d: Derived): { reply: string; openPortal?: bo
     return { reply: parts.join(" "), openPortal: false, displayName: asUndef(d.name ?? possibleName) };
   }
 
-  // drive the script (personalised, never with flagged names)
+  // drive the script (personalised)
   const personaName = d.nameFlagged ? undefined : asUndef(d.name ?? possibleName);
   const plannedPrompt = personalise(
     nextPrompt({ ...d, haveName: d.haveName || !!possibleName, name: personaName, nameFlagged: false }),
     personaName
   );
 
-  // **anti-repeat guard**: if last bot already asked the same thing, nudge instead of repeating verbatim
+  // anti-repeat guard
   if (d.lastBot && normalize(d.lastBot) === normalize(plannedPrompt)) {
     if (!d.haveName && /who I’m speaking to\?/i.test(plannedPrompt)) {
       parts.push("Just a first name is fine.");
@@ -352,7 +376,6 @@ function stitchReply(user: string, d: Derived): { reply: string; openPortal?: bo
     } else if (/roughly how much do you pay/i.test(plannedPrompt)) {
       parts.push("You can share two numbers (current monthly and what feels affordable).");
     } else {
-      // generic fallback nudge
       parts.push("Whenever you’re ready, a quick line back is perfect.");
     }
   } else {
@@ -373,7 +396,10 @@ function stitchReply(user: string, d: Derived): { reply: string; openPortal?: bo
     parts.push("No problem — we can keep chatting and I’ll guide you step by step.");
   }
 
-  return { reply: parts.join(" "), openPortal, displayName: personaName };
+  // if we exhausted name re-asks earlier and progressed, don’t set a fake name
+  const displayName = (d.nameReaskCount >= 3 && !personaName) ? undefined : personaName;
+
+  return { reply: parts.join(" "), openPortal, displayName };
 }
 
 /* ---------- handler ---------- */
