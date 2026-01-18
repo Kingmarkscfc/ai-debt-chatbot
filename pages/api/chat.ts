@@ -78,17 +78,12 @@ function looksLikeNameToken(token: string): boolean {
   return true;
 }
 
-/* STRICT name capture:
-   - Accept explicit forms: "my name is X", "call me X", "i'm X", "i am X", "it's X" (with validation).
-   - Accept a *single* clean token (e.g., "Mark") as a bare-name.
-   - Accept two-token names ONLY when coming from explicit forms above.
-   - Reject messages containing debt/common keywords.
-*/
+/* STRICT name capture */
 function extractNameFromMessage(msg: string): string | null {
   const s = msg.trim();
   const sNorm = normalize(s);
 
-  // if the line contains any debt/generic keywords, don't try to treat it as a name line
+  // if the line contains any debt/generic keywords, don't treat as a name line
   const tokensAll = sNorm.split(/\s+/);
   if (tokensAll.some(t => DEBT_WORDS.has(t) || GENERIC_TOPICS.has(t))) {
     return null;
@@ -99,7 +94,6 @@ function extractNameFromMessage(msg: string): string | null {
   if (m) {
     const first = m[2];
     const last = (m[3] || "").trim();
-    // two tokens only allowed here (explicit form)
     const parts = last ? [first, last] : [first];
     if (parts.every(looksLikeNameToken)) return toTitleCaseName(parts.join(" "));
     return null;
@@ -115,7 +109,7 @@ function extractNameFromMessage(msg: string): string | null {
   return null;
 }
 
-/* Sanitise a captured name — block exact profanity tokens, but allow legit substrings (Harshit) */
+/* Sanitise a captured name */
 function sanitiseName(name: string | null): { safeName?: string; flagged: boolean } {
   if (!name) return { flagged: false };
   const raw = name.trim();
@@ -171,7 +165,7 @@ function faqAnswer(user: string): string | null {
   return null;
 }
 
-/* ---------- derive state from history (sanitises historical names too) ---------- */
+/* ---------- derive state from history ---------- */
 type Derived = {
   askedName: boolean;
   haveName: boolean; name?: string;
@@ -308,14 +302,16 @@ function stitchReply(user: string, d: Derived): { reply: string; openPortal?: bo
   const freshSan = sanitiseName(rawPossible);
   const possibleName = freshSan.flagged ? undefined : freshSan.safeName;
 
-  // If user just provided a profane "name", intercept hard and re-ask politely
+  // If user just provided a profane "name", intercept with a single, non-repeating prompt
   if (!d.haveName && freshSan.flagged) {
-    parts.push("I might have misheard your name — what would you like me to call you?");
-    parts.push(SCRIPT.steps[0].prompt);
-    return { reply: parts.join(" "), openPortal: false, displayName: asUndef(d.name) };
+    const alreadyAskedName = d.lastBot && /let me know who I’m speaking to\?/i.test(d.lastBot);
+    const variant = alreadyAskedName
+      ? "No worries — just tell me a first name you’d like me to use (e.g., Sam)."
+      : "I might have misheard your name — what would you like me to call you? (A first name is perfect.)";
+    return { reply: variant, openPortal: false, displayName: asUndef(d.name) };
   }
 
-  // small talk (never echo flagged names)
+  // small talk greeting (never echo flagged names)
   const greetName = d.nameFlagged ? undefined : (possibleName ?? d.name);
   if (isSmallTalk(user)) parts.push(greetVariant(user, asUndef(greetName)));
 
@@ -342,21 +338,39 @@ function stitchReply(user: string, d: Derived): { reply: string; openPortal?: bo
 
   // drive the script (personalised, never with flagged names)
   const personaName = d.nameFlagged ? undefined : asUndef(d.name ?? possibleName);
-  const prompt = personalise(
+  const plannedPrompt = personalise(
     nextPrompt({ ...d, haveName: d.haveName || !!possibleName, name: personaName, nameFlagged: false }),
     personaName
   );
-  parts.push(prompt);
+
+  // **anti-repeat guard**: if last bot already asked the same thing, nudge instead of repeating verbatim
+  if (d.lastBot && normalize(d.lastBot) === normalize(plannedPrompt)) {
+    if (!d.haveName && /who I’m speaking to\?/i.test(plannedPrompt)) {
+      parts.push("Just a first name is fine.");
+    } else if (/what would you say your main concern/i.test(plannedPrompt)) {
+      parts.push("A sentence on your main worry (e.g., interest, missed payments, bailiffs) helps me tailor next steps.");
+    } else if (/roughly how much do you pay/i.test(plannedPrompt)) {
+      parts.push("You can share two numbers (current monthly and what feels affordable).");
+    } else {
+      // generic fallback nudge
+      parts.push("Whenever you’re ready, a quick line back is perfect.");
+    }
+  } else {
+    parts.push(plannedPrompt);
+  }
 
   // explicit portal controls
-  const wantsOpen = /\b(open (the )?portal|yes open|open please)\b/i.test(user) || (/\b(yes|ok|okay|sure|go ahead|please do)\b/i.test(user) && /secure Client Portal/i.test(prompt));
+  const wantsOpen = /\b(open (the )?portal|yes open|open please)\b/i.test(user) || (/\b(yes|ok|okay|sure|go ahead|please do)\b/i.test(user) && /secure Client Portal/i.test(plannedPrompt));
   const saysNo = /\b(no|not now|later|do it later|another time)\b/i.test(user);
-  const isPortalInvite = /secure Client Portal/i.test(prompt);
+  const isPortalInvite = /secure Client Portal/i.test(plannedPrompt);
 
   const openPortal = (isPortalInvite && wantsOpen) || (!isPortalInvite && wantsOpen && d.ackAccepted);
 
   if (/\bdone\b/i.test(user) && !d.portalOpened) {
     parts.push("I haven’t opened the portal yet. I can open it any time — just say “open portal”.");
+  }
+  if (isPortalInvite && saysNo) {
+    parts.push("No problem — we can keep chatting and I’ll guide you step by step.");
   }
 
   return { reply: parts.join(" "), openPortal, displayName: personaName };
