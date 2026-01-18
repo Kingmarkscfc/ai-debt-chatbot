@@ -39,27 +39,17 @@ const normalize = (s: string) => (s || "").trim().toLowerCase();
 const stripPunc = (s: string) => s.replace(/[^\p{L}\p{N}\s£\.]/gu, " ").replace(/\s+/g, " ").trim();
 const asUndef = (v: string | null | undefined): string | undefined => (v ?? undefined);
 
-function toTitleCaseName(raw: string): string {
-  return raw.trim().split(/\s+/).slice(0, 2).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
-}
+/* ---------- word lists ---------- */
 const NAME_STOPWORDS = new Set([
   "currently","today","there","here","okay","ok","fine","good","great","thanks","thank","hello","hi","hey",
-  "evening","morning","afternoon","yes","no","later","buddy","mate","pal"
+  "evening","morning","afternoon","yes","no","later","buddy","mate","pal","please"
 ]);
-
-function looksLikeNameToken(token: string): boolean {
-  if (!/^[a-z][a-z'\-]{1,30}$/i.test(token)) return false;
-  return !NAME_STOPWORDS.has(token.toLowerCase());
-}
-function looksLikeNameRaw(raw: string): boolean {
-  const t = normalize(raw);
-  if (/(^|\s)(hi|hello|hey|good (morning|afternoon|evening)|how are you|you ok)(\s|$)/.test(t)) return false;
-  if (/[?@#:/\\0-9]/.test(t)) return false;
-  if (t.length < 2 || t.length > 40) return false;
-  const tokens = t.split(/\s+/).slice(0, 2);
-  if (tokens.length === 0 || tokens.length > 2) return false;
-  return tokens.every(looksLikeNameToken);
-}
+const DEBT_WORDS = new Set([
+  "credit","card","cards","loan","loans","overdraft","catalogue","finance","debts","debt","arrears","interest","charges","repayments","repayment","bills","council","tax","utilities"
+]);
+const GENERIC_TOPICS = new Set([
+  "help","advice","support","money","budget","income","expenditure","situation","problem","issue","issues","worry","concern","concerns"
+]);
 
 /* ---------- profanity rules for names ---------- */
 const PROFANE_EXACT = new Set([
@@ -76,26 +66,51 @@ function isWhitelistedNameLike(s: string): boolean {
   return WHITELIST_SUBSTRINGS.some(w => t.includes(w));
 }
 
-/* Capture a potential name (raw). DO NOT sanitise here; return raw guess or null. */
+/* ---------- name utilities ---------- */
+function toTitleCaseName(raw: string): string {
+  return raw.trim().split(/\s+/).slice(0, 2).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
+}
+function looksLikeNameToken(token: string): boolean {
+  if (!/^[a-z][a-z'\-]{1,30}$/i.test(token)) return false;
+  if (NAME_STOPWORDS.has(token.toLowerCase())) return false;
+  if (DEBT_WORDS.has(token.toLowerCase())) return false;
+  if (GENERIC_TOPICS.has(token.toLowerCase())) return false;
+  return true;
+}
+
+/* STRICT name capture:
+   - Accept explicit forms: "my name is X", "call me X", "i'm X", "i am X", "it's X" (with validation).
+   - Accept a *single* clean token (e.g., "Mark") as a bare-name.
+   - Accept two-token names ONLY when coming from explicit forms above.
+   - Reject messages containing debt/common keywords.
+*/
 function extractNameFromMessage(msg: string): string | null {
   const s = msg.trim();
+  const sNorm = normalize(s);
 
-  // “my name is X / call me X”
-  const p1 = s.match(/\b(my name is|call me)\s+([a-z][a-z\s'\-]{1,40})/i);
-  if (p1) {
-    const cand = toTitleCaseName(p1[2]);
-    const ok = cand.split(/\s+/).every(looksLikeNameToken);
-    if (ok) return cand;
+  // if the line contains any debt/generic keywords, don't try to treat it as a name line
+  const tokensAll = sNorm.split(/\s+/);
+  if (tokensAll.some(t => DEBT_WORDS.has(t) || GENERIC_TOPICS.has(t))) {
+    return null;
   }
-  // “i’m/i am/it’s X”
-  const p2 = s.match(/\b(i[' ]?m|i am|it[' ]?s)\s+([a-z][a-z'\-]{1,30})(\s+[a-z][a-z'\-]{1,30})?/i);
-  if (p2) {
-    const cand = toTitleCaseName((p2[2] + " " + (p2[3] || "")).trim());
-    const ok = cand.split(/\s+/).every(looksLikeNameToken);
-    if (ok) return cand;
+
+  const explicitRe = /\b(my name is|call me|i[' ]?m|i am|it[' ]?s)\s+([a-z][a-z'\-]{1,30})(\s+[a-z][a-z'\-]{1,30})?/i;
+  const m = s.match(explicitRe);
+  if (m) {
+    const first = m[2];
+    const last = (m[3] || "").trim();
+    // two tokens only allowed here (explicit form)
+    const parts = last ? [first, last] : [first];
+    if (parts.every(looksLikeNameToken)) return toTitleCaseName(parts.join(" "));
+    return null;
   }
-  // bare name
-  if (looksLikeNameRaw(s)) return toTitleCaseName(s);
+
+  // bare-name acceptance ONLY for a single token that looks like a first name
+  const bare = s.replace(/[^a-z'\- ]/gi, " ").trim();
+  const parts = bare.split(/\s+/).filter(Boolean);
+  if (parts.length === 1 && looksLikeNameToken(parts[0])) {
+    return toTitleCaseName(parts[0]);
+  }
 
   return null;
 }
@@ -109,7 +124,6 @@ function sanitiseName(name: string | null): { safeName?: string; flagged: boolea
   if (isWhitelistedNameLike(lower)) {
     return { safeName: toTitleCaseName(raw), flagged: false };
   }
-  // exact token profanity check (per token)
   const tokens = lower.split(/\s+/);
   if (tokens.some(t => isProfaneExactToken(t))) {
     return { flagged: true };
@@ -157,7 +171,7 @@ function faqAnswer(user: string): string | null {
   return null;
 }
 
-/* ---------- derive state from history (now also sanitises historical names) ---------- */
+/* ---------- derive state from history (sanitises historical names too) ---------- */
 type Derived = {
   askedName: boolean;
   haveName: boolean; name?: string;
