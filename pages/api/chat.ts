@@ -2,28 +2,22 @@ import type { NextApiRequest, NextApiResponse } from "next";
 
 type Data = { reply: string; openPortal?: boolean; displayName?: string };
 
-/* -------------------- Helpers & constants -------------------- */
-const YES = /\b(yes|yeah|yep|ok|okay|sure|please|go ahead|open|start)\b/i;
-const NO  = /\b(no|not now|later|maybe later|dont|don't|do not)\b/i;
-
-const MONEYHELPER_ACK =
-  "Before we proceed, there’s no obligation to act on any advice today, and there are free sources of debt advice available at MoneyHelper. Shall we carry on?";
-
-const BANNED_NAME_PATTERNS = [
-  /\b(fuck|f\W*ck|shit|crap|twat|dick|wank|cunt|bitch)\b/i,
-];
+/* -------------------- Small helpers -------------------- */
+const norm = (s: string) => (s || "").trim();
+const YES = /\b(yes|yeah|yep|ok|okay|sure|please|go ahead|open|start|do it)\b/i;
+const NO  = /\b(no|not now|later|maybe later|dont|don't|do not|nah)\b/i;
 
 const GREETINGS = [
   /\b(hi|hello|hey|hiya)\b/i,
   /\bgood (morning|afternoon|evening)\b/i,
   /\bhow are (you|u)\b/i,
 ];
-
-function norm(s: string) { return (s || "").trim(); }
-function hasGreeting(s: string) { return GREETINGS.some(r => r.test(s)); }
+const hasGreeting = (s: string) => GREETINGS.some(r => r.test(s));
 function greetingText(s: string) {
   const m = s.match(/\bgood (morning|afternoon|evening)\b/i);
-  return m ? `Good ${m[1].toLowerCase()}!` : /how are/i.test(s) ? "I’m good, thanks!" : "Hi!";
+  if (m) return `Good ${m[1].toLowerCase()}!`;
+  if (/how are/i.test(s)) return "I’m good, thanks!";
+  return "Hi!";
 }
 
 function currencyToNumber(s: string): number {
@@ -39,47 +33,73 @@ function extractAmounts(text: string): { current?: number; affordable?: number }
   return { current: parts[0], affordable: parts[1] };
 }
 
-// Accepts single-word names case-insensitively (e.g., "mark"), multi-word like "Mary Jane", and phrases like "my name is mark"
+/* -------------------- Name parsing (polite & safe) -------------------- */
+const BANNED_NAME_PATTERNS = [
+  /\b(fuck|f\W*ck|shit|crap|twat|dick|wank|cunt|bitch)\b/i,
+];
+
 function pickName(s: string): string | null {
+  // Accept phrases like "my name is mark", "i'm mark", "mark", "Mary Jane"
   const m =
     s.match(/\b(?:i['\s]*m|i am|my name is|call me|it's|its)\s+([a-z][a-z'\- ]{1,30})\b/i) ||
-    s.match(/^\s*([A-Za-z][A-Za-z'\- ]{1,30})\s*$/); // <— now accepts lowercase single token
+    s.match(/^\s*([A-Za-z][A-Za-z'\- ]{1,30})\s*$/);
+
   const raw = m?.[1]?.trim();
   if (!raw) return null;
 
-  // Clean and validate
   const cleaned = raw.replace(/[^a-z'\- ]/gi, " ").replace(/\s+/g, " ").trim();
   if (!cleaned) return null;
   if (BANNED_NAME_PATTERNS.some(p => p.test(cleaned))) return null;
 
   const lower = cleaned.toLowerCase();
-  const nonNames = new Set(["credit","loan","loans","cards","card","debt","debts","hello","hi","hey","evening","morning","afternoon","good"]);
+  const nonNames = new Set([
+    "credit","loan","loans","cards","card","debt","debts",
+    "hello","hi","hey","evening","morning","afternoon","good"
+  ]);
   if (nonNames.has(lower)) return null;
 
-  // Title-case each token
-  return cleaned.split(" ")
+  return cleaned
+    .split(" ")
     .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
     .join(" ");
 }
 
-/* ---------- “Have we asked” detectors (anchor on our own phrasing) ---------- */
-function anyLine(lines: string[], rx: RegExp) { return lines.some(line => rx.test(line)); }
+/* -------------------- “Have we asked” detectors (anchor on our own lines) -------------------- */
+const anyLine = (lines: string[], rx: RegExp) => lines.some(line => rx.test(line));
 
-const askedNameRX     = /what first name should I use\?|what is your first name\?/i;
-const askedConcernRX  = /what would you say your main concern is with the debts\?/i;
-const askedAmountsRX  = /how much do you pay.*each month.*what would feel affordable/i;
-const askedUrgentRX   = /is there anything urgent.*(enforcement|bailiff|court|default|priority bills)/i;
-const askedAckRX      = /there’s no obligation.*moneyhelper.*shall we carry on\?/i;
-const askedPortalRX   = /shall I open.*client portal.*now\?/i;
-const portalGuideRX   = /while you’re in the portal, I’ll stay here to guide you/i;
-const askedDocsRX     = /please upload:?\s*•?\s*proof of id/i;
-const askedSummaryRX  = /would you like a quick summary of options/i;
+const askedIntroRX     = /Hello! My name’s Mark\. What prompted you to seek help with your debts today\?/i;
+const askedNameRX      = /(what is your first name\?|what first name should i use\?)/i;
+const askedConcernRX   = /what would you say your main concern is with the debts\?/i;
+const askedAmountsRX   = /how much do you pay.*each month.*what would feel affordable/i;
+const askedUrgentRX    = /is there anything urgent.*(enforcement|bailiff|court|default|priority bills)/i;
+const askedAckRX       = /there’s no obligation.*moneyhelper.*shall we carry on\?/i;
 
+/** We offered the portal in a few different phrasings across versions; match them all */
+const askedPortalRX = new RegExp(
+  [
+    "shall I open.*client portal.*now\\?",
+    "would you like me to open.*client portal.*now\\?",
+    "would you like to open.*client portal.*now\\?",
+    "I can set up your secure Client Portal.*Shall I open it now\\?"
+  ].join("|"),
+  "i"
+);
+/** After opening, we show the “guide while in portal” line */
+const portalGuideRX  = /while you’re in the portal, I’ll stay here to guide you/i;
+
+/** Documents request step */
+const askedDocsRX    = /please upload:?\s*•?\s*proof of id/i;
+
+/** Summary prompt */
+const askedSummaryRX = /would you like a quick summary of options/i;
+
+/** Find a name we already acknowledged (“Nice to meet you, X”) */
 function seenName(lines: string[]): string | null {
   for (let i = lines.length - 1; i >= 0; i--) {
     const m = lines[i].match(/Nice to meet you,\s+([A-Z][a-z'\- ]{1,30})/i);
     if (m) return m[1].trim();
   }
+  // Fallback: if a previous user line contained a valid name, treat that as known
   for (let i = lines.length - 1; i >= 0; i--) {
     const n = pickName(lines[i]);
     if (n) return n;
@@ -87,20 +107,24 @@ function seenName(lines: string[]): string | null {
   return null;
 }
 
+/* -------------------- Script constants -------------------- */
+const MONEYHELPER_ACK =
+  "Before we proceed, there’s no obligation to act on any advice today, and there are free sources of debt advice available at MoneyHelper. Shall we carry on?";
+
 /* -------------------- Handler -------------------- */
 export default async function handler(req: NextApiRequest, res: NextApiResponse<Data>) {
   if (req.method !== "POST") return res.status(405).json({ reply: "Method not allowed." });
 
   const { userMessage = "", history = [] } = (req.body || {}) as {
     userMessage?: string;
-    history?: string[];
+    history?: string[]; // prior bot+user texts as plain strings (UI sends this)
   };
 
-  const historyPrior = history.slice(0, Math.max(0, history.length - 1));
   const text = norm(String(userMessage || ""));
   const lower = text.toLowerCase();
+  const historyPrior = history.slice(0, Math.max(0, history.length - 1));
 
-  /* -------------------- Small-talk first -------------------- */
+  /* --------- Greeting / small-talk first (never advances the script incorrectly) --------- */
   const haveNameAlready = !!seenName(historyPrior);
   const nameWasAsked    = anyLine(historyPrior, askedNameRX);
 
@@ -117,15 +141,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
   }
 
-  /* -------------------- Step 0: Name -------------------- */
+  /* --------------------------------- Step 0: Name --------------------------------- */
   if (!haveNameAlready && !nameWasAsked) {
+    // We haven't asked yet — ask now
     return res.status(200).json({
       reply: "Hi! I’m here to help. **What is your first name?**",
     });
   }
 
-  const nameNow = pickName(text);
   if (!haveNameAlready && nameWasAsked) {
+    // A name was requested — validate the provided text
+    const nameNow = pickName(text);
     if (nameNow) {
       const salute = /mark\b/i.test(nameNow) ? " — nice to meet a fellow Mark!" : "";
       return res.status(200).json({
@@ -135,13 +161,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         displayName: nameNow,
       });
     }
-    // If still not a name (including profanity), re-ask plainly — no “misheard”
+    // Profanity or non-name → politely re-ask (do NOT advance)
     return res.status(200).json({
       reply: "No worries — please share a first name you’re happy with and we’ll continue.",
     });
   }
 
-  /* -------------------- Step 1: Concern -------------------- */
+  /* ----------------------- Step 1: Concern (only once) ----------------------- */
   if (!anyLine(historyPrior, askedConcernRX)) {
     return res.status(200).json({
       reply: "Just so I can point you in the right direction, what would you say your main concern is with the debts?",
@@ -155,18 +181,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  /* -------------------- Step 2: Amounts (windowed) -------------------- */
+  /* ---------------- Step 2: Amounts (windowed to avoid loops) ---------------- */
   if (anyLine(historyPrior, askedAmountsRX) && !anyLine(historyPrior, askedUrgentRX)) {
     const { current, affordable } = extractAmounts(text);
-    const alreadyMentionedNumbers = /\d/.test(historyPrior.slice(-4).join(" "));
-    if ((current || affordable) || alreadyMentionedNumbers) {
+    const numbersRecently = /\d/.test(historyPrior.slice(-4).join(" "));
+    if ((current || affordable) || numbersRecently) {
       return res.status(200).json({
         reply:
           "Understood. Is there anything urgent like enforcement/bailiff action, court or default notices, or missed priority bills (rent, council tax, utilities)?",
       });
     }
-    const nudgeSeen = anyLine(historyPrior, /for example, “i pay £600 and could afford £200/i);
-    if (!nudgeSeen) {
+    const nudged = anyLine(historyPrior, /for example, “i pay £600 and could afford £200/i);
+    if (!nudged) {
       return res.status(200).json({
         reply:
           "Could you share your monthly total towards debts and a figure that would feel affordable? e.g., “I pay £600, could afford £200.”",
@@ -178,29 +204,32 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  /* -------------------- Step 3: Urgent -------------------- */
+  /* -------------------------- Step 3: Urgent -------------------------- */
   if (anyLine(historyPrior, askedUrgentRX) && !anyLine(historyPrior, askedAckRX)) {
     return res.status(200).json({ reply: MONEYHELPER_ACK });
   }
 
-  /* -------------------- Step 4: ACK → yes/no → portal offer -------------------- */
+  /* -------- Step 4: Acknowledgement → then offer portal (explicit YES) -------- */
   if (anyLine(historyPrior, askedAckRX) && !anyLine(historyPrior, askedPortalRX)) {
     if (YES.test(lower)) {
+      // Offer the portal (first time)
       return res.status(200).json({
         reply:
           "Great — let’s keep going. I can set up your secure Client Portal so you can add details, upload documents, and check progress. Shall I open it now?",
       });
     }
     if (NO.test(lower)) {
+      // Respect a 'no' but keep the conversation warm — and ask again in a phrasing we now recognise
       return res.status(200).json({
         reply:
-          "No problem — we’ll proceed at your pace. When you’re ready, I can open the portal for you to add details securely. Would you like to open it now?",
+          "No problem — we’ll proceed at your pace. When you’re ready, I can open the portal for you to add details securely. " +
+          "Would you like me to open it now?",
       });
     }
     return res.status(200).json({ reply: "Quick check — would you like to carry on? (Yes/No)" });
   }
 
-  /* -------------------- Step 5: Portal (only on explicit YES) -------------------- */
+  /* ----- Step 5: Portal decision (recognise ALL offer phrasings above) ----- */
   if (anyLine(historyPrior, askedPortalRX) && !anyLine(historyPrior, portalGuideRX)) {
     if (YES.test(lower)) {
       return res.status(200).json({
@@ -218,10 +247,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           "No worries — we can keep chatting and I’ll guide you step by step. Would you like a quick summary of options based on what you’ve told me so far?",
       });
     }
-    return res.status(200).json({ reply: "Would you like me to open the secure Client Portal now? (Yes/No)" });
+    // Still undecided → restate (this line also matches askedPortalRX next turn)
+    return res.status(200).json({
+      reply: "Would you like me to open the secure Client Portal now? (Yes/No)",
+    });
   }
 
-  /* -------------------- Step 6: Portal guide → wait “done” → docs -------------------- */
+  /* ---- Step 6: Portal guide → wait for “done” → then docs request ---- */
   if (anyLine(historyPrior, portalGuideRX) && !anyLine(historyPrior, askedDocsRX)) {
     if (/\b(done|saved|submitted|uploaded|finished|complete)\b/i.test(lower)) {
       return res.status(200).json({
@@ -237,7 +269,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  /* -------------------- Step 7: Docs → Summary/finish -------------------- */
+  /* --------------- Step 7: Docs → Summary / finish --------------- */
   if (anyLine(historyPrior, askedDocsRX) && !anyLine(historyPrior, askedSummaryRX)) {
     if (/\b(done|uploaded|finished|complete)\b/i.test(lower)) {
       return res.status(200).json({
@@ -253,7 +285,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  /* -------------------- Step 8: Summary / closing -------------------- */
+  /* --------------- Step 8: Summary handling --------------- */
   if (anyLine(historyPrior, askedSummaryRX)) {
     if (YES.test(lower)) {
       return res.status(200).json({
@@ -278,21 +310,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   /* -------------------- Lightweight FAQ nudges -------------------- */
   if (/\bcar\b/i.test(lower) && /\blose|keep\b/i.test(lower)) {
     return res.status(200).json({
-      reply: "Most people keep their car. If repayments are very high, we’ll discuss affordable options — keeping essentials is the priority.",
+      reply:
+        "Most people keep their car. If repayments are very high, we’ll discuss affordable options — keeping essentials is the priority.",
     });
   }
   if (/\bmortgage\b/i.test(lower)) {
     return res.status(200).json({
-      reply: "Mortgage applications are often easier after your plan completes, but you can explore options anytime with specialist advice.",
+      reply:
+        "Mortgage applications are often easier after your plan completes, but you can explore options anytime with specialist advice.",
     });
   }
   if (/\bcredit (score|rating|file)\b/i.test(lower)) {
     return res.status(200).json({
-      reply: "Your credit file can be affected for a while, but the aim is to stabilise things and move forward. We’ll talk through the trade-offs clearly.",
+      reply:
+        "Your credit file can be affected for a while, but the aim is to stabilise things and move forward. We’ll talk through the trade-offs clearly.",
     });
   }
 
-  /* -------------------- Final gentle nudge -------------------- */
+  /* -------------------- Final gentle nudge (safe default) -------------------- */
   return res.status(200).json({
     reply: "If you’re ready, I can open your secure portal now — or we can keep chatting and I’ll guide you.",
   });
