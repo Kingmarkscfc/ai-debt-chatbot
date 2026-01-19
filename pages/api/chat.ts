@@ -7,17 +7,59 @@ const norm = (s: string) => (s || "").trim();
 const YES = /\b(yes|yeah|yep|ok|okay|sure|please|go ahead|open|start|do it)\b/i;
 const NO  = /\b(no|not now|later|maybe later|dont|don't|do not|nah)\b/i;
 
-const GREETINGS = [
-  /\b(hi|hello|hey|hiya)\b/i,
-  /\bgood (morning|afternoon|evening)\b/i,
-  /\bhow are (you|u)\b/i,
-];
-const hasGreeting = (s: string) => GREETINGS.some(r => r.test(s));
-function greetingText(s: string) {
-  const m = s.match(/\bgood (morning|afternoon|evening)\b/i);
-  if (m) return `Good ${m[1].toLowerCase()}!`;
-  if (/how are/i.test(s)) return "I’m good, thanks!";
-  return "Hi!";
+function nowGreeting(): string {
+  try {
+    const d = new Date();
+    const hour = Number(new Intl.DateTimeFormat("en-GB", {
+      hour: "numeric",
+      hour12: false,
+      timeZone: "Europe/London"
+    }).format(d));
+    if (hour >= 5 && hour < 12) return "Good morning";
+    if (hour >= 12 && hour < 17) return "Good afternoon";
+    return "Good evening";
+  } catch {
+    return "Hello";
+  }
+}
+
+const GREETING_RX = /\b(hi|hello|hey|hiya|good (morning|afternoon|evening)|how are (you|u))\b/i;
+const hasGreeting = (s: string) => GREETING_RX.test(s);
+
+/** Light-touch empathy generator from the latest user text */
+function empathize(text: string): string {
+  const t = text.toLowerCase();
+  if (/(credit\s*cards?|loans?|overdraft|catalogue)/i.test(t)) {
+    return "That’s a lot to carry — we’ll take this step by step and reduce the pressure.";
+  }
+  if (/(interest|charges|fees)/i.test(t)) {
+    return "High interest and charges can snowball — we’ll focus on stopping that and finding something sustainable.";
+  }
+  if (/(bailiff|enforcement)/i.test(t)) {
+    return "I know enforcement contact is stressful — we’ll look at protections quickly.";
+  }
+  if (/(ccj|county court|default)/i.test(t)) {
+    return "Court or default letters can be worrying — we’ll address that in your plan.";
+  }
+  if (/(rent|council\s*tax|utilities|gas|electric|water)/i.test(t)) {
+    return "We’ll make sure essentials like housing and utilities are prioritised first.";
+  }
+  if (/(struggl|worri|stress|anx)/i.test(t)) {
+    return "Thanks for sharing — we’ll keep things practical and judgment-free.";
+  }
+  return "Thanks for telling me that — we’ll keep things simple and focused on solutions.";
+}
+
+/** Short confirmation when the user mentions urgent items */
+function confirmUrgent(text: string): string | null {
+  const t = text.toLowerCase();
+  if (/\bcouncil\s*tax\b/.test(t)) {
+    return "Noted on the council tax — we’ll prioritise that alongside rent and utilities.";
+  }
+  if (/\brent\b/.test(t)) return "Got it on rent — we’ll protect essentials first.";
+  if (/\b(bailiff|enforcement)\b/.test(t)) return "Understood — we’ll aim to stop enforcement pressure as soon as possible.";
+  if (/\b(ccj|county court|default)\b/.test(t)) return "Thanks — I’ll factor the court/default side into the plan.";
+  return null;
 }
 
 function currencyToNumber(s: string): number {
@@ -39,7 +81,6 @@ const BANNED_NAME_PATTERNS = [
 ];
 
 function pickName(s: string): string | null {
-  // Accept phrases like "my name is mark", "i'm mark", "mark", "Mary Jane"
   const m =
     s.match(/\b(?:i['\s]*m|i am|my name is|call me|it's|its)\s+([a-z][a-z'\- ]{1,30})\b/i) ||
     s.match(/^\s*([A-Za-z][A-Za-z'\- ]{1,30})\s*$/);
@@ -64,17 +105,15 @@ function pickName(s: string): string | null {
     .join(" ");
 }
 
-/* -------------------- “Have we asked” detectors (anchor on our own lines) -------------------- */
+/* -------------------- Anchors for “we already asked this” -------------------- */
 const anyLine = (lines: string[], rx: RegExp) => lines.some(line => rx.test(line));
 
-const askedIntroRX     = /Hello! My name’s Mark\. What prompted you to seek help with your debts today\?/i;
-const askedNameRX      = /(what is your first name\?|what first name should i use\?)/i;
+const askedNameRX      = /(can you let me know who i’m speaking with\?|can you let me know who i'm speaking with\?)/i;
 const askedConcernRX   = /what would you say your main concern is with the debts\?/i;
 const askedAmountsRX   = /how much do you pay.*each month.*what would feel affordable/i;
 const askedUrgentRX    = /is there anything urgent.*(enforcement|bailiff|court|default|priority bills)/i;
 const askedAckRX       = /there’s no obligation.*moneyhelper.*shall we carry on\?/i;
 
-/** We offered the portal in a few different phrasings across versions; match them all */
 const askedPortalRX = new RegExp(
   [
     "shall I open.*client portal.*now\\?",
@@ -84,22 +123,15 @@ const askedPortalRX = new RegExp(
   ].join("|"),
   "i"
 );
-/** After opening, we show the “guide while in portal” line */
 const portalGuideRX  = /while you’re in the portal, I’ll stay here to guide you/i;
-
-/** Documents request step */
 const askedDocsRX    = /please upload:?\s*•?\s*proof of id/i;
-
-/** Summary prompt */
 const askedSummaryRX = /would you like a quick summary of options/i;
 
-/** Find a name we already acknowledged (“Nice to meet you, X”) */
 function seenName(lines: string[]): string | null {
   for (let i = lines.length - 1; i >= 0; i--) {
     const m = lines[i].match(/Nice to meet you,\s+([A-Z][a-z'\- ]{1,30})/i);
     if (m) return m[1].trim();
   }
-  // Fallback: if a previous user line contained a valid name, treat that as known
   for (let i = lines.length - 1; i >= 0; i--) {
     const n = pickName(lines[i]);
     if (n) return n;
@@ -107,7 +139,6 @@ function seenName(lines: string[]): string | null {
   return null;
 }
 
-/* -------------------- Script constants -------------------- */
 const MONEYHELPER_ACK =
   "Before we proceed, there’s no obligation to act on any advice today, and there are free sources of debt advice available at MoneyHelper. Shall we carry on?";
 
@@ -117,57 +148,53 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
   const { userMessage = "", history = [] } = (req.body || {}) as {
     userMessage?: string;
-    history?: string[]; // prior bot+user texts as plain strings (UI sends this)
+    history?: string[];
   };
 
   const text = norm(String(userMessage || ""));
   const lower = text.toLowerCase();
   const historyPrior = history.slice(0, Math.max(0, history.length - 1));
+  const nameKnown = !!seenName(historyPrior);
 
-  /* --------- Greeting / small-talk first (never advances the script incorrectly) --------- */
-  const haveNameAlready = !!seenName(historyPrior);
-  const nameWasAsked    = anyLine(historyPrior, askedNameRX);
-
+  /* -------- Greeting / small-talk (time-aware; doesn’t advance incorrectly) -------- */
   if (hasGreeting(text)) {
-    const greet = greetingText(text);
-    if (!haveNameAlready) {
+    const greet = nowGreeting();
+    if (!nameKnown) {
       return res.status(200).json({
-        reply: `${greet} I’m here to help. **What is your first name?**`,
+        reply: `${greet}! I’m here to help. Can you let me know who I’m speaking with?`,
       });
     } else {
       return res.status(200).json({
-        reply: `${greet} Let’s keep going — what would you say your main concern is with the debts?`,
+        reply: `${greet}! ${empathize(text)} What would you say your main concern is with the debts?`,
       });
     }
   }
 
   /* --------------------------------- Step 0: Name --------------------------------- */
-  if (!haveNameAlready && !nameWasAsked) {
-    // We haven't asked yet — ask now
+  const nameWasAsked = anyLine(historyPrior, askedNameRX);
+  if (!nameKnown && !nameWasAsked) {
     return res.status(200).json({
-      reply: "Hi! I’m here to help. **What is your first name?**",
+      reply: "Hi — I’m here to help. Can you let me know who I’m speaking with?",
     });
   }
 
-  if (!haveNameAlready && nameWasAsked) {
-    // A name was requested — validate the provided text
+  if (!nameKnown && nameWasAsked) {
     const nameNow = pickName(text);
     if (nameNow) {
       const salute = /mark\b/i.test(nameNow) ? " — nice to meet a fellow Mark!" : "";
       return res.status(200).json({
         reply:
-          `Nice to meet you, ${nameNow}${salute}. ` +
+          `Nice to meet you, ${nameNow}${salute}. ${empathize(userMessage)} ` +
           "Just so I can point you in the right direction, what would you say your main concern is with the debts?",
         displayName: nameNow,
       });
     }
-    // Profanity or non-name → politely re-ask (do NOT advance)
     return res.status(200).json({
       reply: "No worries — please share a first name you’re happy with and we’ll continue.",
     });
   }
 
-  /* ----------------------- Step 1: Concern (only once) ----------------------- */
+  /* ----------------------- Step 1: Concern ----------------------- */
   if (!anyLine(historyPrior, askedConcernRX)) {
     return res.status(200).json({
       reply: "Just so I can point you in the right direction, what would you say your main concern is with the debts?",
@@ -176,12 +203,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   if (anyLine(historyPrior, askedConcernRX) && !anyLine(historyPrior, askedAmountsRX)) {
     return res.status(200).json({
       reply:
+        `${empathize(userMessage)} ` +
         "Thanks — roughly how much do you pay towards all debts each month, and what would feel affordable for you? " +
-        `For example, “I pay £600 and could afford £200.”`,
+        "For example, “I pay £600 and could afford £200.”",
     });
   }
 
-  /* ---------------- Step 2: Amounts (windowed to avoid loops) ---------------- */
+  /* ---------------- Step 2: Amounts (windowed) ---------------- */
   if (anyLine(historyPrior, askedAmountsRX) && !anyLine(historyPrior, askedUrgentRX)) {
     const { current, affordable } = extractAmounts(text);
     const numbersRecently = /\d/.test(historyPrior.slice(-4).join(" "));
@@ -206,20 +234,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
   /* -------------------------- Step 3: Urgent -------------------------- */
   if (anyLine(historyPrior, askedUrgentRX) && !anyLine(historyPrior, askedAckRX)) {
-    return res.status(200).json({ reply: MONEYHELPER_ACK });
+    const confirm = confirmUrgent(userMessage);
+    const lead = confirm ? `${confirm} ` : "";
+    return res.status(200).json({ reply: `${lead}${MONEYHELPER_ACK}` });
   }
 
   /* -------- Step 4: Acknowledgement → then offer portal (explicit YES) -------- */
   if (anyLine(historyPrior, askedAckRX) && !anyLine(historyPrior, askedPortalRX)) {
     if (YES.test(lower)) {
-      // Offer the portal (first time)
       return res.status(200).json({
         reply:
           "Great — let’s keep going. I can set up your secure Client Portal so you can add details, upload documents, and check progress. Shall I open it now?",
       });
     }
     if (NO.test(lower)) {
-      // Respect a 'no' but keep the conversation warm — and ask again in a phrasing we now recognise
       return res.status(200).json({
         reply:
           "No problem — we’ll proceed at your pace. When you’re ready, I can open the portal for you to add details securely. " +
@@ -229,7 +257,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     return res.status(200).json({ reply: "Quick check — would you like to carry on? (Yes/No)" });
   }
 
-  /* ----- Step 5: Portal decision (recognise ALL offer phrasings above) ----- */
+  /* ----- Step 5: Portal decision (recognise ALL offer phrasings) ----- */
   if (anyLine(historyPrior, askedPortalRX) && !anyLine(historyPrior, portalGuideRX)) {
     if (YES.test(lower)) {
       return res.status(200).json({
@@ -247,7 +275,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           "No worries — we can keep chatting and I’ll guide you step by step. Would you like a quick summary of options based on what you’ve told me so far?",
       });
     }
-    // Still undecided → restate (this line also matches askedPortalRX next turn)
     return res.status(200).json({
       reply: "Would you like me to open the secure Client Portal now? (Yes/No)",
     });
