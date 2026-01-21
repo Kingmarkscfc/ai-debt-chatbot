@@ -663,7 +663,7 @@ function TaskList({tasks, onToggle}:{tasks:{id:string;label:string;done:boolean}
   );
 }
 
-/* =============== Chat UI (unchanged) =============== */
+/* =============== Chat UI (unchanged except centering) =============== */
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -682,13 +682,14 @@ export default function Home() {
   const chosenVoice = useRef<SpeechSynthesisVoice | null>(null);
 
   useEffect(() => {
-  const savedTheme = typeof window === "undefined" ? null : localStorage.getItem("da_theme");
-  if (savedTheme === "dark" || savedTheme === "light") setTheme(savedTheme as any);
-  setMessages([
-    { sender: "bot", text: "Hello! My name’s Mark. What prompted you to seek help with your debts today?" }
-  ]);
-}, []);
- useEffect(() => { bottomRef.current?.scrollIntoView({ behavior:"smooth" }); }, [messages]);
+    const savedTheme = typeof window === "undefined" ? null : localStorage.getItem("da_theme");
+    if (savedTheme === "dark" || savedTheme === "light") setTheme(savedTheme as any);
+    setMessages([
+      { sender: "bot", text: "Hello! My name’s Mark. What prompted you to seek help with your debts today?" },
+      { sender: "bot", text: "You can change languages any time using the dropdown above." }
+    ]);
+  }, []);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior:"smooth" }); }, [messages]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
@@ -739,8 +740,31 @@ export default function Home() {
 
   const isDark = theme === "dark";
   const styles: { [k: string]: React.CSSProperties } = {
-    frame: { display:"grid", gridTemplateColumns:"1fr auto", gap:0, maxWidth:1100, margin:"0 auto", padding:16, fontFamily:"'Segoe UI', Arial, sans-serif", background: isDark?"#0b1220":"#f3f4f6", minHeight:"100vh", color: isDark?"#e5e7eb":"#111827" },
-    card: { border: isDark?"1px solid #1f2937":"1px solid #e5e7eb", borderRadius:16, background: isDark?"#111827":"#ffffff", boxShadow: isDark?"0 8px 24px rgba(0,0,0,0.45)":"0 8px 24px rgba(0,0,0,0.06)", overflow:"hidden", width:720, transition:"width .3s ease" },
+    frame: {
+      minHeight: "100vh",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: 16,
+      fontFamily: "'Segoe UI', Arial, sans-serif",
+      background: isDark ? "#0b1220" : "#f3f4f6",
+      color: isDark ? "#e5e7eb" : "#111827",
+    },
+    centerWrap: {
+      width: "100%",
+      maxWidth: 1100,
+      display: "flex",
+      justifyContent: "center",
+    },
+    card: {
+      border: isDark?"1px solid #1f2937":"1px solid #e5e7eb",
+      borderRadius:16,
+      background: isDark?"#111827":"#ffffff",
+      boxShadow: isDark?"0 8px 24px rgba(0,0,0,0.45)":"0 8px 24px rgba(0,0,0,0.06)",
+      overflow:"hidden",
+      width:720,
+      transition:"width .3s ease"
+    },
     header: { display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 16px", borderBottom: isDark?"1px solid #1f2937":"1px solid #e5e7eb", background: isDark?"#0f172a":"#fafafa" },
     brand: { display:"flex", alignItems:"center", gap:10, fontWeight:700 },
     onlineDot: { marginLeft:8, fontSize:12, color:"#10b981", fontWeight:600 },
@@ -762,75 +786,77 @@ export default function Home() {
   return (
     <>
       <main style={styles.frame}>
-        <div style={styles.card}>
-          <div style={styles.header}>
-            <div style={styles.brand}>
-              <div style={styles.avatarWrap}><Avatar /></div>
-              <span>Debt Advisor</span>
-              <span style={styles.onlineDot}>● Online</span>
-            </div>
-            <div style={styles.tools}>
-              <select style={styles.select} value={language} onChange={(e)=>setLanguage(e.target.value)} title="Change language">
-                {LANGUAGES.map(l => <option key={l} value={l}>{l}</option>)}
-              </select>
-              <button type="button" style={styles.btn} onClick={()=>setVoiceOn(v=>!v)} title="Toggle voice">
-                {voiceOn ? "🔈 Voice On" : "🔇 Voice Off"}
-              </button>
-              <button type="button" style={styles.btn} onClick={toggleTheme} title="Toggle theme">
-                {theme === "dark" ? "☀️ Light" : "🌙 Dark"}
-              </button>
-              {loggedEmail ? (
-                <button type="button" style={styles.btn} onClick={()=>{ setLoggedEmail(undefined); setDisplayName(undefined); setShowPortal(false); }} title="Log out">
-                  Logout
+        <div style={styles.centerWrap}>
+          <div style={styles.card}>
+            <div style={styles.header}>
+              <div style={styles.brand}>
+                <div style={styles.avatarWrap}><Avatar /></div>
+                <span>Debt Advisor</span>
+                <span style={styles.onlineDot}>● Online</span>
+              </div>
+              <div style={styles.tools}>
+                <select style={styles.select} value={language} onChange={(e)=>setLanguage(e.target.value)} title="Change language">
+                  {LANGUAGES.map(l => <option key={l} value={l}>{l}</option>)}
+                </select>
+                <button type="button" style={styles.btn} onClick={()=>setVoiceOn(v=>!v)} title="Toggle voice">
+                  {voiceOn ? "🔈 Voice On" : "🔇 Voice Off"}
                 </button>
-              ) : (
-                <button type="button" style={styles.btn} onClick={()=>setShowAuth(true)} title="Open client portal">
-                  Open Portal
+                <button type="button" style={styles.btn} onClick={toggleTheme} title="Toggle theme">
+                  {theme === "dark" ? "☀️ Light" : "🌙 Dark"}
                 </button>
-              )}
+                {loggedEmail ? (
+                  <button type="button" style={styles.btn} onClick={()=>{ setLoggedEmail(undefined); setDisplayName(undefined); setShowPortal(false); }} title="Log out">
+                    Logout
+                  </button>
+                ) : (
+                  <button type="button" style={styles.btn} onClick={()=>setShowAuth(true)} title="Open client portal">
+                    Open Portal
+                  </button>
+                )}
+              </div>
             </div>
-          </div>
 
-          <div style={styles.chat}>
-            {messages.map((m,i)=>{
-              const isUser = m.sender==="user";
-              const att = m.attachment;
-              const pretty = att ? prettyFilename(att.filename) : "";
-              const icon = att ? fileEmoji(att.filename, att.mimeType) : "";
-              return (
-                <div key={i} style={{...styles.row, ...(isUser?styles.rowUser:{})}}>
-                  {!isUser && <div style={styles.avatarWrap}><Avatar /></div>}
-                  <div style={{...styles.bubble, ...(isUser?styles.bubbleUser:styles.bubbleBot)}}>
-                    {m.text ? <div>{m.text}</div> : null}
-                    {att && (
-                      <div style={styles.attach}>
-                        <a href={att.url} target="_blank" rel="noreferrer" download={pretty||att.filename} style={styles.chip} title={pretty}>
-                          <span>{icon}</span>
-                          <span style={{fontWeight:600}}>{pretty}</span>
-                          {typeof att.size==="number" && <span style={{opacity:.7}}>({formatBytes(att.size)})</span>}
-                          <span style={{textDecoration:"underline"}}>Download ⬇️</span>
-                        </a>
-                      </div>
-                    )}
+            <div style={styles.chat}>
+              {messages.map((m,i)=>{
+                const isUser = m.sender==="user";
+                const att = m.attachment;
+                const pretty = att ? prettyFilename(att.filename) : "";
+                const icon = att ? fileEmoji(att.filename, att.mimeType) : "";
+                return (
+                  <div key={i} style={{...styles.row, ...(isUser?styles.rowUser:{})}}>
+                    {!isUser && <div style={styles.avatarWrap}><Avatar /></div>}
+                    <div style={{...styles.bubble, ...(isUser?styles.bubbleUser:styles.bubbleBot)}}>
+                      {m.text ? <div>{m.text}</div> : null}
+                      {att && (
+                        <div style={styles.attach}>
+                          <a href={att.url} target="_blank" rel="noreferrer" download={pretty||att.filename} style={styles.chip} title={pretty}>
+                            <span>{icon}</span>
+                            <span style={{fontWeight:600}}>{pretty}</span>
+                            {typeof att.size==="number" && <span style={{opacity:.7}}>({formatBytes(att.size)})</span>}
+                            <span style={{textDecoration:"underline"}}>Download ⬇️</span>
+                          </a>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
-            <div ref={bottomRef} />
-          </div>
+                );
+              })}
+              <div ref={bottomRef} />
+            </div>
 
-          <div style={styles.footer}>
-            <input
-              style={{flex:1, padding:"10px 12px", borderRadius:8, border: isDark?"1px solid #374151":"1px solid #d1d5db", fontSize:16, background: isDark?"#111827":"#fff", color: isDark?"#e5e7eb":"#111827"}}
-              value={input} onChange={(e)=>setInput(e.target.value)} onKeyDown={(e)=>e.key==="Enter" && handleSubmit()}
-              placeholder="Type your message…"
-            />
-            <button type="button" onClick={handleSubmit}
-              style={{padding:"10px 14px", borderRadius:8, border:"none", background:"#16a34a", color:"#fff", cursor:"pointer", fontWeight:600}}>
-              Send
-            </button>
-          </div>
-        </div>
+            <div style={styles.footer}>
+              <input
+                style={{flex:1, padding:"10px 12px", borderRadius:8, border: isDark?"1px solid #374151":"1px solid #d1d5db", fontSize:16, background: isDark?"#111827":"#fff", color: isDark?"#e5e7eb":"#111827"}}
+                value={input} onChange={(e)=>setInput(e.target.value)} onKeyDown={(e)=>e.key==="Enter" && handleSubmit()}
+                placeholder="Type your message…"
+              />
+              <button type="button" onClick={handleSubmit}
+                style={{padding:"10px 14px", borderRadius:8, border:"none", background:"#16a34a", color:"#fff", cursor:"pointer", fontWeight:600}}>
+                Send
+              </button>
+            </div>
+          </div>{/* /card */}
+        </div>{/* /centerWrap */}
       </main>
 
       {/* FULL SCREEN AUTH (blocks chat) */}
