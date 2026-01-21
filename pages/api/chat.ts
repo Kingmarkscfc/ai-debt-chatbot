@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 
 type Data = { reply: string; openPortal?: boolean; displayName?: string };
 
-/* -------------------- Small helpers -------------------- */
+/* -------------------- Utilities -------------------- */
 const norm = (s: string) => (s || "").trim();
 const YES = /\b(yes|yeah|yep|ok|okay|sure|please|go ahead|open|start|do it)\b/i;
 const NO  = /\b(no|not now|later|maybe later|dont|don't|do not|nah)\b/i;
@@ -23,42 +23,75 @@ function nowGreeting(): string {
   }
 }
 
+/* Simple deterministic “pick” so responses vary but are stable per input */
+function pick<T>(arr: T[], seedSource: string): T {
+  if (!arr.length) throw new Error("pick on empty array");
+  let seed = 0;
+  for (let i = 0; i < seedSource.length; i++) seed = (seed * 31 + seedSource.charCodeAt(i)) >>> 0;
+  return arr[seed % arr.length];
+}
+
 const GREETING_RX = /\b(hi|hello|hey|hiya|good (morning|afternoon|evening)|how are (you|u))\b/i;
 const hasGreeting = (s: string) => GREETING_RX.test(s);
 
-/** Light-touch empathy generator from the latest user text */
+/* -------------------- Empathy & confirmations -------------------- */
 function empathize(text: string): string {
   const t = text.toLowerCase();
-  if (/(credit\s*cards?|loans?|overdraft|catalogue)/i.test(t)) {
-    return "That’s a lot to carry — we’ll take this step by step and reduce the pressure.";
-  }
-  if (/(interest|charges|fees)/i.test(t)) {
-    return "High interest and charges can snowball — we’ll focus on stopping that and finding something sustainable.";
-  }
-  if (/(bailiff|enforcement)/i.test(t)) {
-    return "I know enforcement contact is stressful — we’ll look at protections quickly.";
-  }
-  if (/(ccj|county court|default)/i.test(t)) {
-    return "Court or default letters can be worrying — we’ll address that in your plan.";
-  }
-  if (/(rent|council\s*tax|utilities|gas|electric|water)/i.test(t)) {
-    return "We’ll make sure essentials like housing and utilities are prioritised first.";
-  }
-  if (/(struggl|worri|stress|anx)/i.test(t)) {
-    return "Thanks for sharing — we’ll keep things practical and judgment-free.";
-  }
-  return "Thanks for telling me that — we’ll keep things simple and focused on solutions.";
+
+  const cardsLoans = [
+    "That’s a lot to juggle — we’ll take this step by step and ease the pressure.",
+    "I hear you — we’ll simplify things and work toward something you can afford.",
+    "We’ll steady the ship first, then look at a plan that fits your budget.",
+  ];
+  const interest = [
+    "High interest can snowball — we’ll focus on stopping that and finding something sustainable.",
+    "Those charges add up fast — we’ll look at options that can freeze interest and reduce stress.",
+  ];
+  const enforcement = [
+    "Enforcement contact is stressful — we’ll move quickly on protections.",
+    "We’ll put safeguards in place so you can breathe a bit easier.",
+  ];
+  const court = [
+    "Court or default letters can be worrying — we’ll address those directly in your plan.",
+    "We’ll get clarity on any CCJs/defaults and factor them into the solution.",
+  ];
+  const essentials = [
+    "Essentials like rent, council tax and utilities come first — we’ll protect those.",
+    "We’ll make sure the roof and the lights are secure before anything else.",
+  ];
+  const general = [
+    "Thanks for telling me — we’ll keep this practical and judgement-free.",
+    "Appreciate the context — we’ll keep things simple and focused on solutions.",
+  ];
+
+  if (/(credit\s*cards?|loans?|overdraft|catalogue)/i.test(t)) return pick(cardsLoans, text);
+  if (/(interest|charges|fees)/i.test(t)) return pick(interest, text);
+  if (/(bailiff|enforcement)/i.test(t)) return pick(enforcement, text);
+  if (/(ccj|county court|default)/i.test(t)) return pick(court, text);
+  if (/(rent|council\s*tax|utilities|gas|electric|water)/i.test(t)) return pick(essentials, text);
+  if (/(struggl|worri|stress|anx)/i.test(t)) return pick(general, text);
+  return pick(general, text);
 }
 
-/** Short confirmation when the user mentions urgent items */
+/** Add a richer acknowledgement when the user mentions priority/urgent items. */
 function confirmUrgent(text: string): string | null {
   const t = text.toLowerCase();
   if (/\bcouncil\s*tax\b/.test(t)) {
-    return "Noted on the council tax — we’ll prioritise that alongside rent and utilities.";
+    return [
+      "Thanks for flagging council tax — it’s a priority bill, so we’ll ring-fence it and look at breathing space on non-essentials.",
+      "Understood on council tax — we’ll protect essentials and explore options that reduce pressure on that front.",
+      "Noted on council tax — we’ll prioritise it alongside rent and utilities and keep creditors realistic elsewhere.",
+    ][t.length % 3];
   }
-  if (/\brent\b/.test(t)) return "Got it on rent — we’ll protect essentials first.";
-  if (/\b(bailiff|enforcement)\b/.test(t)) return "Understood — we’ll aim to stop enforcement pressure as soon as possible.";
-  if (/\b(ccj|county court|default)\b/.test(t)) return "Thanks — I’ll factor the court/default side into the plan.";
+  if (/\brent\b/.test(t)) {
+    return "Got it on rent — we’ll protect your housing first and build the plan around that.";
+  }
+  if (/\b(bailiff|enforcement)\b/.test(t)) {
+    return "Understood — we’ll aim to stop enforcement pressure as soon as possible and stabilise things.";
+  }
+  if (/\b(ccj|county court|default)\b/.test(t)) {
+    return "Thanks — we’ll factor the court/default position into the plan and keep it structured.";
+  }
   return null;
 }
 
@@ -105,7 +138,7 @@ function pickName(s: string): string | null {
     .join(" ");
 }
 
-/* -------------------- Anchors for “we already asked this” -------------------- */
+/* -------------------- Anchors to avoid re-asking -------------------- */
 const anyLine = (lines: string[], rx: RegExp) => lines.some(line => rx.test(line));
 
 const askedNameRX      = /(can you let me know who i’m speaking with\?|can you let me know who i'm speaking with\?)/i;
@@ -156,7 +189,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   const historyPrior = history.slice(0, Math.max(0, history.length - 1));
   const nameKnown = !!seenName(historyPrior);
 
-  /* -------- Greeting / small-talk (time-aware; doesn’t advance incorrectly) -------- */
+  /* -------- Greeting / small-talk -------- */
   if (hasGreeting(text)) {
     const greet = nowGreeting();
     if (!nameKnown) {
@@ -209,11 +242,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  /* ---------------- Step 2: Amounts (windowed) ---------------- */
+  /* ---------------- Step 2: Amounts (windowed + reflective) ---------------- */
   if (anyLine(historyPrior, askedAmountsRX) && !anyLine(historyPrior, askedUrgentRX)) {
     const { current, affordable } = extractAmounts(text);
+
+    if (current || affordable) {
+      const parts: string[] = [];
+      if (current) parts.push(`you’re paying about £${current.toFixed(0)} each month`);
+      if (affordable) parts.push(`£${affordable.toFixed(0)} would feel affordable`);
+      const reflect = parts.length ? `Got it — ${parts.join(" and ")}. ` : "";
+      return res.status(200).json({
+        reply:
+          `${reflect}Is there anything urgent like enforcement/bailiff action, court or default notices, or missed priority bills (rent, council tax, utilities)?`,
+      });
+    }
+
     const numbersRecently = /\d/.test(historyPrior.slice(-4).join(" "));
-    if ((current || affordable) || numbersRecently) {
+    if (numbersRecently) {
       return res.status(200).json({
         reply:
           "Understood. Is there anything urgent like enforcement/bailiff action, court or default notices, or missed priority bills (rent, council tax, utilities)?",
@@ -354,7 +399,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  /* -------------------- Final gentle nudge (safe default) -------------------- */
+  /* -------------------- Safe default -------------------- */
   return res.status(200).json({
     reply: "If you’re ready, I can open your secure portal now — or we can keep chatting and I’ll guide you.",
   });
