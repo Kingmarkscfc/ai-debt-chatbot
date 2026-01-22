@@ -5,13 +5,17 @@ import avatarPhoto from "../assets/advisor-avatar-human.png";
 /* =============== Types & helpers =============== */
 type Sender = "user" | "bot";
 type Attachment = { filename: string; url: string; mimeType?: string; size?: number };
-type Message = { sender: Sender; text: string; attachment?: Attachment };
+type Message = { sender: Sender; text: string; ts: number; attachment?: Attachment };
 
 type AddressEntry = { line1: string; line2: string; city: string; postcode: string; yearsAt: number };
 type Income = { label: string; amount: number };
 type Expense = { label: string; amount: number };
 
 const LANGUAGES = ["English","Spanish","Polish","French","German","Portuguese","Italian","Romanian"];
+const EMOJI_BANK = [
+  "🙂","😊","🙌","👍","❤️","💪","🤝","✨","🎯","📈","📝","💬","🤔","😌","😅","🙏",
+  "🏠","💡","💷","📎","📄","🖼️","🕒","⚖️","🔒","✅","❌","⏳","💭","🧾"
+];
 
 function ensureSessionId(): string {
   if (typeof window === "undefined") return Math.random().toString(36).slice(2);
@@ -63,6 +67,14 @@ function pickUkMaleVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice |
   for (const name of preferred) { const v=voices.find(vv=>vv.name===name); if (v) return v; }
   const enGb=voices.find(v=>(v.lang||"").toLowerCase().startsWith("en-gb")); if (enGb) return enGb;
   const enAny=voices.find(v=>(v.lang||"").toLowerCase().startsWith("en-")); return enAny||null;
+}
+function formatTime(ts: number) {
+  try {
+    const d = new Date(ts);
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return "";
+  }
 }
 
 /* =============== Shared UI bits =============== */
@@ -362,12 +374,14 @@ function PortalFullScreen({
 }: { visible: boolean; onClose: () => void; displayName?: string; loggedEmail?: string }) {
   const [tab, setTab] = useState<"details"|"budget"|"debts"|"docs">("details");
 
+  // Details
   const [fullName, setFullName] = useState(displayName || "");
   const [phone, setPhone] = useState("");
   const [addresses, setAddresses] = useState<AddressEntry[]>([
     { line1:"", line2:"", city:"", postcode:"", yearsAt: 0 }
   ]);
 
+  // Budget
   const [incomes, setIncomes] = useState<Income[]>([
     { label:"Salary/Wages", amount:0 },
     { label:"Benefits", amount:0 }
@@ -382,11 +396,13 @@ function PortalFullScreen({
   const totalExpense = expenses.reduce((a,b)=>a+(+b.amount||0),0);
   const disposable = Math.max(0, totalIncome-totalExpense);
 
+  // Debts (5 rows)
   type Debt = { creditor: string; amount: number; monthly: number; account: string };
   const [debts, setDebts] = useState<Debt[]>(
     Array.from({length:5}).map(()=>({ creditor:"", amount:0, monthly:0, account:"" }))
   );
 
+  // Tasks
   type Task = { id: string; label: string; done: boolean };
   const [tasks, setTasks] = useState<Task[]>([
     { id:"id", label:"Provide ID", done:false },
@@ -396,8 +412,10 @@ function PortalFullScreen({
   ]);
   const toggleTask = (id: string) => setTasks(prev => prev.map(t => t.id===id ? {...t, done:!t.done} : t));
 
+  const [docsCount] = useState(0);
   const [notice, setNotice] = useState("");
 
+  // Load existing profile (best-effort)
   useEffect(() => {
     if (!visible || !loggedEmail) return;
     (async ()=>{
@@ -462,6 +480,7 @@ function PortalFullScreen({
       position:"fixed", inset:0, zIndex:998, background:"#ffffff",
       display:"grid", gridTemplateRows:"auto auto 1fr"
     }}>
+      {/* Top bar */}
       <div style={{
         display:"flex", alignItems:"center", justifyContent:"space-between",
         padding:"12px 16px", borderBottom:"1px solid #e5e7eb", background:"#fff"
@@ -482,6 +501,7 @@ function PortalFullScreen({
         </div>
       </div>
 
+      {/* Tabs */}
       <div style={{display:"flex", gap:8, padding:"10px 16px", borderBottom:"1px solid #e5e7eb", background:"#fff"}}>
         {[
           {k:"details", label:"Your Details"},
@@ -500,12 +520,14 @@ function PortalFullScreen({
         ))}
       </div>
 
+      {/* Main content area */}
       <div style={{
         display:"grid",
         gridTemplateColumns:"minmax(260px, 320px) 1fr",
         gap:16, padding:"16px",
         background:"#f8fafc", height:"100%", overflow:"hidden"
       }}>
+        {/* Tasks side panel */}
         <div style={{display:"grid", alignContent:"start", gap:16, overflow:"auto"}}>
           <div style={{border:"1px solid #e5e7eb", borderRadius:12, background:"#fff", padding:12}}>
             <div style={{fontWeight:800, marginBottom:8}}>Outstanding tasks</div>
@@ -519,9 +541,9 @@ function PortalFullScreen({
           )}
         </div>
 
+        {/* Scrollable content */}
         <div style={{overflow:"auto"}}>
           <div style={{border:"1px solid #e5e7eb", borderRadius:12, background:"#fff", padding:16}}>
-            {/* Details/Budget/Debts/Docs content unchanged */}
             {tab==="details" && (
               <div style={{display:"grid", gap:12}}>
                 <div style={{display:"grid", gap:10, gridTemplateColumns:"1fr 1fr"}}>
@@ -657,13 +679,19 @@ export default function Home() {
   const [input, setInput] = useState("");
   const [language, setLanguage] = useState<string>("English");
   const [voiceOn, setVoiceOn] = useState(true);
-  const [theme, setTheme] = useState<"light" | "dark">("dark"); // default to dark (looks slick)
-  const [showTyping, setShowTyping] = useState(false);
+  const [theme, setTheme] = useState<"light" | "dark">("light");
 
+  // Portal state
   const [showAuth, setShowAuth] = useState(false);
   const [showPortal, setShowPortal] = useState(false);
   const [displayName, setDisplayName] = useState<string | undefined>(undefined);
   const [loggedEmail, setLoggedEmail] = useState<string | undefined>(undefined);
+
+  // Chat bar add-ons
+  const [showEmoji, setShowEmoji] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const [botThinking, setBotThinking] = useState(false);
 
   const sessionId = useMemo(() => ensureSessionId(), []);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -672,12 +700,11 @@ export default function Home() {
   useEffect(() => {
     const savedTheme = typeof window === "undefined" ? null : localStorage.getItem("da_theme");
     if (savedTheme === "dark" || savedTheme === "light") setTheme(savedTheme as any);
-    // INITIAL MESSAGE — removed language hint line
     setMessages([
-      { sender: "bot", text: "Hello! My name’s Mark. What prompted you to seek help with your debts today?" }
+      { sender: "bot", text: "Hello! My name’s Mark. What prompted you to seek help with your debts today?", ts: Date.now() }
     ]);
   }, []);
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior:"smooth" }); }, [messages, showTyping]);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior:"smooth" }); }, [messages, botThinking]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
@@ -708,20 +735,20 @@ export default function Home() {
   const handleSubmit = async () => {
     const text = input.trim(); if (!text) return;
     setInput("");
-    const userMsg: Message = { sender:"user", text };
+    const userMsg: Message = { sender:"user", text, ts: Date.now() };
     const nextHist = [...messages, userMsg];
     setMessages(nextHist);
-    setShowTyping(true);
     try {
+      setBotThinking(true);
       const data = await sendToApi(text, nextHist);
-      const reply = (data?.reply as string) || "Thanks — let’s continue.";
+      const reply = (data?.reply as string) || "Thanks, let’s continue.";
       if (data?.displayName) setDisplayName(data.displayName);
-      setMessages(prev => [...prev, { sender:"bot", text: reply }]);
-      setShowTyping(false);
+      setMessages(prev => [...prev, { sender:"bot", text: reply, ts: Date.now() }]);
       if (data?.openPortal) setShowAuth(true);
     } catch {
-      setShowTyping(false);
-      setMessages(prev => [...prev, { sender:"bot", text:"⚠️ I couldn’t reach the server just now." }]);
+      setMessages(prev => [...prev, { sender:"bot", text:"⚠️ I couldn’t reach the server just now.", ts: Date.now() }]);
+    } finally {
+      setBotThinking(false);
     }
   };
 
@@ -729,172 +756,202 @@ export default function Home() {
     setTheme(t => { const next = t==="dark" ? "light":"dark"; if (typeof window!=="undefined") localStorage.setItem("da_theme", next); return next; });
   };
 
-  const isDark = theme === "dark";
-  const styles: { [k: string]: React.CSSProperties } = {
-    frame: {
-      minHeight: "100vh",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      padding: 24,
-      fontFamily: "'Segoe UI', Arial, sans-serif",
-      background: isDark
-        ? "radial-gradient(1200px 600px at 20% -10%, #172554 0%, #0b1220 50%, #05070f 100%)"
-        : "radial-gradient(1200px 600px at 20% -10%, #e0e7ff 0%, #f3f4f6 60%, #f9fafb 100%)",
-      color: isDark ? "#e5e7eb" : "#111827",
-    },
-    centerWrap: { width: "100%", maxWidth: 1100, display: "flex", justifyContent: "center" },
-    card: {
-      border: isDark?"1px solid #1f2937":"1px solid #e5e7eb",
-      borderRadius:20,
-      background: isDark?"#111827cc":"#ffffffcc",
-      backdropFilter: "blur(8px)",
-      boxShadow: isDark?"0 30px 80px rgba(0,0,0,0.45)":"0 30px 80px rgba(0,0,0,0.12)",
-      overflow:"hidden",
-      width:720,
-      transition:"width .3s ease"
-    },
-    header: {
-      display:"flex", justifyContent:"space-between", alignItems:"center",
-      padding:"12px 16px",
-      borderBottom: isDark?"1px solid #1f2937":"1px solid #e5e7eb",
-      background: isDark?"#0f172acc":"#fafafacc"
-    },
-    brand: { display:"flex", alignItems:"center", gap:10, fontWeight:700 },
-    onlineDot: { marginLeft:8, fontSize:12, color:"#10b981", fontWeight:600 },
-    tools: { display:"flex", alignItems:"center", gap:8 },
-    select: {
-      padding:"8px 12px", borderRadius:999, border: isDark?"1px solid #374151":"1px solid #d1d5db",
-      background: isDark?"#0b1220":"#fff", color: isDark?"#e5e7eb":"#111827"
-    },
-    btn: {
-      padding:"8px 12px", borderRadius:999, border: isDark?"1px solid #374151":"1px solid #d1d5db",
-      background: isDark?"#0b1220":"#fff", color: isDark?"#e5e7eb":"#111827",
-      cursor:"pointer", transition:"transform .06s ease, background .2s", willChange:"transform"
-    },
-    btnPrimary: {
-      padding:"8px 14px", borderRadius:999, border:"none",
-      background:"#16a34a", color:"#fff", cursor:"pointer", fontWeight:700
-    },
-    chat: {
-      height:520, overflowY:"auto", padding:20,
-      background: isDark?"linear-gradient(#0b1220,#0f172a)":"linear-gradient(#ffffff,#fafafa)",
-      display:"flex", flexDirection:"column", gap:12
-    },
-    row: { display:"flex", alignItems:"flex-start", gap:10 },
-    rowUser: { justifyContent:"flex-end" },
-    avatarWrap: { width:40, height:40, borderRadius:"50%", overflow:"hidden", display:"flex", alignItems:"center", justifyContent:"center" },
-    bubble: {
-      padding:"10px 14px", borderRadius:16, maxWidth:"72%", lineHeight:1.5,
-      boxShadow: isDark?"0 2px 10px rgba(0,0,0,0.45)":"0 2px 10px rgba(0,0,0,0.08)",
-      whiteSpace:"pre-wrap", wordBreak:"break-word"
-    },
-    bubbleBot: { background: isDark?"#1f2937":"#f3f4f6", color: isDark?"#e5e7eb":"#111827", borderTopLeftRadius:8 },
-    bubbleUser: { background: isDark?"#1d4ed8":"#dbeafe", color: isDark?"#e5e7eb":"#0f172a", borderTopRightRadius:8 },
-    typing: { display:"inline-flex", gap:6, alignItems:"center" },
-    dot: { width:6, height:6, borderRadius:999, background:isDark?"#9ca3af":"#6b7280", opacity:.8, animation:"blink 1.2s infinite ease-in-out" as any },
-    footer: {
-      display:"flex", alignItems:"center", gap:8, padding:12,
-      borderTop: isDark?"1px solid #1f2937":"1px solid #e5e7eb", background: isDark?"#0f172a":"#fafafa"
+  const onPickEmoji = (emoji: string) => {
+    setInput((v) => v + emoji);
+    setShowEmoji(false);
+  };
+
+  const onClickPaperclip = () => fileRef.current?.click();
+
+  const onChooseFile: React.ChangeEventHandler<HTMLInputElement> = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("sessionId", sessionId);
+      const r = await fetch("/api/upload", { method: "POST", body: fd });
+      const j = await r.json();
+      if (!j?.ok) {
+        setMessages(prev => [...prev, { sender:"bot", text:`Upload failed: ${j?.error || "try again later."}`, ts: Date.now() }]);
+      } else {
+        const att: Attachment = {
+          filename: j.filename || file.name,
+          url: j.url,
+          mimeType: j.mimeType || file.type,
+          size: j.size || file.size,
+        };
+        setMessages(prev => [
+          ...prev,
+          { sender:"user", text: "Uploaded a document", ts: Date.now(), attachment: att }
+        ]);
+      }
+    } catch {
+      setMessages(prev => [...prev, { sender:"bot", text:"Upload failed — please try again.", ts: Date.now() }]);
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
     }
   };
 
-  // simple blink animation for typing dots
-  const Dots = () => (
-    <span style={styles.typing}>
-      <span style={{...styles.dot, animationDelay:"0ms"}} />
-      <span style={{...styles.dot, animationDelay:"150ms"}} />
-      <span style={{...styles.dot, animationDelay:"300ms"}} />
-      <style>{`@keyframes blink{0%,80%,100%{opacity:.2}40%{opacity:1}}`}</style>
-    </span>
-  );
+  const isDark = theme === "dark";
+  const styles: { [k: string]: React.CSSProperties } = {
+    page: { minHeight:"100vh", background: isDark?"#0b1220":"#eef2f7" },
+    frameWrap: { display:"grid", placeItems:"center", minHeight:"100vh", padding:16 },
+    frame: { display:"grid", gridTemplateColumns:"1fr", gap:0, width:"100%", maxWidth:900, fontFamily:"'Segoe UI', Arial, sans-serif", color: isDark?"#e5e7eb":"#111827" },
+    card: { border: isDark?"1px solid #1f2937":"1px solid #e5e7eb", borderRadius:16, background: isDark?"#111827":"#ffffff", boxShadow: isDark?"0 8px 24px rgba(0,0,0,0.45)":"0 12px 30px rgba(0,0,0,0.06)", overflow:"hidden" },
+    header: { display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 16px", borderBottom: isDark?"1px solid #1f2937":"1px solid #e5e7eb", background: isDark?"#0f172a":"#fafafa", position:"sticky", top:0, zIndex:1 },
+    brand: { display:"flex", alignItems:"center", gap:10, fontWeight:700 },
+    onlineDot: { marginLeft:8, fontSize:12, color:"#10b981", fontWeight:600 },
+    tools: { display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" },
+    select: { padding:"6px 10px", borderRadius:8, border: isDark?"1px solid #374151":"1px solid #d1d5db", background: isDark?"#111827":"#fff", color: isDark?"#e5e7eb":"#111827" },
+    btn: { padding:"6px 10px", borderRadius:8, border: isDark?"1px solid #374151":"1px solid #d1d5db", background: isDark?"#111827":"#fff", color: isDark?"#e5e7eb":"#111827", cursor:"pointer" },
+    chat: { height:560, overflowY:"auto", padding:16, background: isDark?"linear-gradient(#0b1220,#0f172a)":"linear-gradient(#ffffff,#fafafa)", display:"flex", flexDirection:"column", gap:12 },
+    row: { display:"flex", alignItems:"flex-start", gap:10 },
+    rowUser: { justifyContent:"flex-end" },
+    avatarWrap: { width:40, height:40, borderRadius:"50%", overflow:"hidden", display:"flex", alignItems:"center", justifyContent:"center" },
+    bubble: { padding:"10px 14px", borderRadius:14, maxWidth:"74%", lineHeight:1.45, boxShadow: isDark?"0 2px 10px rgba(0,0,0,0.5)":"0 2px 10px rgba(0,0,0,0.06)" },
+    bubbleBot: { background: isDark?"#1f2937":"#f3f4f6", color: isDark?"#e5e7eb":"#111827", borderTopLeftRadius:6 },
+    bubbleUser: { background: isDark?"#1d4ed8":"#dbeafe", color: isDark?"#e5e7eb":"#0f172a", borderTopRightRadius:6 },
+    meta: { marginTop:6, fontSize:11, opacity:.7 },
+    attach: { marginTop:8 },
+    chip: { display:"inline-flex", alignItems:"center", gap:8, fontSize:12, padding:"6px 10px", background: isDark?"#0b1220":"#fff", border: isDark?"1px solid #374151":"1px solid #e5e7eb", borderRadius:999 },
+    footer: { display:"grid", gridTemplateColumns:"auto 1fr auto auto", alignItems:"center", gap:8, padding:12, borderTop: isDark?"1px solid #1f2937":"1px solid #e5e7eb", background: isDark?"#0f172a":"#fafafa" },
+    emojiPanel: { position:"absolute", bottom:56, left:12, right:"auto", background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"8px 10px", boxShadow:"0 12px 28px rgba(0,0,0,.12)", display:"grid", gridTemplateColumns:"repeat(10, 24px)", gap:8, zIndex:5 },
+  };
 
   return (
     <>
-      <main style={styles.frame}>
-        <div style={styles.centerWrap}>
-          <div style={styles.card}>
-            <div style={styles.header}>
-              <div style={styles.brand}>
-                <div style={styles.avatarWrap}><Avatar /></div>
-                <span>Debt Advisor</span>
-                <span style={styles.onlineDot}>● Online</span>
+      <div style={styles.page}>
+        <div style={styles.frameWrap}>
+          <div style={styles.frame}>
+            <div style={styles.card}>
+              <div style={styles.header}>
+                <div style={styles.brand}>
+                  <div style={styles.avatarWrap}><Avatar /></div>
+                  <span>Debt Advisor</span>
+                  <span style={styles.onlineDot}>● Online</span>
+                </div>
+                <div style={styles.tools}>
+                  <select style={styles.select} value={language} onChange={(e)=>setLanguage(e.target.value)} title="Change language">
+                    {LANGUAGES.map(l => <option key={l} value={l}>{l}</option>)}
+                  </select>
+                  <button type="button" style={styles.btn} onClick={()=>setVoiceOn(v=>!v)} title="Toggle voice">
+                    {voiceOn ? "🔈 Voice On" : "🔇 Voice Off"}
+                  </button>
+                  <button type="button" style={styles.btn} onClick={toggleTheme} title="Toggle theme">
+                    {theme === "dark" ? "☀️ Light" : "🌙 Dark"}
+                  </button>
+                  {loggedEmail ? (
+                    <button type="button" style={styles.btn} onClick={()=>{ setLoggedEmail(undefined); setDisplayName(undefined); setShowPortal(false); }} title="Log out">
+                      Logout
+                    </button>
+                  ) : (
+                    <button type="button" style={styles.btn} onClick={()=>setShowAuth(true)} title="Open client portal">
+                      Open Portal
+                    </button>
+                  )}
+                </div>
               </div>
-              <div style={styles.tools}>
-                <select style={styles.select} value={language} onChange={(e)=>setLanguage(e.target.value)} title="Change language">
-                  {LANGUAGES.map(l => <option key={l} value={l}>{l}</option>)}
-                </select>
-                <button type="button" style={styles.btn} onClick={()=>setVoiceOn(v=>!v)} title="Toggle voice">
-                  {voiceOn ? "🔈 Voice On" : "🔇 Voice Off"}
-                </button>
-                <button type="button" style={styles.btn} onClick={toggleTheme} title="Toggle theme">
-                  {theme === "dark" ? "☀️ Light" : "🌙 Dark"}
-                </button>
-                {loggedEmail ? (
-                  <button type="button" style={styles.btn} onClick={()=>{ setLoggedEmail(undefined); setDisplayName(undefined); setShowPortal(false); }} title="Log out">
-                    Logout
+
+              <div style={styles.chat}>
+                {messages.map((m,i)=>{
+                  const isUser = m.sender==="user";
+                  const att = m.attachment;
+                  const pretty = att ? prettyFilename(att.filename) : "";
+                  const icon = att ? fileEmoji(att.filename, att.mimeType) : "";
+                  return (
+                    <div key={i} style={{...styles.row, ...(isUser?styles.rowUser:{})}}>
+                      {!isUser && <div style={styles.avatarWrap}><Avatar /></div>}
+                      <div style={{...styles.bubble, ...(isUser?styles.bubbleUser:styles.bubbleBot)}}>
+                        {m.text ? <div>{m.text}</div> : null}
+                        {att && (
+                          <div style={styles.attach}>
+                            <a href={att.url} target="_blank" rel="noreferrer" download={pretty||att.filename} style={styles.chip} title={pretty}>
+                              <span>{icon}</span>
+                              <span style={{fontWeight:600}}>{pretty}</span>
+                              {typeof att.size==="number" && <span style={{opacity:.7}}>({formatBytes(att.size)})</span>}
+                              <span style={{textDecoration:"underline"}}>Download ⬇️</span>
+                            </a>
+                          </div>
+                        )}
+                        <div style={styles.meta}>{formatTime(m.ts)}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+                {botThinking && (
+                  <div style={{...styles.row}}>
+                    <div style={styles.avatarWrap}><Avatar /></div>
+                    <div style={{...styles.bubble, ...styles.bubbleBot}}>
+                      <span>Typing</span><span className="dots">…</span>
+                    </div>
+                  </div>
+                )}
+                <div ref={bottomRef} />
+              </div>
+
+              <div style={{ position:"relative" }}>
+                <div style={styles.footer}>
+                  {/* Emoji button */}
+                  <button
+                    type="button"
+                    onClick={()=>setShowEmoji(s=>!s)}
+                    style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db", background:"#fff", cursor:"pointer"}}
+                    title="Emoji"
+                  >
+                    😊
                   </button>
-                ) : (
-                  <button type="button" style={styles.btn} onClick={()=>setShowAuth(true)} title="Open client portal">
-                    Open Portal
+
+                  {/* Input */}
+                  <input
+                    style={{flex:1, padding:"10px 12px", borderRadius:8, border: "1px solid #d1d5db", fontSize:16, background:"#fff", color:"#111827"}}
+                    value={input}
+                    onChange={(e)=>setInput(e.target.value)}
+                    onKeyDown={(e)=>e.key==="Enter" && handleSubmit()}
+                    placeholder="Type a message…"
+                  />
+
+                  {/* Paperclip upload */}
+                  <input ref={fileRef} type="file" style={{display:"none"}}
+                         onChange={onChooseFile}
+                         accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.doc,.docx,.xls,.xlsx,.csv,.txt,.rtf,.zip"
+                  />
+                  <button
+                    type="button"
+                    onClick={onClickPaperclip}
+                    disabled={uploading}
+                    style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db", background:"#fff", cursor:"pointer"}}
+                    title="Upload a document"
+                  >
+                    {uploading ? "⏳" : "📎"}
                   </button>
+
+                  {/* Send */}
+                  <button type="button" onClick={handleSubmit}
+                    style={{padding:"10px 14px", borderRadius:8, border:"none", background:"#16a34a", color:"#fff", cursor:"pointer", fontWeight:600}}>
+                    Send
+                  </button>
+                </div>
+
+                {/* Emoji panel */}
+                {showEmoji && (
+                  <div style={styles.emojiPanel} onMouseLeave={()=>setShowEmoji(false)}>
+                    {EMOJI_BANK.map((e,idx)=>(
+                      <button key={idx} onClick={()=>onPickEmoji(e)}
+                        style={{ width:24, height:24, border:"none", background:"transparent", cursor:"pointer", fontSize:18, lineHeight:"24px" }}
+                        title={e}>
+                        {e}
+                      </button>
+                    ))}
+                  </div>
                 )}
               </div>
             </div>
-
-            <div style={styles.chat}>
-              {messages.map((m,i)=>{
-                const isUser = m.sender==="user";
-                const att = m.attachment;
-                const pretty = att ? prettyFilename(att.filename) : "";
-                const icon = att ? fileEmoji(att.filename, att.mimeType) : "";
-                return (
-                  <div key={i} style={{...styles.row, ...(isUser?styles.rowUser:{})}}>
-                    {!isUser && <div style={styles.avatarWrap}><Avatar /></div>}
-                    <div style={{...styles.bubble, ...(isUser?styles.bubbleUser:styles.bubbleBot)}}>
-                      {m.text ? <div>{m.text}</div> : null}
-                      {att && (
-                        <div style={{marginTop:8}}>
-                          <a href={att.url} target="_blank" rel="noreferrer" download={pretty||att.filename}
-                             style={{
-                               display:"inline-flex", alignItems:"center", gap:8, fontSize:12, padding:"6px 10px",
-                               background: isDark?"#0b1220":"#fff", border: isDark?"1px solid #374151":"1px solid #e5e7eb", borderRadius:999
-                             }}
-                             title={pretty}>
-                            <span>{icon}</span>
-                            <span style={{fontWeight:600}}>{pretty}</span>
-                            {typeof att.size==="number" && <span style={{opacity:.7}}>({formatBytes(att.size)})</span>}
-                            <span style={{textDecoration:"underline"}}>Download ⬇️</span>
-                          </a>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-              {showTyping && (
-                <div style={{...styles.row}}>
-                  <div style={styles.avatarWrap}><Avatar /></div>
-                  <div style={{...styles.bubble, ...styles.bubbleBot}}><Dots /></div>
-                </div>
-              )}
-              <div ref={bottomRef} />
-            </div>
-
-            <div style={styles.footer}>
-              <input
-                style={{flex:1, padding:"12px 14px", borderRadius:12, border: isDark?"1px solid #374151":"1px solid #d1d5db", fontSize:16, background: isDark?"#0b1220":"#fff", color: isDark?"#e5e7eb":"#111827"}}
-                value={input} onChange={(e)=>setInput(e.target.value)} onKeyDown={(e)=>e.key==="Enter" && handleSubmit()}
-                placeholder="Type your message…"
-              />
-              <button type="button" onClick={handleSubmit}
-                style={{...styles.btnPrimary}}>
-                Send
-              </button>
-            </div>
           </div>
         </div>
-      </main>
+      </div>
 
       {/* FULL SCREEN AUTH (blocks chat) */}
       <AuthFullScreen
