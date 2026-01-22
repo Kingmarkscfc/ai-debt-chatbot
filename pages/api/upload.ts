@@ -1,3 +1,4 @@
+// pages/api/upload.ts
 import type { NextApiRequest, NextApiResponse } from "next";
 import Busboy from "busboy";
 import { createClient } from "@supabase/supabase-js";
@@ -7,137 +8,111 @@ type UploadResp =
   | { ok: false; error: string };
 
 export const config = {
-  api: {
-    bodyParser: false, // we stream with Busboy
-  },
+  api: { bodyParser: false },
 };
 
-function bufferFromChunks(chunks: Buffer[]) {
-  return Buffer.concat(chunks);
+function getSupabase() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) {
+    throw new Error("Missing Supabase env: NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+  }
+  return createClient(url, key);
 }
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse<UploadResp>) {
+  if (req.method !== "POST") {
+    res.setHeader("Allow", "POST");
+    return res.status(405).json({ ok: false, error: "Method Not Allowed" });
+  }
+
+  const supabase = getSupabase();
+
+  try {
+    const { fields, file } = await parseMultipart(req);
+    if (!file) {
+      return res.status(400).json({ ok: false, error: "No file received" });
+    }
+
+    const sessionId = (fields.sessionId as string) || "anon";
+    const origName = (file.filename as string) || "upload.bin";
+    const safeName = origName.replace(/[^\w.\-]+/g, "_");
+    const ext = extFromFilename(safeName);
+    const objectKey = `${sessionId}/${Date.now()}_${Math.random().toString(36).slice(2)}${ext}`;
+
+    const bucket = "uploads"; // make sure this exists and is public in Supabase
+
+    const { error } = await supabase.storage.from(bucket).upload(objectKey, file.buffer, {
+      contentType: file.mimeType || "application/octet-stream",
+      upsert: false,
+    });
+    if (error) throw error;
+
+    const { data: pub } = supabase.storage.from(bucket).getPublicUrl(objectKey);
+    const url = pub?.publicUrl || "";
+
+    return res.status(200).json({
+      ok: true,
+      url,
+      filename: safeName,
+      mimeType: file.mimeType,
+      size: file.size,
+    });
+  } catch (e: any) {
+    return res.status(400).json({ ok: false, error: e?.message || "Upload failed" });
+  }
+}
+
+/* ---------------- helpers ---------------- */
 
 function extFromFilename(name: string) {
   const dot = name.lastIndexOf(".");
   return dot >= 0 ? name.slice(dot).toLowerCase() : "";
 }
 
-function safeBaseName(name: string) {
-  const dot = name.lastIndexOf(".");
-  const base = dot >= 0 ? name.slice(0, dot) : name;
-  return base.replace(/[^a-zA-Z0-9_\-\.]/g, "_").slice(0, 80) || "upload";
-}
+function parseMultipart(req: NextApiRequest): Promise<{
+  fields: Record<string, unknown>;
+  file: { filename: string; mimeType?: string; size: number; buffer: Buffer } | null;
+}> {
+  return new Promise((resolve, reject) => {
+    try {
+      const bb = Busboy({ headers: req.headers as Record<string, string> });
+      const fields: Record<string, unknown> = {};
+      const fileBufs: Buffer[] = [];
+      let fileSize = 0;
+      let fileMeta: { filename: string; mimeType?: string } | null = null;
 
-function uniqueKey(opts: {
-  sessionId?: string;
-  origName: string;
-}) {
-  const { sessionId, origName } = opts;
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const rand = Math.random().toString(36).slice(2, 8);
-  const ext = extFromFilename(origName);
-  const base = safeBaseName(origName);
-  const sid = sessionId?.replace(/[^a-zA-Z0-9_\-\.]/g, "") || "anon";
-  return `sessions/${sid}/${base}__${stamp}__${rand}${ext || ""}`;
-}
-
-function makePublicUrl(bucket: string, key: string) {
-  const base = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/+$/, "");
-  return `${base}/storage/v1/object/public/${bucket}/${encodeURI(key)}`;
-}
-
-export default async function handler(
-  req: NextApiRequest,
-  res: NextApiResponse<UploadResp>
-) {
-  if (req.method !== "POST") {
-    res.setHeader("Allow", "POST");
-    return res.status(405).json({ ok: false, error: "Method Not Allowed" });
-  }
-
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!supabaseUrl || !supabaseServiceKey) {
-    return res.status(500).json({
-      ok: false,
-      error: "Supabase environment not configured on server.",
-    });
-  }
-
-  const supabase = createClient(supabaseUrl, supabaseServiceKey, {
-    auth: { persistSession: false },
-  });
-
-  try {
-    const busboy = Busboy({ headers: req.headers });
-    let fileReceived = false;
-    let fileBuffer: Buffer | null = null;
-    let fileInfo: { filename: string; mimeType?: string; size?: number } = {
-      filename: "",
-    };
-    let sessionId: string | undefined;
-
-    busboy.on("field", (name, val) => {
-      if (name === "sessionId") sessionId = String(val || "").slice(0, 200);
-    });
-
-    busboy.on("file", (_name, file, info) => {
-      const { filename, mimeType } = info;
-      fileReceived = true;
-
-      const chunks: Buffer[] = [];
-      let size = 0;
-
-      file.on("data", (d: Buffer) => {
-        chunks.push(d);
-        size += d.length;
+      bb.on("field", (name, val) => {
+        fields[name] = val;
       });
 
-      file.on("end", () => {
-        fileBuffer = bufferFromChunks(chunks);
-        fileInfo = { filename, mimeType, size };
-      });
-    });
-
-    busboy.on("finish", async () => {
-      if (!fileReceived || !fileBuffer || !fileInfo.filename) {
-        return res.status(400).json({ ok: false, error: "No file received." });
-      }
-
-      const bucket = "uploads"; // <- ensure this bucket exists & is public
-      const objectKey = uniqueKey({
-        sessionId,
-        origName: fileInfo.filename,
-      });
-
-      // Upload to Supabase Storage
-      const { error: upErr } = await supabase.storage
-        .from(bucket)
-        .upload(objectKey, fileBuffer as Buffer, {
-          contentType: fileInfo.mimeType || "application/octet-stream",
-          upsert: false,
+      bb.on("file", (_name, stream, info) => {
+        fileMeta = { filename: info.filename, mimeType: info.mimeType };
+        stream.on("data", (d: Buffer) => {
+          fileBufs.push(d);
+          fileSize += d.length;
         });
-
-      if (upErr) {
-        return res.status(500).json({ ok: false, error: upErr.message });
-      }
-
-      // Ensure bucket is public or use signed URL; here we assume **public** bucket.
-      const url = makePublicUrl(bucket, objectKey);
-
-      return res.status(200).json({
-        ok: true,
-        url,
-        filename: fileInfo.filename,
-        mimeType: fileInfo.mimeType,
-        size: fileInfo.size,
+        stream.on("limit", () => {
+          reject(new Error("File too large"));
+          stream.resume();
+        });
       });
-    });
 
-    req.pipe(busboy);
-  } catch (e: any) {
-    return res
-      .status(500)
-      .json({ ok: false, error: e?.message || "Upload failed." });
-  }
+      bb.on("error", (err) => reject(err));
+      bb.on("finish", () => {
+        const buffer = Buffer.concat(fileBufs);
+        resolve({
+          fields,
+          file: fileMeta
+            ? { filename: fileMeta.filename, mimeType: fileMeta.mimeType, size: buffer.length, buffer }
+            : null,
+        });
+      });
+
+      (req as any).pipe(bb);
+    } catch (e) {
+      reject(e);
+    }
+  });
 }
+
