@@ -9,7 +9,7 @@
     "vercel-build": "npm ci --no-audit --progress=false && next build"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.50.0",
+    "@supabase/supabase-js": "^2.91.0",
     "busboy": "^1.6.0",
     "luxon": "^3.6.1",
     "next": "^14.1.0",

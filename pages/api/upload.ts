@@ -1,107 +1,143 @@
-// pages/api/upload.ts
 import type { NextApiRequest, NextApiResponse } from "next";
+import Busboy from "busboy";
 import { createClient } from "@supabase/supabase-js";
 
-export const config = { api: { bodyParser: false } };
+type UploadResp =
+  | { ok: true; url: string; filename: string; mimeType?: string; size?: number }
+  | { ok: false; error: string };
 
-const supabase = createClient(
-  process.env.SUPABASE_URL || "",
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || ""
-);
+export const config = {
+  api: {
+    bodyParser: false, // we stream with Busboy
+  },
+};
 
-type FileInfo = { filename: string; mimeType: string; encoding: string };
-
-function parseMultipart(req: NextApiRequest): Promise<{
-  buffer: Buffer;
-  filename: string;
-  mimeType: string;
-  sessionId?: string;
-  category?: string;
-  creditor?: string;
-  debt_ref?: string;
-}> {
-  return new Promise(async (resolve, reject) => {
-    const { default: Busboy } = await import("busboy");
-    const bb = Busboy({ headers: req.headers });
-
-    const chunks: Buffer[] = [];
-    let filename = "upload.bin";
-    let mimeType = "application/octet-stream";
-    let sessionId: string | undefined;
-    let category: string | undefined;
-    let creditor: string | undefined;
-    let debt_ref: string | undefined;
-
-    bb.on("file", (_name: string, file: NodeJS.ReadableStream, info: FileInfo) => {
-      filename = info?.filename || filename;
-      mimeType = info?.mimeType || mimeType;
-      file.on("data", (d: Buffer) => chunks.push(d));
-      file.on("error", (err: unknown) => reject(err));
-    });
-
-    bb.on("field", (name: string, val: string) => {
-      if (name === "sessionId") sessionId = val;
-      if (name === "category") category = val;
-      if (name === "creditor") creditor = val;
-      if (name === "debt_ref") debt_ref = val;
-    });
-
-    bb.on("error", (err: unknown) => reject(err));
-    bb.on("finish", () => {
-      const buffer = Buffer.concat(chunks);
-      resolve({ buffer, filename, mimeType, sessionId, category, creditor, debt_ref });
-    });
-
-    req.pipe(bb);
-  });
+function bufferFromChunks(chunks: Buffer[]) {
+  return Buffer.concat(chunks);
 }
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+function extFromFilename(name: string) {
+  const dot = name.lastIndexOf(".");
+  return dot >= 0 ? name.slice(dot).toLowerCase() : "";
+}
+
+function safeBaseName(name: string) {
+  const dot = name.lastIndexOf(".");
+  const base = dot >= 0 ? name.slice(0, dot) : name;
+  return base.replace(/[^a-zA-Z0-9_\-\.]/g, "_").slice(0, 80) || "upload";
+}
+
+function uniqueKey(opts: {
+  sessionId?: string;
+  origName: string;
+}) {
+  const { sessionId, origName } = opts;
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const rand = Math.random().toString(36).slice(2, 8);
+  const ext = extFromFilename(origName);
+  const base = safeBaseName(origName);
+  const sid = sessionId?.replace(/[^a-zA-Z0-9_\-\.]/g, "") || "anon";
+  return `sessions/${sid}/${base}__${stamp}__${rand}${ext || ""}`;
+}
+
+function makePublicUrl(bucket: string, key: string) {
+  const base = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/+$/, "");
+  return `${base}/storage/v1/object/public/${bucket}/${encodeURI(key)}`;
+}
+
+export default async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse<UploadResp>
+) {
+  if (req.method !== "POST") {
+    res.setHeader("Allow", "POST");
+    return res.status(405).json({ ok: false, error: "Method Not Allowed" });
+  }
+
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!supabaseUrl || !supabaseServiceKey) {
+    return res.status(500).json({
+      ok: false,
+      error: "Supabase environment not configured on server.",
+    });
+  }
+
+  const supabase = createClient(supabaseUrl, supabaseServiceKey, {
+    auth: { persistSession: false },
+  });
 
   try {
-    const { buffer, filename, mimeType, sessionId, category, creditor, debt_ref } = await parseMultipart(req);
-    if (!buffer?.length) return res.status(400).json({ ok:false, error:"No file received" });
+    const busboy = Busboy({ headers: req.headers });
+    let fileReceived = false;
+    let fileBuffer: Buffer | null = null;
+    let fileInfo: { filename: string; mimeType?: string; size?: number } = {
+      filename: "",
+    };
+    let sessionId: string | undefined;
 
-    const safeSession = sessionId || "unknown";
-    const ts = Date.now();
-    const path = `sessions/${safeSession}/${ts}-${filename}`;
-
-    const { error: uploadErr } = await supabase.storage
-      .from("uploads")
-      .upload(path, buffer, { contentType: mimeType, upsert: false });
-
-    if (uploadErr) {
-      console.error("Supabase upload error:", uploadErr);
-      return res.status(500).json({ ok:false, error:"Upload failed", details: uploadErr.message });
-    }
-
-    const { data: pub } = supabase.storage.from("uploads").getPublicUrl(path);
-    const downloadUrl = pub?.publicUrl || null;
-
-    // record in DB (for Documents tab & tasks)
-    if (downloadUrl) {
-      const row: any = {
-        session_id: safeSession,
-        file_name: filename,
-        file_url: downloadUrl,
-      };
-      if (category) row.category = category;
-      if (creditor) row.creditor = creditor;
-      if (debt_ref) row.debt_ref = debt_ref;
-
-      await supabase.from("documents").insert([row]);
-    }
-
-    return res.status(200).json({
-      ok: true,
-      file: { filename, mimeType, size: buffer.length },
-      path,
-      downloadUrl,
-      message: downloadUrl ? "Upload completed." : "Upload completed, but link unavailable."
+    busboy.on("field", (name, val) => {
+      if (name === "sessionId") sessionId = String(val || "").slice(0, 200);
     });
-  } catch (err: any) {
-    console.error("Upload API error:", err?.message || err);
-    return res.status(500).json({ ok:false, error:"Unexpected error", details:String(err?.message || err) });
+
+    busboy.on("file", (_name, file, info) => {
+      const { filename, mimeType } = info;
+      fileReceived = true;
+
+      const chunks: Buffer[] = [];
+      let size = 0;
+
+      file.on("data", (d: Buffer) => {
+        chunks.push(d);
+        size += d.length;
+      });
+
+      file.on("end", () => {
+        fileBuffer = bufferFromChunks(chunks);
+        fileInfo = { filename, mimeType, size };
+      });
+    });
+
+    busboy.on("finish", async () => {
+      if (!fileReceived || !fileBuffer || !fileInfo.filename) {
+        return res.status(400).json({ ok: false, error: "No file received." });
+      }
+
+      const bucket = "uploads"; // <- ensure this bucket exists & is public
+      const objectKey = uniqueKey({
+        sessionId,
+        origName: fileInfo.filename,
+      });
+
+      // Upload to Supabase Storage
+      const { error: upErr } = await supabase.storage
+        .from(bucket)
+        .upload(objectKey, fileBuffer as Buffer, {
+          contentType: fileInfo.mimeType || "application/octet-stream",
+          upsert: false,
+        });
+
+      if (upErr) {
+        return res.status(500).json({ ok: false, error: upErr.message });
+      }
+
+      // Ensure bucket is public or use signed URL; here we assume **public** bucket.
+      const url = makePublicUrl(bucket, objectKey);
+
+      return res.status(200).json({
+        ok: true,
+        url,
+        filename: fileInfo.filename,
+        mimeType: fileInfo.mimeType,
+        size: fileInfo.size,
+      });
+    });
+
+    req.pipe(busboy);
+  } catch (e: any) {
+    return res
+      .status(500)
+      .json({ ok: false, error: e?.message || "Upload failed." });
   }
 }
