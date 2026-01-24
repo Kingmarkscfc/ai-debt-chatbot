@@ -32,7 +32,7 @@ type TurnContext = {
     askedAckAt?: number;
     askedPortalAt?: number;
     smalltalkAt?: number;
-    awaitSmalltalk?: boolean; // NEW: waiting for user's “how are you” reply
+    awaitSmalltalk?: boolean; // waiting for the user’s “how are you” reply
   };
 };
 
@@ -106,6 +106,15 @@ function canAsk(nowTurn: number, lastAskedAt?: number, windowTurns = 3) {
   if (lastAskedAt == null) return true;
   return nowTurn - lastAskedAt >= windowTurns;
 }
+
+/* Markers to manage smalltalk state internally */
+const ST_MARKER_ASK = "§ASKED_HOW_ARE_YOU";
+const ST_MARKER_DONE = "§SMALLTALK_DONE";
+function stripSystemTags(s: string) {
+  // prevent any §MARKER from showing to the user
+  return s.replace(/\s*§[A-Z_]+/g, "").trim();
+}
+
 function quickJoke() {
   return "Quick one: Why did the spreadsheet apply for a loan? Too many outstanding cells.";
 }
@@ -120,10 +129,6 @@ function sanitiseName(raw: string): string | null {
   if (!cleaned) return null;
   return cleaned.charAt(0).toUpperCase() + cleaned.slice(1).toLowerCase();
 }
-
-/* Smalltalk markers embedded in assistant replies to track state through history */
-const ST_MARKER_ASK = "§ASKED_HOW_ARE_YOU";
-const ST_MARKER_DONE = "§SMALLTALK_DONE";
 
 /* =============== Build state from plain history text =============== */
 function reduceState(history: string[]): Omit<TurnContext, "turn"> {
@@ -208,7 +213,7 @@ function classifyIntent(user: string): Intent {
   const s = (user || "").trim().toLowerCase();
   if (/^(reset|restart|open portal|close portal|portal|help|menu)\b/.test(s)) return "CONTROL";
   if (/\b(hi|hello|hey|hiya|good (morning|afternoon|evening)|how are you)\b/.test(s)) return "SMALLTALK";
-  if (/\?$/.test(s) || /\b(how|what|when|why|can|do|does|should|am i|are i|will)\b/.test(s)) return "QNA";
+  if (/\?$/.test(s) || /\b(how|what|when|why|can|do|does|should|am i|are i|will|time|date|day)\b/.test(s)) return "QNA";
   if (/\b(football|movie|weather|joke)\b/.test(s)) return "OFFTOPIC";
   return "SCRIPT";
 }
@@ -227,12 +232,9 @@ async function handleSmalltalkStart(user: string, ctx: TurnContext): Promise<str
   const greet = buildCorrectGreeting(user);
   const asksHowAreYou = /\bhow are you\b/i.test(user);
   const nameBit = ctx.haveName && ctx.name ? ` ${ctx.name}` : "";
-
   if (asksHowAreYou) {
-    // ask back and WAIT for their reply
     return `${greet}I’m good, thanks — and I’m here to help${nameBit}. How are you doing today? ${ST_MARKER_ASK}`;
   }
-  // plain greeting → light acknowledgement, then bridge
   return `${greet}Nice to hear from you${nameBit}. ${nextPrompt(ctx.stepId)}`;
 }
 
@@ -245,11 +247,44 @@ async function handleSmalltalkFollowup(user: string, ctx: TurnContext): Promise<
   return `${ack}${nameBit ? " " + nameBit : ""}. ${nextPrompt(ctx.stepId)} ${ST_MARKER_DONE}`;
 }
 
+/* =============== Quick facts (small direct questions) =============== */
+function ukTimeNow() {
+  const fmt = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/London", hour: "numeric", minute: "2-digit", hour12: true, weekday: "short", day: "2-digit", month: "short"
+  });
+  return fmt.format(new Date());
+}
+function quickFacts(user: string, ctx: TurnContext): string | null {
+  const s = user.toLowerCase();
+
+  if (/\b(time|what.*time|current time)\b/.test(s)) {
+    return `It’s ${ukTimeNow()} in the UK. ${nextPrompt(ctx.stepId)}`;
+  }
+  if (/\b(date|what.*date|today)\b/.test(s)) {
+    const d = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", weekday: "long", day: "2-digit", month: "long", year: "numeric" }).format(new Date());
+    return `Today is ${d}. ${nextPrompt(ctx.stepId)}`;
+  }
+  if (/\bwho are you|your name|what can you do|what do you do\b/.test(s)) {
+    return `I’m your debt advice assistant — here to guide you through options, collect details securely, and help reduce the pressure. ${nextPrompt(ctx.stepId)}`;
+  }
+  if (/where.*documents|what.*upload|which.*documents/.test(s)) {
+    return `You can upload documents in the portal or via the 📎 in the chat. We’ll review them and update your portal. ${nextPrompt(ctx.stepId)}`;
+  }
+  return null;
+}
+
 /* =============== Other handlers =============== */
 async function handleQna(user: string, ctx: TurnContext): Promise<string> {
+  // 1) quick factuals first
+  const qf = quickFacts(user, ctx);
+  if (qf) return qf;
+
+  // 2) jokes
   if (/joke/i.test(user)) {
     return `${quickJoke()} ${ctx.haveName ? `${ctx.name}, ` : ""}${nextPrompt(ctx.stepId)}`;
   }
+
+  // 3) short FAQ fallback
   const hit = FAQS.find(f => f.q.test(user));
   const ans = hit ? hit.a : "Here’s a quick answer, and we’ll tailor things to you as we go.";
   return empathetic(ans) + " " + nextPrompt(ctx.stepId);
@@ -375,8 +410,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       reply = r.reply; openPortal = !!r.openPortal; displayName = r.displayName;
     }
 
-    writeTelemetry({ session_id: sessionId, turn, intent, model, step_id: ctx.stepId });
+    // never leak system markers
+    reply = stripSystemTags(reply);
 
+    writeTelemetry({ session_id: sessionId, turn, intent, model, step_id: ctx.stepId });
     return res.status(200).json({ reply, openPortal, displayName });
   } catch {
     return res.status(200).json({ reply: "⚠️ I couldn’t reach the server just now." });
