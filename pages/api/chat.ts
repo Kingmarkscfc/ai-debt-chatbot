@@ -1,406 +1,432 @@
+// pages/api/chat.ts
 import type { NextApiRequest, NextApiResponse } from "next";
+import { createClient } from "@supabase/supabase-js";
 
-type Data = { reply: string; openPortal?: boolean; displayName?: string };
+// --------- Supabase (server role for telemetry; non-fatal if missing) ----------
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const supabase = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+  : null;
 
-/* -------------------- Utilities -------------------- */
-const norm = (s: string) => (s || "").trim();
-const YES = /\b(yes|yeah|yep|ok|okay|sure|please|go ahead|open|start|do it)\b/i;
-const NO  = /\b(no|not now|later|maybe later|dont|don't|do not|nah)\b/i;
+// --------- Types ----------
+type Intent = "SCRIPT" | "QNA" | "SMALLTALK" | "CONTROL" | "OFFTOPIC";
+type Sender = "user" | "assistant";
 
-function nowGreeting(): string {
-  try {
-    const d = new Date();
-    const hour = Number(new Intl.DateTimeFormat("en-GB", {
-      hour: "numeric",
-      hour12: false,
-      timeZone: "Europe/London"
-    }).format(d));
-    if (hour >= 5 && hour < 12) return "Good morning";
-    if (hour >= 12 && hour < 17) return "Good afternoon";
-    return "Good evening";
-  } catch {
-    return "Hello";
-  }
-}
+type TurnContext = {
+  turn: number;
+  // script state we infer from history
+  stepId: number;                 // current script step to ask
+  haveName: boolean;
+  name: string | null;
+  mainConcern?: string | null;
+  haveAmounts: boolean;
+  monthlyPay: number | null;
+  affordablePay: number | null;
+  urgentFlag?: string | null;     // bailiff/ccj/priority etc
+  ackedMoneyHelper: boolean;      // step 4 consent captured
+  portalOffered: boolean;         // step 5 prompt sent at least once
+  portalOpened: boolean;          // user said yes to open portal
+  flags: {
+    askedNameAt?: number;
+    askedAmountsAt?: number;
+    askedConcernAt?: number;
+    askedUrgentAt?: number;
+    askedAckAt?: number;
+    askedPortalAt?: number;
+  };
+};
 
-/* Simple deterministic “pick” so responses vary but are stable per input */
-function pick<T>(arr: T[], seedSource: string): T {
-  if (!arr.length) throw new Error("pick on empty array");
-  let seed = 0;
-  for (let i = 0; i < seedSource.length; i++) seed = (seed * 31 + seedSource.charCodeAt(i)) >>> 0;
-  return arr[seed % arr.length];
-}
+type Body = {
+  sessionId: string;
+  userMessage: string;
+  history?: string[];
+  language?: string;
+};
 
-const GREETING_RX = /\b(hi|hello|hey|hiya|good (morning|afternoon|evening)|how are (you|u))\b/i;
-const hasGreeting = (s: string) => GREETING_RX.test(s);
-
-/* -------------------- Empathy & confirmations -------------------- */
-function empathize(text: string): string {
-  const t = text.toLowerCase();
-
-  const cardsLoans = [
-    "That’s a lot to juggle — we’ll take this step by step and ease the pressure.",
-    "I hear you — we’ll simplify things and work toward something you can afford.",
-    "We’ll steady the ship first, then look at a plan that fits your budget.",
-  ];
-  const interest = [
-    "High interest can snowball — we’ll focus on stopping that and finding something sustainable.",
-    "Those charges add up fast — we’ll look at options that can freeze interest and reduce stress.",
-  ];
-  const enforcement = [
-    "Enforcement contact is stressful — we’ll move quickly on protections.",
-    "We’ll put safeguards in place so you can breathe a bit easier.",
-  ];
-  const court = [
-    "Court or default letters can be worrying — we’ll address those directly in your plan.",
-    "We’ll get clarity on any CCJs/defaults and factor them into the solution.",
-  ];
-  const essentials = [
-    "Essentials like rent, council tax and utilities come first — we’ll protect those.",
-    "We’ll make sure the roof and the lights are secure before anything else.",
-  ];
-  const general = [
-    "Thanks for telling me — we’ll keep this practical and judgement-free.",
-    "Appreciate the context — we’ll keep things simple and focused on solutions.",
-  ];
-
-  if (/(credit\s*cards?|loans?|overdraft|catalogue)/i.test(t)) return pick(cardsLoans, text);
-  if (/(interest|charges|fees)/i.test(t)) return pick(interest, text);
-  if (/(bailiff|enforcement)/i.test(t)) return pick(enforcement, text);
-  if (/(ccj|county court|default)/i.test(t)) return pick(court, text);
-  if (/(rent|council\s*tax|utilities|gas|electric|water)/i.test(t)) return pick(essentials, text);
-  if (/(struggl|worri|stress|anx)/i.test(t)) return pick(general, text);
-  return pick(general, text);
-}
-
-/** Add a richer acknowledgement when the user mentions priority/urgent items. */
-function confirmUrgent(text: string): string | null {
-  const t = text.toLowerCase();
-  if (/\bcouncil\s*tax\b/.test(t)) {
-    return [
-      "Thanks for flagging council tax — it’s a priority bill, so we’ll ring-fence it and look at breathing space on non-essentials.",
-      "Understood on council tax — we’ll protect essentials and explore options that reduce pressure on that front.",
-      "Noted on council tax — we’ll prioritise it alongside rent and utilities and keep creditors realistic elsewhere.",
-    ][t.length % 3];
-  }
-  if (/\brent\b/.test(t)) {
-    return "Got it on rent — we’ll protect your housing first and build the plan around that.";
-  }
-  if (/\b(bailiff|enforcement)\b/.test(t)) {
-    return "Understood — we’ll aim to stop enforcement pressure as soon as possible and stabilise things.";
-  }
-  if (/\b(ccj|county court|default)\b/.test(t)) {
-    return "Thanks — we’ll factor the court/default position into the plan and keep it structured.";
-  }
-  return null;
-}
-
-function currencyToNumber(s: string): number {
-  const cleaned = s.replace(/[^\d.]/g, "");
-  const n = parseFloat(cleaned);
-  return isFinite(n) ? n : 0;
-}
-function extractAmounts(text: string): { current?: number; affordable?: number } {
-  const parts = (text.match(/£?\s*(\d{1,3}(?:[,\s]\d{3})*|\d+)(?:\.\d{1,2})?/g) || [])
-    .map(m => currencyToNumber(m));
-  if (parts.length === 0) return {};
-  if (parts.length === 1) return { current: parts[0] };
-  return { current: parts[0], affordable: parts[1] };
-}
-
-/* -------------------- Name parsing (polite & safe) -------------------- */
-const BANNED_NAME_PATTERNS = [
-  /\b(fuck|f\W*ck|shit|crap|twat|dick|wank|cunt|bitch)\b/i,
+// --------- Small in-memory FAQ (also used to answer QNA) ----------
+const FAQS: { q: RegExp; a: string }[] = [
+  { q: /(credit (score|rating|file)|affect|impact)/i, a: "Changes to agreements (and some solutions) can affect your credit file for a while, but the goal is to stabilise things and move forward." },
+  { q: /\bloan(s)?\b/i, a: "We don’t provide loans — the focus is reducing and clearing existing debt rather than adding credit." },
+  { q: /\b(iva).*\b(dmp)|\bdmp.*\b(iva)/i, a: "An IVA can freeze interest/charges and may write off a portion; a DMP is flexible but usually repays the full balance over time." },
+  { q: /\bhouse|home|property\b/i, a: "You keep paying rent/mortgage as normal. Your home isn’t taken in a DMP/IVA if payments are maintained." },
+  { q: /\bcar|vehicle|car finance\b/i, a: "Most people keep their car. If repayments are very high, a more affordable vehicle might be discussed." },
+  { q: /\bwhat (next|happens)\b/i, a: "You can upload documents in the portal, we review your case, then come back with tailored next steps." },
+  { q: /\bmortgage\b/i, a: "You can apply anytime, but acceptance is generally more likely after a plan completes." },
+  { q: /\bbenefit(s)?|universal credit|uc\b/i, a: "Normal benefit payments aren’t reduced by starting a plan. We’ll also check deductions that can be included." },
+  { q: /\b(bailiff|enforcement)\b/i, a: "An IVA offers legal protection once approved. Before approval (or on a DMP), contact can continue — we’ll work on prevention and priorities." },
 ];
 
-function pickName(s: string): string | null {
-  const m =
-    s.match(/\b(?:i['\s]*m|i am|my name is|call me|it's|its)\s+([a-z][a-z'\- ]{1,30})\b/i) ||
-    s.match(/^\s*([A-Za-z][A-Za-z'\- ]{1,30})\s*$/);
+// --------- Script steps (short track; portal at step 5) ----------
+const STEPS = [
+  { id: 0, key: "ASK_NAME", prompt: "Can you let me know who I’m speaking with?" },
+  { id: 1, key: "ASK_CONCERN", prompt: "Just so I can point you in the right direction, what would you say your main concern is with the debts?" },
+  { id: 2, key: "ASK_AMOUNTS", prompt: "Roughly how much do you pay towards all debts each month, and what would feel affordable for you?" },
+  { id: 3, key: "ASK_URGENT", prompt: "Is anything urgent we should know about — for example bailiff/enforcement, court/default notices, or missed priority bills (rent, council tax, utilities)?" },
+  { id: 4, key: "ACK", prompt: "Before we proceed: there’s no obligation to act on advice today, and there are free sources of debt advice available at MoneyHelper. Shall we carry on?" },
+  { id: 5, key: "PORTAL", prompt: "I can open your secure Client Portal so you can add details, upload documents and check progress. Shall I open it now?" },
+  { id: 6, key: "DOCS", prompt: "To help us assess the best solution, please upload: proof of ID, last 3 months’ bank statements, payslips (3 months or 12 weeks if weekly) if employed, last year’s tax return if self-employed, Universal Credit statements (12 months + latest) if applicable, car finance docs if applicable, and any creditor letters or statements." },
+  { id: 7, key: "WRAP", prompt: "Our assessment team will review your case and come back with next steps. Is there anything else you’d like to ask before we wrap up?" },
+] as const;
 
-  const raw = m?.[1]?.trim();
-  if (!raw) return null;
-
-  const cleaned = raw.replace(/[^a-z'\- ]/gi, " ").replace(/\s+/g, " ").trim();
+// --------- Helpers ----------
+const BANNED = new Set(["fuck","shit","crap","twat","idiot"]);
+function sanitiseName(raw: string): string | null {
+  const first = (raw || "").trim().split(/\s+/)[0];
+  if (!first) return null;
+  const lo = first.toLowerCase();
+  if (BANNED.has(lo)) return null;
+  if (lo === "shit") return null; // allow names like "Harshit" (but not exactly "shit")
+  const cleaned = first.replace(/[^a-z\-']/gi, "");
   if (!cleaned) return null;
-  if (BANNED_NAME_PATTERNS.some(p => p.test(cleaned))) return null;
-
-  const lower = cleaned.toLowerCase();
-  const nonNames = new Set([
-    "credit","loan","loans","cards","card","debt","debts",
-    "hello","hi","hey","evening","morning","afternoon","good"
-  ]);
-  if (nonNames.has(lower)) return null;
-
-  return cleaned
-    .split(" ")
-    .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-    .join(" ");
+  // Title-case
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1).toLowerCase();
 }
 
-/* -------------------- Anchors to avoid re-asking -------------------- */
-const anyLine = (lines: string[], rx: RegExp) => lines.some(line => rx.test(line));
-
-const askedNameRX      = /(can you let me know who i’m speaking with\?|can you let me know who i'm speaking with\?)/i;
-const askedConcernRX   = /what would you say your main concern is with the debts\?/i;
-const askedAmountsRX   = /how much do you pay.*each month.*what would feel affordable/i;
-const askedUrgentRX    = /is there anything urgent.*(enforcement|bailiff|court|default|priority bills)/i;
-const askedAckRX       = /there’s no obligation.*moneyhelper.*shall we carry on\?/i;
-
-const askedPortalRX = new RegExp(
-  [
-    "shall I open.*client portal.*now\\?",
-    "would you like me to open.*client portal.*now\\?",
-    "would you like to open.*client portal.*now\\?",
-    "I can set up your secure Client Portal.*Shall I open it now\\?"
-  ].join("|"),
-  "i"
-);
-const portalGuideRX  = /while you’re in the portal, I’ll stay here to guide you/i;
-const askedDocsRX    = /please upload:?\s*•?\s*proof of id/i;
-const askedSummaryRX = /would you like a quick summary of options/i;
-
-function seenName(lines: string[]): string | null {
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const m = lines[i].match(/Nice to meet you,\s+([A-Z][a-z'\- ]{1,30})/i);
-    if (m) return m[1].trim();
-  }
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const n = pickName(lines[i]);
-    if (n) return n;
-  }
-  return null;
-}
-
-const MONEYHELPER_ACK =
-  "Before we proceed, there’s no obligation to act on any advice today, and there are free sources of debt advice available at MoneyHelper. Shall we carry on?";
-
-/* -------------------- Handler -------------------- */
-export default async function handler(req: NextApiRequest, res: NextApiResponse<Data>) {
-  if (req.method !== "POST") return res.status(405).json({ reply: "Method not allowed." });
-
-  const { userMessage = "", history = [] } = (req.body || {}) as {
-    userMessage?: string;
-    history?: string[];
-  };
-
-  const text = norm(String(userMessage || ""));
-  const lower = text.toLowerCase();
-  const historyPrior = history.slice(0, Math.max(0, history.length - 1));
-  const nameKnown = !!seenName(historyPrior);
-
-  /* -------- Greeting / small-talk -------- */
-  if (hasGreeting(text)) {
-    const greet = nowGreeting();
-    if (!nameKnown) {
-      return res.status(200).json({
-        reply: `${greet}! I’m here to help. Can you let me know who I’m speaking with?`,
-      });
-    } else {
-      return res.status(200).json({
-        reply: `${greet}! ${empathize(text)} What would you say your main concern is with the debts?`,
-      });
-    }
-  }
-
-  /* --------------------------------- Step 0: Name --------------------------------- */
-  const nameWasAsked = anyLine(historyPrior, askedNameRX);
-  if (!nameKnown && !nameWasAsked) {
-    return res.status(200).json({
-      reply: "Hi — I’m here to help. Can you let me know who I’m speaking with?",
-    });
-  }
-
-  if (!nameKnown && nameWasAsked) {
-    const nameNow = pickName(text);
-    if (nameNow) {
-      const salute = /mark\b/i.test(nameNow) ? " — nice to meet a fellow Mark!" : "";
-      return res.status(200).json({
-        reply:
-          `Nice to meet you, ${nameNow}${salute}. ${empathize(userMessage)} ` +
-          "Just so I can point you in the right direction, what would you say your main concern is with the debts?",
-        displayName: nameNow,
-      });
-    }
-    return res.status(200).json({
-      reply: "No worries — please share a first name you’re happy with and we’ll continue.",
-    });
-  }
-
-  /* ----------------------- Step 1: Concern ----------------------- */
-  if (!anyLine(historyPrior, askedConcernRX)) {
-    return res.status(200).json({
-      reply: "Just so I can point you in the right direction, what would you say your main concern is with the debts?",
-    });
-  }
-  if (anyLine(historyPrior, askedConcernRX) && !anyLine(historyPrior, askedAmountsRX)) {
-    return res.status(200).json({
-      reply:
-        `${empathize(userMessage)} ` +
-        "Thanks — roughly how much do you pay towards all debts each month, and what would feel affordable for you? " +
-        "For example, “I pay £600 and could afford £200.”",
-    });
-  }
-
-  /* ---------------- Step 2: Amounts (windowed + reflective) ---------------- */
-  if (anyLine(historyPrior, askedAmountsRX) && !anyLine(historyPrior, askedUrgentRX)) {
-    const { current, affordable } = extractAmounts(text);
-
-    if (current || affordable) {
-      const parts: string[] = [];
-      if (current) parts.push(`you’re paying about £${current.toFixed(0)} each month`);
-      if (affordable) parts.push(`£${affordable.toFixed(0)} would feel affordable`);
-      const reflect = parts.length ? `Got it — ${parts.join(" and ")}. ` : "";
-      return res.status(200).json({
-        reply:
-          `${reflect}Is there anything urgent like enforcement/bailiff action, court or default notices, or missed priority bills (rent, council tax, utilities)?`,
-      });
-    }
-
-    const numbersRecently = /\d/.test(historyPrior.slice(-4).join(" "));
-    if (numbersRecently) {
-      return res.status(200).json({
-        reply:
-          "Understood. Is there anything urgent like enforcement/bailiff action, court or default notices, or missed priority bills (rent, council tax, utilities)?",
-      });
-    }
-    const nudged = anyLine(historyPrior, /for example, “i pay £600 and could afford £200/i);
-    if (!nudged) {
-      return res.status(200).json({
-        reply:
-          "Could you share your monthly total towards debts and a figure that would feel affordable? e.g., “I pay £600, could afford £200.”",
-      });
-    }
-    return res.status(200).json({
-      reply:
-        "No problem — we can estimate as we go. Is there anything urgent like enforcement/bailiff action, court or default notices, or missed priority bills (rent, council tax, utilities)?",
-    });
-  }
-
-  /* -------------------------- Step 3: Urgent -------------------------- */
-  if (anyLine(historyPrior, askedUrgentRX) && !anyLine(historyPrior, askedAckRX)) {
-    const confirm = confirmUrgent(userMessage);
-    const lead = confirm ? `${confirm} ` : "";
-    return res.status(200).json({ reply: `${lead}${MONEYHELPER_ACK}` });
-  }
-
-  /* -------- Step 4: Acknowledgement → then offer portal (explicit YES) -------- */
-  if (anyLine(historyPrior, askedAckRX) && !anyLine(historyPrior, askedPortalRX)) {
-    if (YES.test(lower)) {
-      return res.status(200).json({
-        reply:
-          "Great — let’s keep going. I can set up your secure Client Portal so you can add details, upload documents, and check progress. Shall I open it now?",
-      });
-    }
-    if (NO.test(lower)) {
-      return res.status(200).json({
-        reply:
-          "No problem — we’ll proceed at your pace. When you’re ready, I can open the portal for you to add details securely. " +
-          "Would you like me to open it now?",
-      });
-    }
-    return res.status(200).json({ reply: "Quick check — would you like to carry on? (Yes/No)" });
-  }
-
-  /* ----- Step 5: Portal decision (recognise ALL offer phrasings) ----- */
-  if (anyLine(historyPrior, askedPortalRX) && !anyLine(historyPrior, portalGuideRX)) {
-    if (YES.test(lower)) {
-      return res.status(200).json({
-        reply:
-          "Opening your portal now. While you’re in the portal, I’ll stay here to guide you. " +
-          "You can come back to the chat anytime using the button in the top-right corner. " +
-          "Please follow the outstanding tasks so we can understand your situation. " +
-          "Once you’ve saved your details, say “done” and we’ll continue.",
-        openPortal: true,
-      });
-    }
-    if (NO.test(lower)) {
-      return res.status(200).json({
-        reply:
-          "No worries — we can keep chatting and I’ll guide you step by step. Would you like a quick summary of options based on what you’ve told me so far?",
-      });
-    }
-    return res.status(200).json({
-      reply: "Would you like me to open the secure Client Portal now? (Yes/No)",
-    });
-  }
-
-  /* ---- Step 6: Portal guide → wait for “done” → then docs request ---- */
-  if (anyLine(historyPrior, portalGuideRX) && !anyLine(historyPrior, askedDocsRX)) {
-    if (/\b(done|saved|submitted|uploaded|finished|complete)\b/i.test(lower)) {
-      return res.status(200).json({
-        reply:
-          "Great — to assess the best solution and potentially save you money each month, please upload: " +
-          "• Proof of ID • Last 3 months’ bank statements • Payslips (3 months or 12 weeks if weekly) if employed • " +
-          "Last year’s tax return if self-employed • Universal Credit statements (12 months + latest full statement) if applicable • " +
-          "Car finance docs if applicable • Any creditor letters or statements.",
-      });
-    }
-    return res.status(200).json({
-      reply: "Take your time in the portal. When you’ve saved your details, say “done” and we’ll continue.",
-    });
-  }
-
-  /* --------------- Step 7: Docs → Summary / finish --------------- */
-  if (anyLine(historyPrior, askedDocsRX) && !anyLine(historyPrior, askedSummaryRX)) {
-    if (/\b(done|uploaded|finished|complete)\b/i.test(lower)) {
-      return res.status(200).json({
-        reply:
-          "Brilliant — our assessment team will now review your case and come back with next steps. " +
-          "You can check progress in your portal anytime. Is there anything else you’d like to ask before we wrap up?",
-      });
-    }
-    return res.status(200).json({
-      reply:
-        "No problem — you can upload documents whenever you’re ready via the 📎 in chat or inside the portal. " +
-        "Would you like a quick summary of options so far?",
-    });
-  }
-
-  /* --------------- Step 8: Summary handling --------------- */
-  if (anyLine(historyPrior, askedSummaryRX)) {
-    if (YES.test(lower)) {
-      return res.status(200).json({
-        reply:
-          "Quick summary:\n" +
-          "• We’ll protect essentials (rent, council tax, utilities).\n" +
-          "• We’ll look at solutions that can freeze interest/charges and reduce monthly cost.\n" +
-          "• Your portal is the fastest way to complete details and upload proofs.\n" +
-          "Anything else on your mind before we close?",
-      });
-    }
-    if (NO.test(lower)) {
-      return res.status(200).json({
-        reply: "Okay — I’m here if anything else comes up. You can return anytime.",
-      });
-    }
-    return res.status(200).json({
-      reply: "I’ll stay available here. If you’d like that quick summary, just say “summary”, or type any question.",
-    });
-  }
-
-  /* -------------------- Lightweight FAQ nudges -------------------- */
-  if (/\bcar\b/i.test(lower) && /\blose|keep\b/i.test(lower)) {
-    return res.status(200).json({
-      reply:
-        "Most people keep their car. If repayments are very high, we’ll discuss affordable options — keeping essentials is the priority.",
-    });
-  }
-  if (/\bmortgage\b/i.test(lower)) {
-    return res.status(200).json({
-      reply:
-        "Mortgage applications are often easier after your plan completes, but you can explore options anytime with specialist advice.",
-    });
-  }
-  if (/\bcredit (score|rating|file)\b/i.test(lower)) {
-    return res.status(200).json({
-      reply:
-        "Your credit file can be affected for a while, but the aim is to stabilise things and move forward. We’ll talk through the trade-offs clearly.",
-    });
-  }
-
-  /* -------------------- Safe default -------------------- */
-  return res.status(200).json({
-    reply: "If you’re ready, I can open your secure portal now — or we can keep chatting and I’ll guide you.",
+function parseMoney(s: string): number[] {
+  const out: number[] = [];
+  (s.match(/£?\s*([0-9]{1,3}(?:,[0-9]{3})*|\d+)(?:\.\d{1,2})?/g) || []).forEach(m => {
+    const n = m.replace(/[^0-9.]/g, "");
+    const val = Number(n);
+    if (!Number.isNaN(val)) out.push(val);
   });
+  return out;
+}
+
+function canAsk(nowTurn: number, lastAskedAt?: number, windowTurns = 3) {
+  if (lastAskedAt == null) return true;
+  return nowTurn - lastAskedAt >= windowTurns;
+}
+
+function empathetic(core: string, opts?: { cue?: "general" | "arrears" | "bailiff" | "stress" | "name" }) {
+  const lead =
+    opts?.cue === "bailiff" ? "Bailiff worries can feel intense. " :
+    opts?.cue === "arrears" ? "Falling behind happens. " :
+    opts?.cue === "name" ? "" :
+    "I understand. ";
+  return (lead + core).replace(/\s+/g, " ").trim();
+}
+
+function classifyIntent(user: string): Intent {
+  const s = (user || "").trim().toLowerCase();
+
+  if (/^(reset|restart|open portal|close portal|portal|help|menu)\b/.test(s)) return "CONTROL";
+
+  if (/\b(hi|hello|hey|good (morning|afternoon|evening)|how are you)\b/.test(s)) {
+    if (!/\?$/.test(s) && s.split(/\s+/).length <= 10) return "SMALLTALK";
+  }
+
+  if (/\?$/.test(s) || /\b(how|what|when|why|can|do|does|should|am i|are i|will)\b/.test(s)) return "QNA";
+
+  if (/\b(football|movie|weather|joke)\b/.test(s)) return "OFFTOPIC";
+
+  return "SCRIPT";
+}
+
+function nextPromptFor(stepId: number) {
+  const step = STEPS.find(s => s.id === stepId);
+  return step ? step.prompt : "Shall we continue?";
+}
+
+// simple joke for “tell me a joke?”
+function quickJoke() {
+  return "Here’s a quick one: Why did the spreadsheet apply for a loan? It had too many outstanding cells.";
+}
+
+// --------- Telemetry (best-effort, non-blocking) ----------
+async function writeTelemetry(data: {
+  session_id: string;
+  turn: number;
+  intent: Intent;
+  model: string;
+  step_id: number;
+  variant?: string;
+}) {
+  try {
+    if (!supabase) return;
+    await supabase.from("chat_telemetry").insert(data);
+  } catch {
+    /* ignore */
+  }
+}
+
+// --------- State reducer from history ----------
+function reduceState(history: string[]): Omit<TurnContext, "turn"> {
+  let stepId = 0;
+  let haveName = false;
+  let name: string | null = null;
+  let mainConcern: string | null = null;
+  let haveAmounts = false;
+  let monthlyPay: number | null = null;
+  let affordablePay: number | null = null;
+  let urgentFlag: string | null = null;
+  let ackedMoneyHelper = false;
+  let portalOffered = false;
+  let portalOpened = false;
+  const flags: TurnContext["flags"] = {};
+
+  // Naive parse: walk through messages and infer captured fields
+  for (let i = 0; i < history.length; i++) {
+    const msg = history[i];
+    // capture name if bot asked name and then user replied
+    if (/who I’m speaking with\?|who I'm speaking with\?/i.test(msg)) {
+      flags.askedNameAt = i + 1;
+    }
+    if (!haveName) {
+      const maybeName = sanitiseName(msg);
+      if (maybeName) {
+        haveName = true;
+        name = maybeName;
+      }
+    }
+
+    // concern
+    if (/main concern/i.test(msg)) flags.askedConcernAt = i + 1;
+    if (!mainConcern && /(bailiff|default|ccj|missed|interest|charges|arrears|rent|council|gas|electric|water|card|loan|overdraft|catalogue|finance)/i.test(msg)) {
+      mainConcern = msg;
+    }
+
+    // amounts
+    if (/how much.*each month|affordable/i.test(msg)) flags.askedAmountsAt = i + 1;
+    const monies = parseMoney(msg);
+    if (monies.length >= 2 && !haveAmounts) {
+      // guess: first = paying, second = affordable (not perfect but good enough to move flow)
+      monthlyPay = monies[0];
+      affordablePay = monies[1];
+      haveAmounts = true;
+    }
+
+    // urgent flags
+    if (/urgent|bailiff|enforcement|court|default|priority|council tax|rent|utilities?/i.test(msg)) {
+      urgentFlag = msg;
+    }
+
+    // ACK
+    if (/moneyhelper/i.test(msg)) flags.askedAckAt = i + 1;
+    if (!ackedMoneyHelper && /\b(yes|yeah|yep|ok|okay|sure|carry on|continue|proceed)\b/i.test(msg)) {
+      // only mark acked if we previously asked ack
+      if (flags.askedAckAt) ackedMoneyHelper = true;
+    }
+
+    // portal offer / open
+    if (/secure client portal.*open it now\?/i.test(msg)) {
+      portalOffered = true;
+      flags.askedPortalAt = i + 1;
+    }
+    if (portalOffered && /\b(yes|yeah|yep|ok|okay|sure|open|start)\b/i.test(msg)) {
+      portalOpened = true;
+    }
+  }
+
+  // determine stepId loosely based on captured fields
+  if (!haveName) stepId = 0;
+  else if (!mainConcern) stepId = 1;
+  else if (!haveAmounts) stepId = 2;
+  else if (!urgentFlag) stepId = 3;
+  else if (!ackedMoneyHelper) stepId = 4;
+  else if (!portalOffered) stepId = 5;
+  else if (portalOffered && !portalOpened) stepId = 5;
+  else stepId = 6; // docs, then wrap
+
+  return {
+    stepId,
+    haveName,
+    name,
+    mainConcern,
+    haveAmounts,
+    monthlyPay,
+    affordablePay,
+    urgentFlag,
+    ackedMoneyHelper,
+    portalOffered,
+    portalOpened,
+    flags,
+  };
+}
+
+// --------- Drivers for each skill ----------
+async function handleSmalltalk(ctx: TurnContext): Promise<string> {
+  const greet = ctx.haveName ? `Nice to hear from you, ${ctx.name}.` : "Nice to hear from you.";
+  return `${greet} ${nextPromptFor(ctx.stepId)}`;
+}
+
+async function handleQna(user: string, ctx: TurnContext): Promise<string> {
+  // Special: jokes
+  if (/joke/i.test(user)) {
+    return `${quickJoke()} ${ctx.haveName ? `${ctx.name},` : ""} shall we carry on? ${nextPromptFor(ctx.stepId)}`;
+  }
+  const hit = FAQS.find(f => f.q.test(user));
+  const ans = hit ? hit.a : "Here’s a brief answer: I can explain options and how they might affect you, and we’ll tailor it as we go.";
+  const bridge = " Shall we continue?";
+  return empathetic(ans, { cue: "general" }) + " " + bridge + " " + nextPromptFor(ctx.stepId);
+}
+
+async function handleControl(user: string, ctx: TurnContext): Promise<{ reply: string; openPortal?: boolean }> {
+  const s = user.toLowerCase();
+  if (s.startsWith("reset") || s.startsWith("restart")) {
+    // soft reset: go back to step 0
+    return { reply: "No problem — let’s start again. Can you let me know who I’m speaking with?" };
+  }
+  if (/open portal|portal/.test(s)) {
+    return {
+      reply: "Opening your portal now. While you’re there, you can upload documents and save progress. When you’re done, say “done” here and we’ll continue.",
+      openPortal: true,
+    };
+  }
+  return { reply: nextPromptFor(ctx.stepId) };
+}
+
+async function handleOfftopic(ctx: TurnContext): Promise<string> {
+  return "We can chat, but let’s get your plan sorted first. " + nextPromptFor(ctx.stepId);
+}
+
+async function handleScript(user: string, ctx: TurnContext): Promise<{ reply: string; openPortal?: boolean; displayName?: string }> {
+  // drive by current step
+  switch (ctx.stepId) {
+    case 0: { // ask name
+      const n = sanitiseName(user);
+      if (n) {
+        return {
+          reply: `Nice to meet you, ${n}. ${nextPromptFor(1)}`,
+          displayName: n,
+        };
+      }
+      if (canAsk(ctx.turn, ctx.flags.askedNameAt, 3)) {
+        return { reply: "Can you let me know who I’m speaking with?" };
+      }
+      return { reply: "What name would you like me to use?" };
+    }
+
+    case 1: { // concern
+      if (canAsk(ctx.turn, ctx.flags.askedConcernAt, 2)) {
+        return { reply: empathetic(nextPromptFor(1)) };
+      }
+      // if user provides anything, accept and move on
+      return { reply: empathetic("Thanks — that helps. " + nextPromptFor(2)) };
+    }
+
+    case 2: { // amounts
+      const money = parseMoney(user);
+      if (ctx.haveAmounts || money.length >= 2) {
+        return { reply: empathetic("Thanks — that gives me a clearer picture. " + nextPromptFor(3), { cue: "general" }) };
+      }
+      if (money.length === 1) {
+        return { reply: "Got it. And what would feel affordable each month?" };
+      }
+      if (canAsk(ctx.turn, ctx.flags.askedAmountsAt, 2)) {
+        return { reply: nextPromptFor(2) };
+      }
+      return { reply: "Roughly what are you paying now, and what feels affordable?" };
+    }
+
+    case 3: { // urgent
+      if (/bailiff|enforcement/i.test(user)) {
+        return { reply: empathetic("We’ll prioritise protections and essentials. " + nextPromptFor(4), { cue: "bailiff" }) };
+      }
+      if (/court|default|ccj/i.test(user)) {
+        return { reply: empathetic("We’ll address court/default concerns in your plan. " + nextPromptFor(4)) };
+      }
+      if (/rent|council|utilities?|gas|electric|water/i.test(user)) {
+        return { reply: empathetic("We’ll make sure priority bills are protected. " + nextPromptFor(4), { cue: "arrears" }) };
+      }
+      // no urgent
+      return { reply: nextPromptFor(4) };
+    }
+
+    case 4: { // MoneyHelper ack
+      if (/\b(yes|yeah|yep|ok|okay|sure|carry on|continue|proceed)\b/i.test(user)) {
+        return { reply: "Great — let’s keep going. " + nextPromptFor(5) };
+      }
+      if (/\b(no|not now|later)\b/i.test(user)) {
+        return { reply: "No worries — we can pause here. If you want to continue, just say “carry on”." };
+      }
+      return { reply: nextPromptFor(4) };
+    }
+
+    case 5: { // Portal offer (open only on explicit yes)
+      if (/\b(yes|yeah|yep|ok|okay|sure|open|start)\b/i.test(user)) {
+        return {
+          reply: "Opening your portal now. You can come back to the chat anytime using the button in the top-right. Please follow the tasks so we can understand your situation. Once saved, say “done” here and we’ll continue.",
+          openPortal: true,
+        };
+      }
+      if (/\b(no|not now|later)\b/i.test(user)) {
+        return { reply: "No problem — we’ll proceed at your pace. When you’re ready, say “open portal” and I’ll open it." };
+      }
+      return { reply: nextPromptFor(5) };
+    }
+
+    case 6: { // docs
+      if (/\bdone|saved|uploaded|finished|complete(d)?\b/i.test(user)) {
+        return { reply: "Brilliant — I’ll review what you’ve added. " + nextPromptFor(7) };
+      }
+      return { reply: nextPromptFor(6) };
+    }
+
+    default: { // wrap
+      if (/\b(no|that’s all|thats all|finish|goodbye|thanks|thank you)\b/i.test(user)) {
+        return { reply: "You’re welcome. If anything changes, come back anytime — I’m here to help." };
+      }
+      return { reply: nextPromptFor(7) };
+    }
+  }
+}
+
+// --------- API Handler ----------
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  try {
+    if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+
+    const body = req.body as Body;
+    const sessionId = body.sessionId;
+    const userText = (body.userMessage || "").trim();
+    const history = Array.isArray(body.history) ? body.history : [];
+    const turn = history.length + 1;
+
+    // build state from history
+    const base = reduceState(history);
+    const ctx: TurnContext = { turn, ...base };
+
+    // intent + (stub) model routing
+    const intent = classifyIntent(userText);
+    let model = "gpt-4o-mini";
+    if (intent === "QNA" || userText.length > 220 || /bailiff|ccj|bankrupt|court|complain|vulnerab/i.test(userText)) {
+      model = "gpt-4o";
+    }
+
+    // route
+    let reply = "";
+    let openPortal = false;
+    let displayName: string | undefined;
+
+    if (intent === "SMALLTALK") {
+      reply = await handleSmalltalk(ctx);
+    } else if (intent === "QNA") {
+      reply = await handleQna(userText, ctx);
+    } else if (intent === "CONTROL") {
+      const r = await handleControl(userText, ctx);
+      reply = r.reply;
+      openPortal = !!r.openPortal;
+    } else if (intent === "OFFTOPIC") {
+      reply = await handleOfftopic(ctx);
+    } else {
+      const r = await handleScript(userText, ctx);
+      reply = r.reply;
+      openPortal = !!r.openPortal;
+      displayName = r.displayName;
+    }
+
+    // write telemetry (best-effort)
+    writeTelemetry({
+      session_id: sessionId,
+      turn,
+      intent,
+      model,
+      step_id: ctx.stepId,
+    });
+
+    return res.status(200).json({ reply, openPortal, displayName });
+  } catch (e: any) {
+    return res.status(200).json({ reply: "⚠️ I couldn’t reach the server just now." });
+  }
 }
