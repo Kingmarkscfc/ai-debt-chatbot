@@ -9,7 +9,7 @@
     "vercel-build": "npm ci --no-audit --progress=false && next build"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.91.0",
+    "@supabase/supabase-js": "^2.91.1",
     "busboy": "^1.6.0",
     "luxon": "^3.6.1",
     "next": "^14.1.0",
@@ -20,7 +20,7 @@
   },
   "devDependencies": {
     "@types/busboy": "^1.5.4",
-    "@types/node": "^22.17.2",
+    "@types/node": "^22.19.7",
     "@types/react": "^19.1.11",
     "@types/react-dom": "^19.1.7",
     "autoprefixer": "^10.4.21",
