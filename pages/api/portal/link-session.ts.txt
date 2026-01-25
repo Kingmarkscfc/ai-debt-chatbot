@@ -1,0 +1,59 @@
+import type { NextApiRequest, NextApiResponse } from "next";
+import { supabaseAdmin } from "../../../utils/supabaseAdmin";
+
+// Expected table: "portal_users"
+//   columns: id (pk), email (text, unique), display_name (text),
+//            client_ref (text, unique), created_at (timestamptz)
+// Also uses "portal_documents" as in upload.ts
+
+type Resp =
+  | { ok: true; clientRef: string }
+  | { ok: false; error: string };
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse<Resp>) {
+  if (req.method !== "POST") {
+    res.status(405).json({ ok: false, error: "Method not allowed" });
+    return;
+  }
+  const { sessionId, email, displayName } = req.body || {};
+  if (!sessionId || !email) {
+    res.status(400).json({ ok: false, error: "Missing sessionId or email" });
+    return;
+  }
+
+  try {
+    // Ensure user exists & has a client_ref
+    const { data: existing, error: selErr } = await supabaseAdmin
+      .from("portal_users")
+      .select("id, client_ref")
+      .eq("email", email)
+      .maybeSingle();
+    if (selErr) throw selErr;
+
+    let clientRef = existing?.client_ref;
+    if (!clientRef) {
+      clientRef = makeClientRef(email);
+      const { error: upErr } = await supabaseAdmin
+        .from("portal_users")
+        .upsert({ email, display_name: displayName || null, client_ref: clientRef }, { onConflict: "email" });
+      if (upErr) throw upErr;
+    }
+
+    // Link any session docs to this email/client_ref
+    const { error: updDocsErr } = await supabaseAdmin
+      .from("portal_documents")
+      .update({ email, client_ref: clientRef })
+      .eq("session_id", sessionId);
+    if (updDocsErr) throw updDocsErr;
+
+    res.status(200).json({ ok: true, clientRef });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e?.message || "Link error" });
+  }
+}
+
+function makeClientRef(email: string) {
+  // e.g., BZ-7H3K9M (stable-ish random)
+  const base = Math.random().toString(36).slice(2, 8).toUpperCase();
+  return `BZ-${base}`;
+}

@@ -5,17 +5,14 @@ import avatarPhoto from "../assets/advisor-avatar-human.png";
 /* =============== Types & helpers =============== */
 type Sender = "user" | "bot";
 type Attachment = { filename: string; url: string; mimeType?: string; size?: number };
-type Message = { sender: Sender; text: string; ts: number; attachment?: Attachment };
+type Message = { sender: Sender; text: string; at: string; attachment?: Attachment };
 
 type AddressEntry = { line1: string; line2: string; city: string; postcode: string; yearsAt: number };
 type Income = { label: string; amount: number };
 type Expense = { label: string; amount: number };
+type DocRow = { id: string; url: string; filename: string; mime_type?: string; size?: number; created_at?: string };
 
 const LANGUAGES = ["English","Spanish","Polish","French","German","Portuguese","Italian","Romanian"];
-const EMOJI_BANK = [
-  "🙂","😊","🙌","👍","❤️","💪","🤝","✨","🎯","📈","📝","💬","🤔","😌","😅","🙏",
-  "🏠","💡","💷","📎","📄","🖼️","🕒","⚖️","🔒","✅","❌","⏳","💭","🧾"
-];
 
 function ensureSessionId(): string {
   if (typeof window === "undefined") return Math.random().toString(36).slice(2);
@@ -23,6 +20,10 @@ function ensureSessionId(): string {
   let sid = localStorage.getItem(key);
   if (!sid) { sid = Math.random().toString(36).slice(2); localStorage.setItem(key, sid); }
   return sid;
+}
+function nowTime() {
+  const d = new Date();
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 function formatBytes(n?: number) {
   if (typeof n !== "number") return "";
@@ -40,41 +41,12 @@ function fileEmoji(filename?: string, mimeType?: string) {
   if (["zip","rar","7z","gz","tar"].includes(ext)) return "🗜️";
   return "📎";
 }
-function prettyFilename(name: string): string {
-  try {
-    if (!name) return "";
-    const dot = name.lastIndexOf("."); let base = dot>0 ? name.slice(0,dot) : name; const ext = dot>-1? name.slice(dot).toLowerCase() : "";
-    base = base.replace(/[_\-\.]+/g," ");
-    base = base.replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi," ");
-    const tokens = base.split(/\s+/).filter(Boolean); const cleaned: string[] = [];
-    for (const t of tokens) {
-      const l=t.toLowerCase(); const isDigits=/^\d+$/.test(l); const isHex=/^[0-9a-f]+$/i.test(l); const len=l.length;
-      if (isDigits && len<=3) { cleaned.push(t); continue; }
-      if (isDigits && len===4) { const num=+l; if (num>=1900 && num<=2099) { cleaned.push(t); continue; } }
-      if ((isHex||isDigits) && len>=4) continue;
-      cleaned.push(t);
-    }
-    let title=(cleaned.join(" ").replace(/\s{2,}/g," ").trim())||base.trim();
-    const small=new Set(["and","or","of","the","a","an","to","in","on","for","with","at","by","from"]);
-    title = title.split(" ").map((w,i)=>{ const lo=w.toLowerCase(); return (i!==0 && small.has(lo)) ? lo : (w.charAt(0).toUpperCase()+lo.slice(1));}).join(" ");
-    if (!title) title="Document";
-    return `${title}${ext}`;
-  } catch { return name; }
-}
 function pickUkMaleVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
   if (!voices?.length) return null;
   const preferred = ["Google UK English Male","Microsoft Ryan Online (Natural) - English (United Kingdom)","Daniel","UK English Male"];
   for (const name of preferred) { const v=voices.find(vv=>vv.name===name); if (v) return v; }
   const enGb=voices.find(v=>(v.lang||"").toLowerCase().startsWith("en-gb")); if (enGb) return enGb;
   const enAny=voices.find(v=>(v.lang||"").toLowerCase().startsWith("en-")); return enAny||null;
-}
-function formatTime(ts: number) {
-  try {
-    const d = new Date(ts);
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  } catch {
-    return "";
-  }
 }
 
 /* =============== Shared UI bits =============== */
@@ -204,7 +176,7 @@ function AddressCard({ idx, value, onChange, onRemove, removable }: AddressCardP
 /* =============== FULL-SCREEN AUTH =============== */
 function AuthFullScreen({
   visible, onClose, onAuthed
-}: { visible: boolean; onClose: () => void; onAuthed: (email: string, displayName?: string) => void }) {
+}: { visible: boolean; onClose: () => void; onAuthed: (email: string, displayName?: string, clientRef?: string) => void }) {
   const [mode, setMode] = useState<"register"|"login"|"forgot">("register");
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -265,7 +237,6 @@ function AuthFullScreen({
       background:"#ffffff",
       display:"grid", gridTemplateRows:"auto 1fr"
     }}>
-      {/* Top bar */}
       <div style={{
         display:"flex", alignItems:"center", justifyContent:"space-between",
         padding:"12px 16px", borderBottom:"1px solid #e5e7eb", background:"#fff"
@@ -279,7 +250,6 @@ function AuthFullScreen({
         </button>
       </div>
 
-      {/* Content */}
       <div style={{display:"grid", placeItems:"center", padding:16}}>
         <div style={{
           width:"100%", maxWidth:560, border:"1px solid #e5e7eb", borderRadius:16, background:"#fff",
@@ -370,8 +340,8 @@ function AuthFullScreen({
 
 /* =============== FULL-SCREEN PORTAL =============== */
 function PortalFullScreen({
-  visible, onClose, displayName, loggedEmail
-}: { visible: boolean; onClose: () => void; displayName?: string; loggedEmail?: string }) {
+  visible, onClose, displayName, loggedEmail, clientRef, sessionId
+}: { visible: boolean; onClose: () => void; displayName?: string; loggedEmail?: string; clientRef?: string; sessionId: string }) {
   const [tab, setTab] = useState<"details"|"budget"|"debts"|"docs">("details");
 
   // Details
@@ -396,7 +366,7 @@ function PortalFullScreen({
   const totalExpense = expenses.reduce((a,b)=>a+(+b.amount||0),0);
   const disposable = Math.max(0, totalIncome-totalExpense);
 
-  // Debts (5 rows)
+  // Debts
   type Debt = { creditor: string; amount: number; monthly: number; account: string };
   const [debts, setDebts] = useState<Debt[]>(
     Array.from({length:5}).map(()=>({ creditor:"", amount:0, monthly:0, account:"" }))
@@ -412,18 +382,20 @@ function PortalFullScreen({
   ]);
   const toggleTask = (id: string) => setTasks(prev => prev.map(t => t.id===id ? {...t, done:!t.done} : t));
 
-  const [docsCount] = useState(0);
+  // Docs pulled from API
+  const [docs, setDocs] = useState<DocRow[]>([]);
   const [notice, setNotice] = useState("");
 
-  // Load existing profile (best-effort)
+  // Load existing profile + docs
   useEffect(() => {
-    if (!visible || !loggedEmail) return;
+    if (!visible) return;
     (async ()=>{
       try {
-        const r = await fetch(`/api/portal/profile?email=${encodeURIComponent(loggedEmail)}`);
+        const qs = loggedEmail ? `email=${encodeURIComponent(loggedEmail)}` : `sessionId=${encodeURIComponent(sessionId)}`;
+        const r = await fetch(`/api/portal/profile?${qs}`);
         const j = await r.json();
-        if (j?.ok && j.profile) {
-          const p = j.profile;
+        if (j?.ok) {
+          const p = j.profile || {};
           setFullName(p.full_name || displayName || "");
           setPhone(p.phone || "");
           const hist: AddressEntry[] = Array.isArray(p.address_history) && p.address_history.length
@@ -433,12 +405,13 @@ function PortalFullScreen({
                 city: p.city || "", postcode: p.postcode || "", yearsAt: 0
               }];
           setAddresses(hist.slice(0,3));
-          setIncomes(Array.isArray(p.incomes) ? p.incomes : []);
-          setExpenses(Array.isArray(p.expenses) ? p.expenses : []);
+          setIncomes(Array.isArray(p.incomes) && p.incomes.length ? p.incomes : [{label:"Salary/Wages",amount:0},{label:"Benefits",amount:0}]);
+          setExpenses(Array.isArray(p.expenses) && p.expenses.length ? p.expenses : [{label:"Rent/Mortgage",amount:0},{label:"Utilities",amount:0},{label:"Food",amount:0},{label:"Transport",amount:0}]);
+          setDocs(Array.isArray(j.documents) ? j.documents : []);
         }
       } catch {}
     })();
-  }, [visible, loggedEmail, displayName]);
+  }, [visible, loggedEmail, displayName, sessionId]);
 
   const setAddr = (idx: number, patch: Partial<AddressEntry>) =>
     setAddresses(prev => prev.map((a,i)=> i===idx ? {...a, ...patch} : a));
@@ -487,7 +460,8 @@ function PortalFullScreen({
       }}>
         <div style={{display:"flex", alignItems:"center", gap:10, fontWeight:800}}>
           <span>Client Portal</span>
-          {loggedEmail ? <span style={{fontWeight:400, color:"#6b7280"}}>— {displayName || "Client"}</span> : null}
+          {clientRef ? <span style={{fontWeight:400, color:"#6b7280"}}>— Ref: {clientRef}</span> : null}
+          {loggedEmail ? <span style={{fontWeight:400, color:"#6b7280"}}> — {displayName || "Client"}</span> : null}
         </div>
         <div style={{display:"flex", gap:8}}>
           <button onClick={onClose}
@@ -520,7 +494,7 @@ function PortalFullScreen({
         ))}
       </div>
 
-      {/* Main content area */}
+      {/* Main */}
       <div style={{
         display:"grid",
         gridTemplateColumns:"minmax(260px, 320px) 1fr",
@@ -644,8 +618,30 @@ function PortalFullScreen({
             {tab==="docs" && (
               <div style={{display:"grid", gap:10}}>
                 <div><strong>Documents</strong></div>
-                <div style={{color:"#6b7280"}}>No documents uploaded.</div>
-                <div style={{fontSize:12, color:"#6b7280"}}>Use the 📎 Upload docs button in the chat to attach files.</div>
+                {docs.length === 0 ? (
+                  <>
+                    <div style={{color:"#6b7280"}}>No documents uploaded.</div>
+                    <div style={{fontSize:12, color:"#6b7280"}}>Use the 📎 Upload docs button in the chat to attach files.</div>
+                  </>
+                ) : (
+                  <div style={{display:"grid", gap:8}}>
+                    {docs.map((d)=>(
+                      <a key={d.id} href={d.url} target="_blank" rel="noreferrer"
+                         style={{display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 12px", border:"1px solid #e5e7eb", borderRadius:8}}>
+                        <div style={{display:"flex", alignItems:"center", gap:10}}>
+                          <span>{fileEmoji(d.filename, d.mime_type)}</span>
+                          <div>
+                            <div style={{fontWeight:600}}>{d.filename}</div>
+                            <div style={{fontSize:12, color:"#6b7280"}}>
+                              {d.mime_type || "file"} · {typeof d.size==="number" ? formatBytes(d.size) : ""} {d.created_at ? ` · ${new Date(d.created_at).toLocaleString()}` : ""}
+                            </div>
+                          </div>
+                        </div>
+                        <span style={{textDecoration:"underline"}}>Open</span>
+                      </a>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -686,25 +682,21 @@ export default function Home() {
   const [showPortal, setShowPortal] = useState(false);
   const [displayName, setDisplayName] = useState<string | undefined>(undefined);
   const [loggedEmail, setLoggedEmail] = useState<string | undefined>(undefined);
-
-  // Chat bar add-ons
-  const [showEmoji, setShowEmoji] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
-  const [uploading, setUploading] = useState(false);
-  const [botThinking, setBotThinking] = useState(false);
+  const [clientRef, setClientRef] = useState<string | undefined>(undefined);
 
   const sessionId = useMemo(() => ensureSessionId(), []);
   const bottomRef = useRef<HTMLDivElement>(null);
   const chosenVoice = useRef<SpeechSynthesisVoice | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const savedTheme = typeof window === "undefined" ? null : localStorage.getItem("da_theme");
     if (savedTheme === "dark" || savedTheme === "light") setTheme(savedTheme as any);
     setMessages([
-      { sender: "bot", text: "Hello! My name’s Mark. What prompted you to seek help with your debts today?", ts: Date.now() }
+      { sender: "bot", text: "Hello! My name’s Mark. What prompted you to seek help with your debts today?", at: nowTime() }
     ]);
   }, []);
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior:"smooth" }); }, [messages, botThinking]);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior:"smooth" }); }, [messages]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
@@ -724,31 +716,58 @@ export default function Home() {
     (window as any).speechSynthesis.speak(u);
   }, [messages, voiceOn]);
 
+  // --- FIX: resilient chat call (simple retry) ---
   const sendToApi = async (text: string, hist: Message[]) => {
-    const r = await fetch("/api/chat", {
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ sessionId, userMessage: text, history: hist.map(m=>m.text), language })
-    });
-    return r.json();
+    try {
+      const r1 = await fetch("/api/chat", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ sessionId, userMessage: text, history: hist.map(m=>m.text), language })
+      });
+      if (r1.ok) return r1.json();
+      // quick retry once
+      await new Promise(r => setTimeout(r, 700));
+      const r2 = await fetch("/api/chat", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ sessionId, userMessage: text, history: hist.map(m=>m.text), language })
+      });
+      return r2.json();
+    } catch {
+      throw new Error("network");
+    }
   };
 
   const handleSubmit = async () => {
     const text = input.trim(); if (!text) return;
     setInput("");
-    const userMsg: Message = { sender:"user", text, ts: Date.now() };
+    const userMsg: Message = { sender:"user", text, at: nowTime() };
     const nextHist = [...messages, userMsg];
     setMessages(nextHist);
     try {
-      setBotThinking(true);
       const data = await sendToApi(text, nextHist);
-      const reply = (data?.reply as string) || "Thanks, let’s continue.";
+      const reply = (data?.reply as string) || "Thanks — let’s continue.";
+      const botMsg: Message = { sender:"bot", text: reply, at: nowTime() };
       if (data?.displayName) setDisplayName(data.displayName);
-      setMessages(prev => [...prev, { sender:"bot", text: reply, ts: Date.now() }]);
+      setMessages(prev => [...prev, botMsg]);
       if (data?.openPortal) setShowAuth(true);
     } catch {
-      setMessages(prev => [...prev, { sender:"bot", text:"⚠️ I couldn’t reach the server just now.", ts: Date.now() }]);
-    } finally {
-      setBotThinking(false);
+      setMessages(prev => [...prev, { sender:"bot", text:"⚠️ I couldn’t reach the server just now.", at: nowTime() }]);
+    }
+  };
+
+  // Paperclip upload
+  const doUpload = async (file: File) => {
+    const fd = new FormData();
+    fd.append("sessionId", sessionId);
+    if (loggedEmail) fd.append("email", loggedEmail);
+    fd.append("file", file, file.name);
+
+    const r = await fetch("/api/upload", { method: "POST", body: fd });
+    const j = await r.json();
+    if (j?.ok) {
+      const att: Attachment = { filename: j.filename, url: j.url, mimeType: j.mimeType, size: j.size };
+      setMessages(prev => [...prev, { sender:"user", text:"", at: nowTime(), attachment: att }]);
+    } else {
+      setMessages(prev => [...prev, { sender:"bot", text:"Upload failed.", at: nowTime() }]);
     }
   };
 
@@ -756,210 +775,125 @@ export default function Home() {
     setTheme(t => { const next = t==="dark" ? "light":"dark"; if (typeof window!=="undefined") localStorage.setItem("da_theme", next); return next; });
   };
 
-  const onPickEmoji = (emoji: string) => {
-    setInput((v) => v + emoji);
-    setShowEmoji(false);
-  };
-
-  const onClickPaperclip = () => fileRef.current?.click();
-
-  const onChooseFile: React.ChangeEventHandler<HTMLInputElement> = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setUploading(true);
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      fd.append("sessionId", sessionId);
-      const r = await fetch("/api/upload", { method: "POST", body: fd });
-      const j = await r.json();
-      if (!j?.ok) {
-        setMessages(prev => [...prev, { sender:"bot", text:`Upload failed: ${j?.error || "try again later."}`, ts: Date.now() }]);
-      } else {
-        const att: Attachment = {
-          filename: j.filename || file.name,
-          url: j.url,
-          mimeType: j.mimeType || file.type,
-          size: j.size || file.size,
-        };
-        setMessages(prev => [
-          ...prev,
-          { sender:"user", text: "Uploaded a document", ts: Date.now(), attachment: att }
-        ]);
-      }
-    } catch {
-      setMessages(prev => [...prev, { sender:"bot", text:"Upload failed — please try again.", ts: Date.now() }]);
-    } finally {
-      setUploading(false);
-      if (fileRef.current) fileRef.current.value = "";
-    }
-  };
-
   const isDark = theme === "dark";
   const styles: { [k: string]: React.CSSProperties } = {
-    page: { minHeight:"100vh", background: isDark?"#0b1220":"#eef2f7" },
-    frameWrap: { display:"grid", placeItems:"center", minHeight:"100vh", padding:16 },
-    frame: { display:"grid", gridTemplateColumns:"1fr", gap:0, width:"100%", maxWidth:900, fontFamily:"'Segoe UI', Arial, sans-serif", color: isDark?"#e5e7eb":"#111827" },
-    card: { border: isDark?"1px solid #1f2937":"1px solid #e5e7eb", borderRadius:16, background: isDark?"#111827":"#ffffff", boxShadow: isDark?"0 8px 24px rgba(0,0,0,0.45)":"0 12px 30px rgba(0,0,0,0.06)", overflow:"hidden" },
-    header: { display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 16px", borderBottom: isDark?"1px solid #1f2937":"1px solid #e5e7eb", background: isDark?"#0f172a":"#fafafa", position:"sticky", top:0, zIndex:1 },
+    frame: { display:"grid", gridTemplateColumns:"1fr", maxWidth:1100, margin:"0 auto", padding:16, fontFamily:"'Segoe UI', Arial, sans-serif", background: isDark?"#0b1220":"#f3f4f6", minHeight:"100vh", color: isDark?"#e5e7eb":"#111827" },
+    card: { border: isDark?"1px solid #1f2937":"1px solid #e5e7eb", borderRadius:16, background: isDark?"#111827":"#ffffff", boxShadow: isDark?"0 8px 24px rgba(0,0,0,0.45)":"0 8px 24px rgba(0,0,0,0.06)", overflow:"hidden", width:720, margin:"0 auto", transition:"width .3s ease" },
+    header: { display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 16px", borderBottom: isDark?"1px solid #1f2937":"1px solid #e5e7eb", background: isDark?"#0f172a":"#fafafa" },
     brand: { display:"flex", alignItems:"center", gap:10, fontWeight:700 },
     onlineDot: { marginLeft:8, fontSize:12, color:"#10b981", fontWeight:600 },
-    tools: { display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" },
+    tools: { display:"flex", alignItems:"center", gap:8 },
     select: { padding:"6px 10px", borderRadius:8, border: isDark?"1px solid #374151":"1px solid #d1d5db", background: isDark?"#111827":"#fff", color: isDark?"#e5e7eb":"#111827" },
     btn: { padding:"6px 10px", borderRadius:8, border: isDark?"1px solid #374151":"1px solid #d1d5db", background: isDark?"#111827":"#fff", color: isDark?"#e5e7eb":"#111827", cursor:"pointer" },
-    chat: { height:560, overflowY:"auto", padding:16, background: isDark?"linear-gradient(#0b1220,#0f172a)":"linear-gradient(#ffffff,#fafafa)", display:"flex", flexDirection:"column", gap:12 },
+    chat: { height:520, overflowY:"auto", padding:16, background: isDark?"linear-gradient(#0b1220,#0f172a)":"linear-gradient(#ffffff,#fafafa)", display:"flex", flexDirection:"column", gap:12 },
     row: { display:"flex", alignItems:"flex-start", gap:10 },
     rowUser: { justifyContent:"flex-end" },
     avatarWrap: { width:40, height:40, borderRadius:"50%", overflow:"hidden", display:"flex", alignItems:"center", justifyContent:"center" },
-    bubble: { padding:"10px 14px", borderRadius:14, maxWidth:"74%", lineHeight:1.45, boxShadow: isDark?"0 2px 10px rgba(0,0,0,0.5)":"0 2px 10px rgba(0,0,0,0.06)" },
+    bubble: { padding:"10px 14px", borderRadius:14, maxWidth:"70%", lineHeight:1.45, boxShadow: isDark?"0 2px 10px rgba(0,0,0,0.5)":"0 2px 10px rgba(0,0,0,0.06)" },
     bubbleBot: { background: isDark?"#1f2937":"#f3f4f6", color: isDark?"#e5e7eb":"#111827", borderTopLeftRadius:6 },
     bubbleUser: { background: isDark?"#1d4ed8":"#dbeafe", color: isDark?"#e5e7eb":"#0f172a", borderTopRightRadius:6 },
-    meta: { marginTop:6, fontSize:11, opacity:.7 },
+    meta: { fontSize:12, opacity:.7, marginTop:4 },
     attach: { marginTop:8 },
     chip: { display:"inline-flex", alignItems:"center", gap:8, fontSize:12, padding:"6px 10px", background: isDark?"#0b1220":"#fff", border: isDark?"1px solid #374151":"1px solid #e5e7eb", borderRadius:999 },
-    footer: { display:"grid", gridTemplateColumns:"auto 1fr auto auto", alignItems:"center", gap:8, padding:12, borderTop: isDark?"1px solid #1f2937":"1px solid #e5e7eb", background: isDark?"#0f172a":"#fafafa" },
-    emojiPanel: { position:"absolute", bottom:56, left:12, right:"auto", background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"8px 10px", boxShadow:"0 12px 28px rgba(0,0,0,.12)", display:"grid", gridTemplateColumns:"repeat(10, 24px)", gap:8, zIndex:5 },
+    footer: { display:"flex", alignItems:"center", gap:8, padding:12, borderTop: isDark?"1px solid #1f2937":"1px solid #e5e7eb", background: isDark?"#0f172a":"#fafafa" }
   };
 
   return (
     <>
-      <div style={styles.page}>
-        <div style={styles.frameWrap}>
-          <div style={styles.frame}>
-            <div style={styles.card}>
-              <div style={styles.header}>
-                <div style={styles.brand}>
-                  <div style={styles.avatarWrap}><Avatar /></div>
-                  <span>Debt Advisor</span>
-                  <span style={styles.onlineDot}>● Online</span>
-                </div>
-                <div style={styles.tools}>
-                  <select style={styles.select} value={language} onChange={(e)=>setLanguage(e.target.value)} title="Change language">
-                    {LANGUAGES.map(l => <option key={l} value={l}>{l}</option>)}
-                  </select>
-                  <button type="button" style={styles.btn} onClick={()=>setVoiceOn(v=>!v)} title="Toggle voice">
-                    {voiceOn ? "🔈 Voice On" : "🔇 Voice Off"}
-                  </button>
-                  <button type="button" style={styles.btn} onClick={toggleTheme} title="Toggle theme">
-                    {theme === "dark" ? "☀️ Light" : "🌙 Dark"}
-                  </button>
-                  {loggedEmail ? (
-                    <button type="button" style={styles.btn} onClick={()=>{ setLoggedEmail(undefined); setDisplayName(undefined); setShowPortal(false); }} title="Log out">
-                      Logout
-                    </button>
-                  ) : (
-                    <button type="button" style={styles.btn} onClick={()=>setShowAuth(true)} title="Open client portal">
-                      Open Portal
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              <div style={styles.chat}>
-                {messages.map((m,i)=>{
-                  const isUser = m.sender==="user";
-                  const att = m.attachment;
-                  const pretty = att ? prettyFilename(att.filename) : "";
-                  const icon = att ? fileEmoji(att.filename, att.mimeType) : "";
-                  return (
-                    <div key={i} style={{...styles.row, ...(isUser?styles.rowUser:{})}}>
-                      {!isUser && <div style={styles.avatarWrap}><Avatar /></div>}
-                      <div style={{...styles.bubble, ...(isUser?styles.bubbleUser:styles.bubbleBot)}}>
-                        {m.text ? <div>{m.text}</div> : null}
-                        {att && (
-                          <div style={styles.attach}>
-                            <a href={att.url} target="_blank" rel="noreferrer" download={pretty||att.filename} style={styles.chip} title={pretty}>
-                              <span>{icon}</span>
-                              <span style={{fontWeight:600}}>{pretty}</span>
-                              {typeof att.size==="number" && <span style={{opacity:.7}}>({formatBytes(att.size)})</span>}
-                              <span style={{textDecoration:"underline"}}>Download ⬇️</span>
-                            </a>
-                          </div>
-                        )}
-                        <div style={styles.meta}>{formatTime(m.ts)}</div>
-                      </div>
-                    </div>
-                  );
-                })}
-                {botThinking && (
-                  <div style={{...styles.row}}>
-                    <div style={styles.avatarWrap}><Avatar /></div>
-                    <div style={{...styles.bubble, ...styles.bubbleBot}}>
-                      <span>Typing</span><span className="dots">…</span>
-                    </div>
-                  </div>
-                )}
-                <div ref={bottomRef} />
-              </div>
-
-              <div style={{ position:"relative" }}>
-                <div style={styles.footer}>
-                  {/* Emoji button */}
-                  <button
-                    type="button"
-                    onClick={()=>setShowEmoji(s=>!s)}
-                    style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db", background:"#fff", cursor:"pointer"}}
-                    title="Emoji"
-                  >
-                    😊
-                  </button>
-
-                  {/* Input */}
-                  <input
-                    style={{flex:1, padding:"10px 12px", borderRadius:8, border: "1px solid #d1d5db", fontSize:16, background:"#fff", color:"#111827"}}
-                    value={input}
-                    onChange={(e)=>setInput(e.target.value)}
-                    onKeyDown={(e)=>e.key==="Enter" && handleSubmit()}
-                    placeholder="Type a message…"
-                  />
-
-                  {/* Paperclip upload */}
-                  <input ref={fileRef} type="file" style={{display:"none"}}
-                         onChange={onChooseFile}
-                         accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.doc,.docx,.xls,.xlsx,.csv,.txt,.rtf,.zip"
-                  />
-                  <button
-                    type="button"
-                    onClick={onClickPaperclip}
-                    disabled={uploading}
-                    style={{padding:"10px 12px", borderRadius:8, border:"1px solid #d1d5db", background:"#fff", cursor:"pointer"}}
-                    title="Upload a document"
-                  >
-                    {uploading ? "⏳" : "📎"}
-                  </button>
-
-                  {/* Send */}
-                  <button type="button" onClick={handleSubmit}
-                    style={{padding:"10px 14px", borderRadius:8, border:"none", background:"#16a34a", color:"#fff", cursor:"pointer", fontWeight:600}}>
-                    Send
-                  </button>
-                </div>
-
-                {/* Emoji panel */}
-                {showEmoji && (
-                  <div style={styles.emojiPanel} onMouseLeave={()=>setShowEmoji(false)}>
-                    {EMOJI_BANK.map((e,idx)=>(
-                      <button key={idx} onClick={()=>onPickEmoji(e)}
-                        style={{ width:24, height:24, border:"none", background:"transparent", cursor:"pointer", fontSize:18, lineHeight:"24px" }}
-                        title={e}>
-                        {e}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+      <main style={styles.frame}>
+        <div style={styles.card}>
+          <div style={styles.header}>
+            <div style={styles.brand}>
+              <div style={styles.avatarWrap}><Avatar /></div>
+              <span>Debt Advisor</span>
+              <span style={styles.onlineDot}>● Online</span>
+            </div>
+            <div style={styles.tools}>
+              <select style={styles.select} value={language} onChange={(e)=>setLanguage(e.target.value)} title="Change language">
+                {LANGUAGES.map(l => <option key={l} value={l}>{l}</option>)}
+              </select>
+              <button type="button" style={styles.btn} onClick={()=>setVoiceOn(v=>!v)} title="Toggle voice">
+                {voiceOn ? "🔈 Voice On" : "🔇 Voice Off"}
+              </button>
+              <button type="button" style={styles.btn} onClick={toggleTheme} title="Toggle theme">
+                {theme === "dark" ? "☀️ Light" : "🌙 Dark"}
+              </button>
+              {loggedEmail ? (
+                <button type="button" style={styles.btn} onClick={()=>{ setLoggedEmail(undefined); setDisplayName(undefined); setClientRef(undefined); setShowPortal(false); }} title="Log out">
+                  Logout
+                </button>
+              ) : (
+                <button type="button" style={styles.btn} onClick={()=>setShowAuth(true)} title="Open client portal">
+                  Open Portal
+                </button>
+              )}
             </div>
           </div>
+
+          <div style={styles.chat}>
+            {messages.map((m,i)=>{
+              const isUser = m.sender==="user";
+              const att = m.attachment;
+              const icon = att ? fileEmoji(att.filename, att.mimeType) : "";
+              return (
+                <div key={i} style={{...styles.row, ...(isUser?styles.rowUser:{})}}>
+                  {!isUser && <div style={styles.avatarWrap}><Avatar /></div>}
+                  <div style={{...styles.bubble, ...(isUser?styles.bubbleUser:styles.bubbleBot)}}>
+                    {m.text ? <div>{m.text}</div> : null}
+                    {att && (
+                      <div style={styles.attach}>
+                        <a href={att.url} target="_blank" rel="noreferrer" download={att.filename} style={styles.chip} title={att.filename}>
+                          <span>{icon}</span>
+                          <span style={{fontWeight:600}}>{att.filename}</span>
+                          {typeof att.size==="number" && <span style={{opacity:.7}}>({formatBytes(att.size)})</span>}
+                          <span style={{textDecoration:"underline"}}>Download ⬇️</span>
+                        </a>
+                      </div>
+                    )}
+                    <div style={styles.meta}>{m.at}</div>
+                  </div>
+                </div>
+              );
+            })}
+            <div ref={bottomRef} />
+          </div>
+
+          <div style={styles.footer}>
+            <button type="button" onClick={()=>fileInputRef.current?.click()}
+              style={{padding:"10px", borderRadius:8, border:"1px solid #d1d5db", background:"#fff", cursor:"pointer"}} title="Upload document">
+              📎
+            </button>
+            <input ref={fileInputRef} type="file" hidden onChange={(e)=>{ const f=e.target.files?.[0]; if (f) doUpload(f); e.currentTarget.value=""; }} />
+            <input
+              style={{flex:1, padding:"10px 12px", borderRadius:8, border: isDark?"1px solid #374151":"1px solid #d1d5db", fontSize:16, background: isDark?"#111827":"#fff", color: isDark?"#e5e7eb":"#111827"}}
+              value={input} onChange={(e)=>setInput(e.target.value)} onKeyDown={(e)=>e.key==="Enter" && handleSubmit()}
+              placeholder="Type your message…"
+            />
+            <button type="button" onClick={handleSubmit}
+              style={{padding:"10px 14px", borderRadius:8, border:"none", background:"#16a34a", color:"#fff", cursor:"pointer", fontWeight:600}}>
+              Send
+            </button>
+          </div>
         </div>
-      </div>
+      </main>
 
       {/* FULL SCREEN AUTH (blocks chat) */}
       <AuthFullScreen
         visible={showAuth && !loggedEmail}
         onClose={()=>setShowAuth(false)}
-        onAuthed={(email, name) => {
+        onAuthed={async (email, name) => {
           setLoggedEmail(email);
           if (name) setDisplayName(name);
+          // Link the current chat session (and its uploaded docs) to this email
+          try {
+            const r = await fetch("/api/portal/link-session", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ sessionId, email, displayName: name })
+            });
+            const j = await r.json();
+            if (j?.ok && j.clientRef) setClientRef(j.clientRef);
+          } catch {}
           setShowAuth(false);
           setShowPortal(true);
         }}
@@ -971,6 +905,8 @@ export default function Home() {
         onClose={()=>setShowPortal(false)}
         displayName={displayName}
         loggedEmail={loggedEmail}
+        clientRef={clientRef}
+        sessionId={sessionId}
       />
     </>
   );

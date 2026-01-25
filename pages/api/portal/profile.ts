@@ -1,74 +1,94 @@
-// pages/api/portal/profile.ts
-import { createClient } from "@supabase/supabase-js";
+import type { NextApiRequest, NextApiResponse } from "next";
+import { supabaseAdmin } from "../../../utils/supabaseAdmin";
 
-const supabase = createClient(
-  process.env.SUPABASE_URL || "",
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || ""
-);
+// Expects "portal_profiles" table (or merge into portal_users if you prefer):
+//  email (text, pk), full_name (text), phone (text), address1 (text),
+//  address2 (text), city (text), postcode (text),
+//  address_history (jsonb), incomes (jsonb), expenses (jsonb)
+// Documents are read from "portal_documents" by email or session_id fallback.
 
-export default async function handler(req: any, res: any) {
+type Profile = {
+  full_name?: string;
+  phone?: string;
+  address1?: string;
+  address2?: string;
+  city?: string;
+  postcode?: string;
+  address_history?: any[];
+  incomes?: any[];
+  expenses?: any[];
+};
+
+type Resp =
+  | { ok: true; profile?: Profile; documents?: any[] }
+  | { ok: false; error: string };
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse<Resp>) {
   if (req.method === "GET") {
-    try {
-      const email = String(req.query.email || "").toLowerCase().trim();
-      if (!email) return res.status(400).json({ ok: false, error: "Missing email" });
-
-      const { data, error } = await supabase
-        .from("client_profiles")
-        .select("*")
-        .eq("email", email)
-        .maybeSingle();
-      if (error) throw error;
-
-      return res.status(200).json({ ok: true, profile: data || null });
-    } catch (e: any) {
-      console.error("profile GET error:", e?.message || e);
-      return res.status(500).json({ ok: false, error: "Server error while fetching profile" });
+    const email = (req.query.email || "").toString().trim();
+    const sessionId = (req.query.sessionId || "").toString().trim();
+    if (!email && !sessionId) {
+      res.status(400).json({ ok: false, error: "email or sessionId required" });
+      return;
     }
+
+    try {
+      let profile: Profile | undefined;
+      if (email) {
+        const { data, error } = await supabaseAdmin
+          .from("portal_profiles")
+          .select("*")
+          .eq("email", email)
+          .maybeSingle();
+        if (error) throw error;
+        profile = data || undefined;
+      }
+
+      // Docs: prefer email, otherwise by session
+      let docs: any[] = [];
+      if (email) {
+        const { data, error } = await supabaseAdmin
+          .from("portal_documents")
+          .select("id, url, filename, mime_type, size, created_at")
+          .eq("email", email)
+          .order("created_at", { ascending: false });
+        if (error) throw error;
+        docs = data || [];
+      } else if (sessionId) {
+        const { data, error } = await supabaseAdmin
+          .from("portal_documents")
+          .select("id, url, filename, mime_type, size, created_at")
+          .eq("session_id", sessionId)
+          .order("created_at", { ascending: false });
+        if (error) throw error;
+        docs = data || [];
+      }
+
+      res.status(200).json({ ok: true, profile, documents: docs });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e?.message || "Load error" });
+    }
+    return;
   }
 
   if (req.method === "POST") {
-    try {
-      const { email, sessionId, profile } = req.body || {};
-      const normEmail = (email || "").toLowerCase().trim();
-      if (!normEmail) return res.status(400).json({ ok: false, error: "Missing email" });
-
-      const toSave = {
-        email: normEmail,
-        session_id: sessionId || null,
-        full_name: profile?.full_name || null,
-        phone: profile?.phone || null,
-        address1: profile?.address1 || null, // kept for backwards compatibility
-        address2: profile?.address2 || null,
-        city: profile?.city || null,
-        postcode: profile?.postcode || null,
-        // new: address_history array with yearsAt
-        address_history: Array.isArray(profile?.address_history) ? profile.address_history : [],
-        incomes: Array.isArray(profile?.incomes) ? profile.incomes : [],
-        expenses: Array.isArray(profile?.expenses) ? profile.expenses : [],
-        updated_at: new Date().toISOString(),
-      };
-
-      const { error } = await supabase
-        .from("client_profiles")
-        .upsert(toSave, { onConflict: "email" });
-      if (error) throw error;
-
-      // Optional mirror to clients table (lightweight)
-      await supabase
-        .from("clients")
-        .upsert({
-          session_id: sessionId || null,
-          email: normEmail,
-          full_name: toSave.full_name,
-          postcode: toSave.postcode || null,
-        }, { onConflict: "session_id" });
-
-      return res.status(200).json({ ok: true });
-    } catch (e: any) {
-      console.error("profile POST error:", e?.message || e);
-      return res.status(500).json({ ok: false, error: "Server error while saving profile" });
+    const { email, profile } = req.body || {};
+    if (!email || typeof profile !== "object") {
+      res.status(400).json({ ok: false, error: "Invalid payload" });
+      return;
     }
+    try {
+      const up = { email, ...profile };
+      const { error } = await supabaseAdmin
+        .from("portal_profiles")
+        .upsert(up, { onConflict: "email" });
+      if (error) throw error;
+      res.status(200).json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e?.message || "Save error" });
+    }
+    return;
   }
 
-  return res.status(405).end();
+  res.status(405).json({ ok: false, error: "Method not allowed" });
 }

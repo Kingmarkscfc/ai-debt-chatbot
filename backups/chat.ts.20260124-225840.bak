@@ -1,0 +1,498 @@
+// pages/api/chat.ts
+import type { NextApiRequest, NextApiResponse } from "next";
+import fs from "fs";
+import path from "path";
+import crypto from "crypto";
+import { createClient } from "@supabase/supabase-js";
+
+/* =========================
+   Env / Supabase
+   ========================= */
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+/* =========================
+   Types
+   ========================= */
+type StepId =
+  | 0 // ask name
+  | 1 // main concern
+  | 2 // monthly amounts (pay & affordable)
+  | 3 // urgent issues
+  | 4 // regulatory ACK (MoneyHelper)
+  | 5 // offer portal
+  | 6 // docs explanation
+  | 7 // wrap-up
+;
+
+type BotState = {
+  step: StepId;
+  haveName?: boolean;
+  name?: string | null;
+  mainConcern?: string | null;
+  payNow?: number | null;
+  payCan?: number | null;
+  urgent?: string | null;
+  acked?: boolean;
+  portalOffered?: boolean;
+  portalOpened?: boolean;
+  lastPrompt?: string;
+  lastPromptTurn?: number;
+  turns?: number;
+};
+
+type ChatPayload = {
+  sessionId: string;
+  userMessage: string;
+  history?: string[];
+  language?: string;
+};
+
+/* =========================
+   Load FAQs (keyword search)
+   ========================= */
+type FAQItem = { q: string; a: string; keywords?: string[] };
+
+function loadFaqs(): FAQItem[] {
+  try {
+    const p = path.join(process.cwd(), "utils", "faqs.json");
+    const raw = fs.readFileSync(p, "utf8");
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+}
+const FAQS = loadFaqs();
+
+/* =========================
+   Utility helpers
+   ========================= */
+const nowIso = () => new Date().toISOString();
+
+const BANNED_NAME_RE = /\b(fuck|shit|crap|twat|wank|dick|cunt)\b/i;
+
+function isGreeting(text: string) {
+  return /\b(hi|hello|hey|good (morning|afternoon|evening)|evening|morning|afternoon)\b/i.test(
+    text
+  );
+}
+function askedHowAreYou(text: string) {
+  return /\b(how (are|r) (you|u)|you ok|you doing)\b/i.test(text);
+}
+function askedTime(text: string) {
+  return /\b(what('s| is) the time|time is it|current time)\b/i.test(text);
+}
+function askedJoke(text: string) {
+  return /\b(tell me a joke|joke|make me laugh)\b/i.test(text);
+}
+function yesLike(text: string) {
+  return /\b(yes|yeah|yep|ok|okay|sure|please|go ahead|open|let's do it)\b/i.test(text);
+}
+function noLike(text: string) {
+  return /\b(no|not now|later|maybe later|don'?t|stop)\b/i.test(text);
+}
+function extractPossibleName(text: string): string | null {
+  // Try common patterns
+  const m =
+    text.match(/\b(my name is|i am|i'm|im|call me|it's|its)\s+([a-z][a-z'\- ]{1,30})/i) ||
+    text.match(/^\s*([A-Z][a-z]{1,30})\s*$/);
+  const name = m?.[2] || m?.[1];
+  if (!name) return null;
+  const clean = name.trim().replace(/[^a-z'\- ]/gi, "");
+  if (!clean) return null;
+  if (BANNED_NAME_RE.test(clean)) return null;
+  // A few obvious non-names to avoid
+  if (/\b(credit|card|loan|debts?|help)\b/i.test(clean)) return null;
+  return clean.replace(/\s+/g, " ").split(" ").slice(0, 2).join(" ");
+}
+function extractAmounts(text: string): { payNow?: number; payCan?: number } {
+  // Try patterns like "I pay £1000 and could afford £200"
+  const nums = Array.from(text.matchAll(/£?\s*([0-9][0-9,\.]{0,9})/g)).map((m) =>
+    Number(String(m[1]).replace(/,/g, ""))
+  );
+  if (!nums.length) return {};
+  if (nums.length >= 2) return { payNow: nums[0], payCan: nums[1] };
+  // only one number => we’ll ask the second explicitly later
+  return { payNow: nums[0] };
+}
+
+/* =========================
+   Tiny FAQ scorer (keyword overmatch)
+   ========================= */
+function bestFaq(text: string): { item: FAQItem; score: number } | null {
+  let best: { item: FAQItem; score: number } | null = null;
+  const lower = text.toLowerCase();
+  for (const f of FAQS) {
+    const kws = (f.keywords || [])
+      .map((k) => k.toLowerCase())
+      .filter(Boolean);
+    if (!kws.length) continue;
+    let score = 0;
+    for (const k of kws) if (lower.includes(k)) score += 1;
+    if (score > 0 && (!best || score > best.score)) best = { item: f, score };
+  }
+  return best;
+}
+
+/* =========================
+   Telemetry & simple state
+   ========================= */
+async function logEvent(sessionId: string, event_type: string, payload: any) {
+  try {
+    await supabase.from("chat_telemetry").insert({
+      session_id: sessionId,
+      event_type,
+      payload,
+      created_at: nowIso(),
+    });
+  } catch {
+    /* ignore */
+  }
+}
+
+async function getState(sessionId: string): Promise<BotState> {
+  // last state snapshot if any
+  const { data, error } = await supabase
+    .from("chat_telemetry")
+    .select("payload")
+    .eq("session_id", sessionId)
+    .eq("event_type", "state")
+    .order("created_at", { ascending: false })
+    .limit(1);
+
+  if (error || !data || !data.length) {
+    return { step: 0, turns: 0 };
+  }
+  const raw = data[0]?.payload as BotState | undefined;
+  if (!raw || typeof raw !== "object") return { step: 0, turns: 0 };
+  return {
+    step: 0,
+    ...raw,
+    turns: (raw.turns ?? 0),
+  };
+}
+
+async function setState(sessionId: string, state: BotState) {
+  await logEvent(sessionId, "state", state);
+}
+
+/* =========================
+   Step prompts (refactored)
+   ========================= */
+function pAskName() {
+  return "Can you let me know who I’m speaking with?";
+}
+function pAskConcern(name?: string | null) {
+  return `${name ? `Thanks, ${name}. ` : ""}Just so I can point you in the right direction, what would you say your main concern is with the debts? (e.g., high interest, missed payments, bailiff letters)`;
+}
+function pAskAmounts(name?: string | null) {
+  return `${name ? `${name}, ` : ""}roughly how much do you pay towards all debts each month, and what would feel affordable for you? For example, “I pay £600 and could afford £200.”`;
+}
+function pAskUrgent() {
+  return "Is there anything urgent like enforcement/bailiff action, court or default notices, or missed priority bills (rent, council tax, utilities)?";
+}
+function pRegulatory() {
+  return "Before we proceed, there’s no obligation to act on any advice today, and there are free sources of debt advice available at MoneyHelper. Shall we carry on?";
+}
+function pOfferPortal() {
+  return "I can set up your secure Client Portal so you can add details, upload documents, and check progress. Shall I open it now?";
+}
+function pDocs() {
+  return "To assess the best solution and save you money each month, please upload: proof of ID; last 3 months’ bank statements; payslips (3 months or 12 weeks if weekly) if employed; last year’s tax return if self-employed; Universal Credit statements (12 months + latest full statement) if applicable; car finance docs if applicable; and any creditor letters or statements.";
+}
+function pWrap() {
+  return "Brilliant — our assessment team will review your case and come back with next steps. You can check progress in your portal anytime. Is there anything else you’d like to ask before we wrap up?";
+}
+
+/* =========================
+   Acknowledge → Reflect → Bridge
+   ========================= */
+function humanAckReflectBridge(opts: {
+  ack?: string;
+  reflect?: string;
+  bridge?: string;
+}) {
+  const parts = [];
+  if (opts.ack) parts.push(opts.ack);
+  if (opts.reflect) parts.push(opts.reflect);
+  if (opts.bridge) parts.push(opts.bridge);
+  return parts.join(" ");
+}
+
+/* Tiny empathy cues (one-liners) */
+const EMPATHY: Array<[RegExp, string]> = [
+  [/bailiff|enforcement/i, "Bailiff contact is stressful — we’ll get protections in place where possible."],
+  [/ccj|county court|default/i, "Court or default letters can be worrying — we’ll address that in your plan."],
+  [/miss(ed)?\s+payments?|arrears|late fees?/i, "Missed payments happen; we’ll focus on stabilising things now."],
+  [/rent|council\s*tax|water|gas|electric/i, "We’ll make sure essentials like housing and utilities are prioritised."],
+  [/credit\s*card|loan|overdraft|catalogue|car\s*finance/i, "We’ll take this step by step and reduce the pressure."],
+];
+
+/* Choose one empathy line if applicable */
+function empathyLine(text: string): string | null {
+  for (const [re, line] of EMPATHY) if (re.test(text)) return line;
+  return null;
+}
+
+/* =========================
+   Script driver
+   ========================= */
+function nextPromptFor(state: BotState): string {
+  switch (state.step) {
+    case 0: return pAskName();
+    case 1: return pAskConcern(state.name);
+    case 2: return pAskAmounts(state.name);
+    case 3: return pAskUrgent();
+    case 4: return pRegulatory();
+    case 5: return pOfferPortal();
+    case 6: return pDocs();
+    case 7: return pWrap();
+    default: return pAskName();
+  }
+}
+
+/* =========================
+   Router: decide what to do this turn
+   ========================= */
+function detectQuestion(text: string): boolean {
+  if (/\?$/.test(text)) return true;
+  if (/\b(what|why|how|when|where|who|can|should|do i|am i|could)\b/i.test(text)) return true;
+  return false;
+}
+
+function friendlyGreeting(text: string) {
+  const t = text.toLowerCase();
+  if (/\bgood morning\b/.test(t)) return "Good morning!";
+  if (/\bgood afternoon\b/.test(t)) return "Good afternoon!";
+  if (/\bgood evening\b/.test(t)) return "Good evening!";
+  if (/\b(hi|hello|hey)\b/.test(t)) return "Hi!";
+  return null;
+}
+
+/* =========================
+   Main handler
+   ========================= */
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  if (req.method !== "POST") {
+    res.status(405).json({ ok: false, error: "Method not allowed" });
+    return;
+  }
+  const { sessionId, userMessage, history = [], language }: ChatPayload = req.body || {};
+  if (!sessionId || typeof userMessage !== "string") {
+    res.status(400).json({ ok: false, error: "Bad request" });
+    return;
+  }
+
+  // Load state (persisted in telemetry)
+  let state = await getState(sessionId);
+  state.turns = (state.turns ?? 0) + 1;
+
+  const text = userMessage.trim();
+  const lower = text.toLowerCase();
+  await logEvent(sessionId, "user_turn", { text, step: state.step, turn: state.turns });
+
+  /* 0) Global small-talk & utilities (do NOT advance step) */
+  const parts: string[] = [];
+  // greet back (once)
+  if (isGreeting(text)) {
+    const g = friendlyGreeting(text);
+    if (g) parts.push(`${g} I’m here to help.`);
+  }
+  if (askedHowAreYou(text)) {
+    parts.push("I’m good, thanks — more importantly, I’m here to help you today.");
+    state.lastPrompt = "ASKED_HOW_ARE_YOU";
+    state.lastPromptTurn = state.turns;
+  }
+  if (askedTime(text)) {
+    const now = new Date();
+    const hh = now.getHours() % 12 || 12;
+    const mm = String(now.getMinutes()).padStart(2, "0");
+    const ampm = now.getHours() >= 12 ? "PM" : "AM";
+    parts.push(`It’s ${hh}:${mm} ${ampm}.`);
+  }
+  if (askedJoke(text)) {
+    parts.push("Here’s a quick one: Why did the budget cross the road? To get to the other side of the ledger. 😅");
+  }
+
+  /* 1) If they asked a question → answer from FAQ, then bridge (don’t advance unless step satisfied). */
+  if (detectQuestion(text)) {
+    const hit = bestFaq(text);
+    if (hit && hit.score >= 1) {
+      parts.push(hit.item.a);
+      await logEvent(sessionId, "faq_hit", { q: hit.item.q });
+    } else {
+      parts.push("Good question — here’s the short version: we’ll tailor the plan to reduce pressure and protect essentials while we handle creditors properly.");
+      await logEvent(sessionId, "faq_miss", { text });
+    }
+    // bridge back to current step question (windowed so we don’t repeat spam)
+    const next = nextPromptFor(state);
+    if (state.lastPrompt !== next || (state.turns! - (state.lastPromptTurn || 0)) > 2) {
+      parts.push(next);
+      state.lastPrompt = next;
+      state.lastPromptTurn = state.turns!;
+    }
+    await setState(sessionId, state);
+    res.status(200).json({ ok: true, reply: parts.join(" ") });
+    return;
+  }
+
+  /* 2) Step satisfaction + transitions */
+  // Step 0: name
+  if (state.step === 0) {
+    const maybe = extractPossibleName(text);
+    if (maybe) {
+      state.haveName = true;
+      state.name = maybe;
+      const em = empathyLine(text);
+      parts.push(humanAckReflectBridge({
+        ack: `Nice to meet you, ${maybe}.`,
+        reflect: em || undefined,
+        bridge: pAskConcern(state.name),
+      }));
+      state.step = 1;
+    } else {
+      // if they didn’t give a name but small-talked, re-ask politely (windowed)
+      if (!state.lastPrompt || (state.turns! - (state.lastPromptTurn || 0)) > 1) {
+        const g = friendlyGreeting(text);
+        parts.push(`${g ? `${g} ` : ""}${pAskName()}`);
+        state.lastPrompt = pAskName();
+        state.lastPromptTurn = state.turns!;
+      } else {
+        parts.push("A first name is perfect — how should I address you?");
+      }
+    }
+  }
+  // Step 1: main concern
+  else if (state.step === 1) {
+    if (/\b(credit|card|loan|overdraft|catalogue|bailiff|enforcement|ccj|default|interest|charges|arrears|rent|council|gas|electric|water)\b/i.test(text)) {
+      state.mainConcern = text;
+      const em = empathyLine(text);
+      parts.push(humanAckReflectBridge({
+        ack: em || "Thanks for sharing that — we’ll take it step by step.",
+        reflect: state.name ? `Got it, ${state.name}.` : "Got it.",
+        bridge: pAskAmounts(state.name),
+      }));
+      state.step = 2;
+    } else {
+      // Nudge: ask concern again but don’t loop aggressively
+      const nudge = pAskConcern(state.name);
+      if (state.lastPrompt !== nudge || (state.turns! - (state.lastPromptTurn || 0)) > 1) {
+        parts.push(nudge);
+        state.lastPrompt = nudge;
+        state.lastPromptTurn = state.turns!;
+      } else {
+        parts.push("Think of the one thing you’d most like to fix first — what is it?");
+      }
+    }
+  }
+  // Step 2: monthly amounts (windowed ask)
+  else if (state.step === 2) {
+    const amounts = extractAmounts(text);
+    if (typeof amounts.payNow === "number") state.payNow = amounts.payNow;
+    if (typeof amounts.payCan === "number") state.payCan = amounts.payCan;
+
+    if (state.payNow != null && state.payCan != null) {
+      parts.push(
+        humanAckReflectBridge({
+          ack: "Understood.",
+          reflect: `You’re paying about £${state.payNow} and aiming for around £${state.payCan}.`,
+          bridge: pAskUrgent(),
+        })
+      );
+      state.step = 3;
+    } else if (state.payNow != null && state.payCan == null) {
+      parts.push("Thanks — and what would feel affordable each month?");
+      // do not change step, still 2
+    } else {
+      // ask the full pair again (windowed)
+      const ask = pAskAmounts(state.name);
+      if (state.lastPrompt !== ask || (state.turns! - (state.lastPromptTurn || 0)) > 1) {
+        parts.push(ask);
+        state.lastPrompt = ask;
+        state.lastPromptTurn = state.turns!;
+      } else {
+        parts.push("Even a rough guess is fine — it just helps me tailor things.");
+      }
+    }
+  }
+  // Step 3: urgent
+  else if (state.step === 3) {
+    state.urgent = text;
+    const em = empathyLine(text) || "We’ll prioritise essentials and reduce pressure where possible.";
+    parts.push(
+      humanAckReflectBridge({
+        ack: em,
+        reflect: undefined,
+        bridge: pRegulatory(),
+      })
+    );
+    state.step = 4;
+  }
+  // Step 4: regulatory ACK
+  else if (state.step === 4) {
+    if (yesLike(text)) {
+      state.acked = true;
+      parts.push("Great — let’s keep going.");
+      parts.push(pOfferPortal());
+      state.step = 5;
+    } else if (noLike(text)) {
+      parts.push("No problem — we can pause here. If you change your mind, just say “carry on”.");
+      // stay on step 4 until they confirm
+    } else {
+      parts.push("Just to confirm — shall we carry on?");
+    }
+  }
+  // Step 5: offer portal
+  else if (state.step === 5) {
+    if (yesLike(text)) {
+      state.portalOpened = true;
+      state.portalOffered = true;
+      parts.push(
+        "Opening your portal now. While you’re in the portal, I’ll stay here to guide you. You can come back to the chat anytime using the button in the top-right corner. Please follow the outstanding tasks so we can understand your situation. Once you’ve saved your details, say “done” and we’ll continue."
+      );
+      // Do not jump to docs until they say “done”
+    } else if (noLike(text)) {
+      parts.push("No problem — we’ll proceed at your pace. Would you like a quick summary of options so far?");
+      // remain on step 5 until they either open portal or choose to continue
+    } else if (/\b(done|saved|submitted|uploaded|finished|complete)\b/i.test(text)) {
+      parts.push("Thanks — now a quick note on documents:");
+      parts.push(pDocs());
+      state.step = 6;
+    } else {
+      parts.push("When you’re ready, I can open the secure portal so you can add details and upload documents. Shall I open it now?");
+    }
+  }
+  // Step 6: docs
+  else if (state.step === 6) {
+    parts.push("Brilliant — once documents start coming in, we can finalise your options.");
+    parts.push(pWrap());
+    state.step = 7;
+  }
+  // Step 7: wrap-up
+  else {
+    if (/\b(no|that'?s all|thanks|thank you|goodbye)\b/i.test(text)) {
+      parts.push("Thanks for your time today. If you need me again, just say hello and we’ll pick up from where you left off.");
+    } else {
+      parts.push("Happy to help — what else would you like to know?");
+    }
+  }
+
+  // Loop-guards: don’t repeat the identical prompt too often
+  const final = parts.filter(Boolean).join(" ").replace(/\s{2,}/g, " ").trim();
+
+  // Record state & reply
+  await setState(sessionId, state);
+
+  // Open portal flag: only when explicitly yes at Step 5
+  const openPortal = state.step === 5 && state.portalOpened === true;
+
+  await logEvent(sessionId, "bot_turn", { reply: final, step: state.step, openPortal });
+
+  res.status(200).json({
+    ok: true,
+    reply: final,
+    openPortal,
+    displayName: state.haveName ? state.name || undefined : undefined,
+  });
+}
