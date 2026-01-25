@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import Busboy from "busboy";
-import { supabaseAdmin } from "../../../utils/supabaseAdmin";
+import { supabaseAdmin } from "../../utils/supabaseAdmin";
 
 type UploadResp =
   | { ok: true; url: string; filename: string; mimeType?: string; size?: number }
@@ -41,10 +41,6 @@ function readMultipart(req: NextApiRequest): Promise<{
         fileBufs.push(chunk);
         fileInfo!.size += chunk.length;
       });
-      stream.on("limit", () => {
-        // optional: enforce a limit in Busboy options if you want
-      });
-      stream.on("end", () => {});
     });
 
     bb.on("error", (err) => reject(err));
@@ -106,24 +102,20 @@ export default async function handler(
       return;
     }
 
-    // 2) Get a public URL (no error prop in v2 types)
+    // 2) Get a public URL (v2 has no `error` on getPublicUrl)
     const { data: pub } = supabaseAdmin.storage.from(bucket).getPublicUrl(objectPath);
     const publicUrl = pub?.publicUrl || "";
 
-    // 3) Record in DB (optional but recommended)
-    // Table: portal_documents(email text, session_id text, client_ref text, filename text, url text, mime_type text, size int, created_at timestamptz default now())
-    // If you don’t have client_ref yet, you can look it up later from link-session.
-    await supabaseAdmin
-      .from("portal_documents")
-      .insert({
-        email: email || null,
-        session_id: sessionId,
-        client_ref: null,
-        filename: safeName,
-        url: publicUrl,
-        mime_type: file.mimeType || null,
-        size: file.size || null,
-      });
+    // 3) Record in DB for the portal
+    await supabaseAdmin.from("portal_documents").insert({
+      email: email || null,
+      session_id: sessionId,
+      client_ref: null,
+      filename: safeName,
+      url: publicUrl,
+      mime_type: file.mimeType || null,
+      size: file.size || null,
+    });
 
     res.status(200).json({
       ok: true,
