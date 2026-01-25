@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import Busboy from "busboy";
+import Busboy, { FileInfo } from "busboy";
 import { supabaseAdmin } from "../../utils/supabaseAdmin";
 
 type UploadResp =
@@ -25,32 +25,27 @@ function readMultipart(req: NextApiRequest): Promise<{
   return new Promise((resolve, reject) => {
     const bb = Busboy({ headers: req.headers });
     const fields: Record<string, string> = {};
-    let fileBufs: Buffer[] = [];
-    let fileInfo:
-      | { filename: string; mimeType?: string; size: number }
-      | undefined;
+    const fileBufs: Buffer[] = [];
+    let fileInfo: { filename: string; mimeType?: string; size: number } | undefined;
 
-    bb.on("field", (name, val) => {
+    bb.on("field", (name: string, val: string) => {
       fields[name] = val;
     });
 
-    bb.on("file", (_name, stream, info) => {
+    bb.on("file", (_name: string, stream: NodeJS.ReadableStream, info: FileInfo) => {
       const { filename, mimeType } = info;
       fileInfo = { filename: filename || "upload", mimeType, size: 0 };
+
       stream.on("data", (chunk: Buffer) => {
         fileBufs.push(chunk);
         fileInfo!.size += chunk.length;
       });
     });
 
-    bb.on("error", (err) => reject(err));
+    bb.on("error", (err: Error) => reject(err));
     bb.on("close", () => {
-      const buffer = fileBufs.length ? Buffer.concat(fileBufs) : undefined;
-      if (buffer && fileInfo) {
-        resolve({
-          fields,
-          file: { buffer, ...fileInfo },
-        });
+      if (fileBufs.length && fileInfo) {
+        resolve({ fields, file: { buffer: Buffer.concat(fileBufs), ...fileInfo } });
       } else {
         resolve({ fields });
       }
@@ -84,8 +79,7 @@ export default async function handler(
     }
 
     const bucket = "client-uploads";
-    const now = new Date();
-    const stamp = now.toISOString().replace(/[:.]/g, "-");
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     const safeName = sanitizeFilename(file.filename);
     const objectPath = `${sessionId}/${stamp}_${safeName}`;
 
@@ -102,11 +96,11 @@ export default async function handler(
       return;
     }
 
-    // 2) Get a public URL (v2 has no `error` on getPublicUrl)
+    // 2) Public URL (v2 returns only { data })
     const { data: pub } = supabaseAdmin.storage.from(bucket).getPublicUrl(objectPath);
     const publicUrl = pub?.publicUrl || "";
 
-    // 3) Record in DB for the portal
+    // 3) Record for portal
     await supabaseAdmin.from("portal_documents").insert({
       email: email || null,
       session_id: sessionId,
@@ -125,9 +119,6 @@ export default async function handler(
       size: file.size,
     });
   } catch (e: any) {
-    res.status(500).json({
-      ok: false,
-      error: e?.message || "Upload error",
-    });
+    res.status(500).json({ ok: false, error: e?.message || "Upload error" });
   }
 }
