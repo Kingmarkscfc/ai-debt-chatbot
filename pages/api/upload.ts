@@ -1,1 +1,126 @@
-<PASTE THE FILE ABOVE>
+import type { NextApiRequest, NextApiResponse } from "next";
+import Busboy from "busboy";
+import { supabaseAdmin } from "../../utils/supabaseAdmin";
+
+type UploadResp =
+  | { ok: true; url: string; filename: string; mimeType?: string; size?: number }
+  | { ok: false; error: string };
+
+export const config = { api: { bodyParser: false } };
+
+function sanitizeFilename(name: string) {
+  const base = (name || "file").trim();
+  const safe = base.replace(/[^\w.\-()+\[\] ]+/g, "_");
+  return safe.length > 120 ? safe.slice(-120) : safe;
+}
+
+function readMultipart(req: NextApiRequest): Promise<{
+  fields: Record<string, string>;
+  file?: { buffer: Buffer; filename: string; mimeType?: string; size: number };
+}> {
+  return new Promise((resolve, reject) => {
+    const bb = Busboy({ headers: req.headers });
+    const fields: Record<string, string> = {};
+    const fileBufs: Buffer[] = [];
+    let fileInfo: { filename: string; mimeType?: string; size: number } | undefined;
+
+    bb.on("field", (name: string, val: string) => {
+      fields[name] = val;
+    });
+
+    bb.on(
+      "file",
+      (
+        _name: string,
+        stream: NodeJS.ReadableStream,
+        info: { filename: string; mimeType: string; encoding: string }
+      ) => {
+        const { filename, mimeType } = info;
+        fileInfo = { filename: filename || "upload", mimeType, size: 0 };
+        stream.on("data", (chunk: Buffer) => {
+          fileBufs.push(chunk);
+          fileInfo!.size += chunk.length;
+        });
+      }
+    );
+
+    bb.on("error", (err: Error) => reject(err));
+    bb.on("close", () => {
+      if (fileBufs.length && fileInfo) {
+        resolve({ fields, file: { buffer: Buffer.concat(fileBufs), ...fileInfo } });
+      } else {
+        resolve({ fields });
+      }
+    });
+
+    req.pipe(bb);
+  });
+}
+
+export default async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse<UploadResp>
+) {
+  if (req.method !== "POST") {
+    res.status(405).json({ ok: false, error: "Method not allowed" });
+    return;
+  }
+
+  try {
+    const { fields, file } = await readMultipart(req);
+    const sessionId = (fields.sessionId || "").trim();
+    const email = (fields.email || "").trim().toLowerCase();
+
+    if (!sessionId) {
+      res.status(400).json({ ok: false, error: "Missing sessionId" });
+      return;
+    }
+    if (!file) {
+      res.status(400).json({ ok: false, error: "No file received" });
+      return;
+    }
+
+    const bucket = "client-uploads";
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const safeName = sanitizeFilename(file.filename);
+    const objectPath = `${sessionId}/${stamp}_${safeName}`;
+
+    // 1) Upload to Supabase Storage
+    const { error: upErr } = await supabaseAdmin.storage
+      .from(bucket)
+      .upload(objectPath, file.buffer, {
+        contentType: file.mimeType || "application/octet-stream",
+        upsert: false,
+      });
+
+    if (upErr) {
+      res.status(500).json({ ok: false, error: `Upload failed: ${upErr.message}` });
+      return;
+    }
+
+    // 2) Public URL
+    const { data } = supabaseAdmin.storage.from(bucket).getPublicUrl(objectPath);
+    const publicUrl = data?.publicUrl || "";
+
+    // 3) Record for portal list
+    await supabaseAdmin.from("portal_documents").insert({
+      email: email || null,
+      session_id: sessionId,
+      client_ref: null,
+      filename: safeName,
+      url: publicUrl,
+      mime_type: file.mimeType || null,
+      size: file.size || null,
+    });
+
+    res.status(200).json({
+      ok: true,
+      url: publicUrl,
+      filename: safeName,
+      mimeType: file.mimeType,
+      size: file.size,
+    });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e?.message || "Upload error" });
+  }
+}

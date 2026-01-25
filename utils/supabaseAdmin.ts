@@ -13,5 +13,3 @@ export const supabaseAdmin = createClient(url, serviceKey, {
   auth: { persistSession: false, autoRefreshToken: false },
   global: { headers: { "x-application-name": "ai-debt-chatbot" } },
 });
-
-export default supabaseAdmin;
