@@ -1,71 +1,40 @@
 {
-  "small_talk": {
-    "greetings": ["hi", "hello", "hey", "good morning", "good afternoon", "good evening"]
-  },
   "steps": [
     {
       "id": 0,
-      "name": "name",
-      "expects": "name",
-      "prompt": "Great, I look forward to helping you clear your debts. Can you let me know who I’m speaking to?",
-      "keywords": ["name", "i am", "i'm", "im", "my name is", "it's", "its", "call me", "mr", "mrs", "ms"]
+      "prompt": "Great — I can help with this. Can you let me know who I’m speaking with?",
+      "keywords": ["name", "i am", "i'm", "im", "my name is", "it's", "its", "call me"]
     },
     {
       "id": 1,
-      "name": "concern",
-      "expects": "concern",
       "prompt": "Just so I can point you in the right direction, what would you say your main concern is with the debts?",
-      "keywords": ["bailiff", "bailiffs", "default", "ccj", "missed", "late", "interest", "charges", "arrears", "rent", "council", "gas", "electric", "water", "card", "loan", "overdraft", "catalogue", "finance", "curious", "better deal"]
+      "keywords": ["bailiff", "enforcement", "ccj", "default", "missed", "late", "interest", "charges", "arrears", "rent", "council", "gas", "electric", "water", "card", "loan", "overdraft"]
     },
     {
       "id": 2,
-      "name": "amounts",
-      "expects": "amounts",
-      "prompt": "Thanks — that helps. Roughly how much do you pay towards all debts each month, and what would feel affordable for you?",
-      "keywords": ["£", "per month", "month", "weekly", "afford", "budget"]
+      "prompt": "Roughly how much do you pay towards all debts each month, and what would feel affordable for you? For example: “I pay £600 and could afford £200.”",
+      "keywords": ["£", "per month", "monthly", "pay", "afford", "around"]
     },
     {
       "id": 3,
-      "name": "urgency",
-      "expects": "urgency",
-      "prompt": "Understood. I’ll summarise options shortly. First, is there anything urgent like enforcement or court letters we should know about?",
-      "keywords": ["bailiff", "enforcement", "ccj", "default", "court", "missed", "rent", "council tax", "utilities", "gas", "electric", "water", "no", "none", "nothing"]
+      "prompt": "Is there anything urgent we should know about — like enforcement/bailiff action, court or default notices, or missed priority bills (rent, council tax, utilities)?",
+      "keywords": ["yes", "bailiff", "court", "default", "ccj", "rent", "council", "tax", "utilities", "gas", "electric", "water", "arrears"]
     },
     {
       "id": 4,
-      "name": "acknowledgement",
-      "expects": "ack",
       "prompt": "Before we proceed, there’s no obligation to act on any advice today, and there are free sources of debt advice available at MoneyHelper. Shall we carry on?",
-      "keywords": ["yes", "ok", "okay", "sure", "carry on", "continue", "proceed", "yep", "yeah"]
+      "keywords": ["yes", "carry on", "continue", "ok", "okay", "proceed"]
     },
     {
       "id": 5,
-      "name": "portal_invite",
-      "expects": "portalInvite",
-      "prompt": "Let’s set up your secure Client Portal so you can add details, upload documents, and check progress. Shall I open it now?",
-      "openPortal": true,
-      "keywords": ["yes", "ok", "okay", "sure", "go ahead", "open", "start", "portal", "set up", "please"]
+      "prompt": "I can set up your secure Client Portal so you can add details, upload documents, and check progress. Shall I open it now?",
+      "keywords": ["yes", "ok", "okay", "sure", "go ahead", "open", "start", "portal", "set up"],
+      "openPortal": true
     },
     {
       "id": 6,
-      "name": "portal_followup",
-      "expects": "free",
-      "prompt": "While you’re in the portal, I’ll stay here to guide you. You can come back to the chat any time using the button in the top-right corner. Please follow the Outstanding Tasks so we can understand your situation. Once you’ve saved your details, say “done” and we’ll continue.",
-      "keywords": []
-    },
-    {
-      "id": 7,
-      "name": "docs_prompt",
-      "expects": "docs",
-      "prompt": "To assess the best solution and save you money each month, please upload documents: proof of ID; last 3 months’ bank statements; payslips (3 months or 12 weeks if weekly) if employed; last year’s tax return if self-employed; Universal Credit statements (12 months + latest full statement) if applicable; car finance docs if applicable; and any creditor letters or statements.",
-      "keywords": ["uploaded", "id", "bank", "payslip", "sa302", "uc", "universal credit", "car", "finance", "letters", "statements", "docs", "documents"]
-    },
-    {
-      "id": 8,
-      "name": "wrap_up",
-      "expects": "free",
-      "prompt": "Brilliant — our assessment team will now review your case and come back with next steps. You can check progress in your portal anytime. Is there anything else you’d like to ask before we wrap up?",
-      "keywords": ["no", "that’s all", "finish", "goodbye", "thanks", "thank you", "end"]
+      "prompt": "While you’re in the portal, I’ll stay here to guide you. Once you’ve saved your details, just say “done” and we’ll continue.",
+      "keywords": ["done", "saved", "submitted", "uploaded", "finished", "complete"]
     }
   ]
 }
