@@ -158,7 +158,6 @@ function containsProfanity(s: string) {
 
 function looksLikeGreetingOrSmallTalk(s: string) {
   const t = normalise(s);
-  // greetings
   if (
     t === "hello" ||
     t === "hi" ||
@@ -169,16 +168,12 @@ function looksLikeGreetingOrSmallTalk(s: string) {
   )
     return true;
 
-  // "good morning/afternoon/evening"
   if (t.includes("good morning") || t.includes("good afternoon") || t.includes("good evening")) return true;
 
-  // how are you
   if (t.includes("how are you") || t.includes("how r you") || t.includes("how are u")) return true;
 
-  // time question
   if (t.includes("what is the time") || t === "what time is it" || t.startsWith("what time")) return true;
 
-  // joke request
   if (t.includes("tell me a joke") || t === "joke" || t.includes("make me laugh")) return true;
 
   return false;
@@ -192,17 +187,14 @@ function smallTalkReply(userText: string) {
   const t = normalise(userText);
   const greeting = getLocalTimeGreeting();
 
-  // what time is it
   if (t.includes("what is the time") || t === "what time is it" || t.startsWith("what time")) {
     return `It’s ${nowTimeStr()} right now.`;
   }
 
-  // joke
   if (t.includes("tell me a joke") || t === "joke" || t.includes("make me laugh")) {
     return `Okay — quick one: Why did the scarecrow get promoted? Because he was outstanding in his field.`;
   }
 
-  // how are you / greetings
   if (t.includes("how are you") || t.includes("how r you") || t.includes("how are u")) {
     return `${greeting}! I’m doing well, thanks for asking.`;
   }
@@ -211,7 +203,14 @@ function smallTalkReply(userText: string) {
     return `${greeting}!`;
   }
 
-  if (t === "hello" || t === "hi" || t === "hey" || t.startsWith("hello ") || t.startsWith("hi ") || t.startsWith("hey ")) {
+  if (
+    t === "hello" ||
+    t === "hi" ||
+    t === "hey" ||
+    t.startsWith("hello ") ||
+    t.startsWith("hi ") ||
+    t.startsWith("hey ")
+  ) {
     return `${greeting}!`;
   }
 
@@ -252,7 +251,6 @@ function extractName(userText: string): { ok: boolean; name?: string; reason?: s
 
   const t = stripPunctuation(raw);
 
-  // Common explicit patterns
   const m1 = t.match(/\bmy name is\s+(.+)$/i);
   if (m1?.[1]) {
     const cand = titleCaseName(m1[1]);
@@ -271,7 +269,6 @@ function extractName(userText: string): { ok: boolean; name?: string; reason?: s
     return { ok: true, name: cand };
   }
 
-  // If user enters up to 3 words treat as name (unless it begins with a stopword)
   const tokens = t.split(" ").filter(Boolean);
   if (tokens.length >= 1 && tokens.length <= 3) {
     const first = normalise(tokens[0]);
@@ -409,6 +406,15 @@ function safeAskNameVariant(tries: number) {
 
 const FALLBACK_STEP0 = "Hello! My name’s Mark. What prompted you to seek help with your debts today?";
 
+function stripLeadingIntroFromPrompt(prompt: string) {
+  // Removes "Hello! My name’s Mark." (and variants) from the beginning for cleaner follow-ups after smalltalk.
+  const p = (prompt || "").trim();
+  const lowered = normalise(p);
+  if (lowered.startsWith("hello! my name’s mark.")) return p.replace(/^Hello!\s+My name’s Mark\.\s*/i, "");
+  if (lowered.startsWith("hello! my name's mark.")) return p.replace(/^Hello!\s+My name'?s Mark\.\s*/i, "");
+  return p;
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ApiResp>) {
   if (req.method !== "POST") {
     return res.status(405).json({
@@ -427,7 +433,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       : (body.history as any[]).map((m) => String(m?.content || "")).filter(Boolean)
     : [];
 
-  // load script + faqs from repo
   const scriptPath = path.join(process.cwd(), "utils", "full_script_logic.json");
   const faqPath = path.join(process.cwd(), "utils", "faqs.json");
   const script = readJsonSafe<ScriptDef>(scriptPath, { steps: [] });
@@ -438,7 +443,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       ? faqRaw.faqs
       : [];
 
-  // starting state
   const state: ChatState = {
     step: 0,
     askedNameTries: 0,
@@ -446,30 +450,29 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     ...body.state,
   };
 
-  // RESET (test tool)
   if (normalise(userText) === "reset") {
     const first = script.steps?.[0]?.prompt || FALLBACK_STEP0;
     const s: ChatState = { step: 0, askedNameTries: 0, name: null, lastPromptKey: undefined, lastStepPrompted: undefined };
     return res.status(200).json({ reply: first, state: s });
   }
 
-  // Current step prompt
   const currentStepDef = script.steps?.length ? nextScriptPrompt(script, state) : null;
-  const currentPrompt = currentStepDef?.prompt || FALLBACK_STEP0;
+  const currentPromptFull = currentStepDef?.prompt || FALLBACK_STEP0;
+  const currentPromptForFollowup = stripLeadingIntroFromPrompt(currentPromptFull) || currentPromptFull;
 
-  // Ack-only should never advance; just repeat current step prompt
   if (isAckOnly(userText)) {
-    const key = promptKey(state.step, currentPrompt);
+    const key = promptKey(state.step, currentPromptFull);
     return res.status(200).json({
-      reply: currentPrompt,
+      reply: currentPromptFull,
       state: { ...state, lastPromptKey: key, lastStepPrompted: state.step },
     });
   }
 
-  // 1) Small talk: answer + return to current step prompt (do not treat as slot-fill)
   if (looksLikeGreetingOrSmallTalk(userText)) {
     const st = smallTalkReply(userText);
-    const follow = currentPrompt;
+
+    // After smalltalk, use the clean follow-up prompt (no "Hello! My name’s Mark." repetition)
+    const follow = currentPromptForFollowup;
     const reply = st ? `${st}\n\n${follow}` : follow;
 
     const key = promptKey(state.step, follow);
@@ -490,10 +493,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  // 2) FAQ handling (if user asks a question)
   const faqAnswer = bestFaqMatch(userText, faqs);
   if (faqAnswer) {
-    const follow = currentPrompt;
+    const follow = currentPromptFull;
     const reply = `${faqAnswer}\n\n${follow}`;
 
     const key = promptKey(state.step, follow);
@@ -503,11 +505,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  // 3) Script progression
   const stepDef = script.steps?.length ? nextScriptPrompt(script, state) : null;
   const expects = stepDef?.expects || "free";
 
-  // NAME STEP
   if (expects === "name") {
     const tries = state.askedNameTries || 0;
     const nameParse = extractName(userText);
@@ -561,7 +561,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  // AMOUNTS STEP
   if (expects === "amounts") {
     const { paying, affordable } = extractAmounts(userText);
 
@@ -582,7 +581,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       });
     }
 
-    // advance
     nextState.step = state.step + 1;
     const nextStepDef = script.steps?.length ? nextScriptPrompt(script, nextState) : null;
     const nextPrompt = nextStepDef?.prompt || "Is there anything urgent like bailiff action or missed priority bills?";
@@ -596,7 +594,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  // CONCERN STEP
   if (expects === "concern") {
     const t = userText.trim();
     const isTooShort = t.length < 3;
@@ -624,11 +621,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  // SCRIPT-FIRST GUARDRAIL:
-  // If we are in a structured step (expects !== "free") and we didn't match a handler above,
-  // do NOT call OpenAI. Just repeat the script prompt.
+  // Script-first guardrail
   if (expects !== "free") {
-    const follow = stepDef?.prompt || currentPrompt;
+    const follow = stepDef?.prompt || currentPromptFull;
     const key = promptKey(state.step, follow);
     return res.status(200).json({
       reply: follow,
@@ -636,8 +631,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  // OpenAI fallback only when expects === "free"
-  const scriptPrompt = stepDef?.prompt || currentPrompt;
+  const scriptPrompt = stepDef?.prompt || currentPromptFull;
   const openAiReply = await callOpenAI({
     userText,
     history,
@@ -653,7 +647,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  // Last-resort deterministic reply: acknowledge + return to step prompt
   const name = state.name && state.name !== "there" ? state.name : null;
   const ack = name ? `Thanks, ${name}.` : "Thanks.";
   const follow = scriptPrompt;
