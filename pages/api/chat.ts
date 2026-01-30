@@ -419,7 +419,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     : [];
 
   // load script + faqs from repo
-  const scriptPath = path.join(process.cwd(), "data", "full_script_logic.json");
+  const scriptPath = path.join(process.cwd(), "utils", "full_script_logic.json");
   const faqPath = path.join(process.cwd(), "utils", "faqs.json");
   const script = readJsonSafe<ScriptDef>(scriptPath, { steps: [] });
   const faqRaw = readJsonSafe<any>(faqPath, []);
