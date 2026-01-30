@@ -20,7 +20,6 @@ type ScriptStep = {
   id?: string;
   text?: string;
   prompt?: string;
-  // optional branching fields (your JSON may differ)
   next?: number;
   onYes?: number;
   onNo?: number;
@@ -61,7 +60,6 @@ function safeJsonParse<T>(raw: string, fallback: T): T {
 }
 
 function loadScript(): ScriptJson {
-  // You told me you have full_script_logic.json in the project
   const p = path.join(process.cwd(), "full_script_logic.json");
   if (!fs.existsSync(p)) return { steps: [] };
   const raw = fs.readFileSync(p, "utf8");
@@ -70,14 +68,11 @@ function loadScript(): ScriptJson {
 }
 
 function loadFaqs(): FaqItem[] {
-  // You uploaded faqs.json – it may be either [] or {faqs:[]}
   const candidates = [
     path.join(process.cwd(), "faqs.json"),
     path.join(process.cwd(), "utils", "faqs.json"),
-    path.join(process.cwd(), "utils", "faqs.json"),
     path.join(process.cwd(), "data", "faqs.json"),
   ];
-
   const hit = candidates.find((p) => fs.existsSync(p));
   if (!hit) return [];
 
@@ -99,45 +94,6 @@ function stripPunctuation(s: string) {
     .trim();
 }
 
-function extractFirstName(input: string): string | null {
-  const t = stripPunctuation(input).trim();
-  if (!t) return null;
-
-  // common patterns
-  const lowered = t.toLowerCase();
-  const patterns = [
-    "my name is ",
-    "i am ",
-    "im ",
-    "i'm ",
-    "this is ",
-    "it is ",
-    "its ",
-    "it's ",
-  ];
-
-  for (const p of patterns) {
-    if (lowered.startsWith(p)) {
-      const rest = t.slice(p.length).trim();
-      const first = rest.split(" ")[0]?.trim();
-      return first && first.length >= 2 ? cap(first) : null;
-    }
-  }
-
-  // If user typed full name like "Mark Hughes", we accept first token
-  const firstToken = t.split(" ")[0]?.trim();
-  if (!firstToken) return null;
-
-  // reject obvious non-names
-  const bad = new Set(["hello", "hi", "hey", "morning", "evening", "afternoon", "test"]);
-  if (bad.has(firstToken.toLowerCase())) return null;
-
-  // must contain letters
-  if (!/[a-zA-Z]/.test(firstToken)) return null;
-
-  return cap(firstToken);
-}
-
 function cap(s: string) {
   const x = (s || "").trim();
   if (!x) return x;
@@ -149,6 +105,75 @@ function getGreetingNow(): string {
   if (h < 12) return "Good morning";
   if (h < 18) return "Good afternoon";
   return "Good evening";
+}
+
+/**
+ * FIXED: Extract first name from a message reliably.
+ * - Finds "my name is X", "i am X", "i'm X" ANYWHERE in sentence
+ * - Ignores leading filler like yes/yeah/ok/hi etc
+ * - Avoids accepting "yes" as a name
+ */
+function extractFirstName(input: string): string | null {
+  const raw = stripPunctuation(input);
+  if (!raw) return null;
+
+  const lowered = raw.toLowerCase();
+
+  // 1) Regex patterns anywhere in message
+  const patterns: Array<RegExp> = [
+    /\bmy name is\s+([a-zA-Z][a-zA-Z'-]{1,})\b/i,
+    /\bi am\s+([a-zA-Z][a-zA-Z'-]{1,})\b/i,
+    /\bi'?m\s+([a-zA-Z][a-zA-Z'-]{1,})\b/i,
+    /\bthis is\s+([a-zA-Z][a-zA-Z'-]{1,})\b/i,
+  ];
+
+  for (const re of patterns) {
+    const m = raw.match(re);
+    if (m && m[1]) {
+      const candidate = m[1].trim();
+      const cLower = candidate.toLowerCase();
+      const reject = new Set(["yes", "yeah", "yep", "ok", "okay", "alright", "sure", "hello", "hi", "hey"]);
+      if (reject.has(cLower)) return null;
+      return cap(candidate);
+    }
+  }
+
+  // 2) If no pattern, try first token — but strip common lead-ins first
+  let tokens = raw.split(" ").filter(Boolean);
+  if (!tokens.length) return null;
+
+  const leadIns = new Set([
+    "yes",
+    "yeah",
+    "yep",
+    "ok",
+    "okay",
+    "alright",
+    "sure",
+    "hello",
+    "hi",
+    "hey",
+    "morning",
+    "afternoon",
+    "evening",
+    "good",
+  ]);
+
+  while (tokens.length && leadIns.has(tokens[0].toLowerCase())) {
+    tokens.shift();
+  }
+
+  const firstToken = (tokens[0] || "").trim();
+  if (!firstToken) return null;
+
+  // reject obvious non-names
+  const bad = new Set(["test", "time", "joke"]);
+  if (bad.has(firstToken.toLowerCase())) return null;
+
+  // must contain letters
+  if (!/[a-zA-Z]/.test(firstToken)) return null;
+
+  return cap(firstToken);
 }
 
 function isSmallTalk(msg: string) {
@@ -195,7 +220,7 @@ function smallTalkReply(msg: string): string | null {
   }
 
   if (m.includes("tell me a joke") || m === "joke") {
-    return `Alright 😄  What do you call a debt that’s gone on holiday? A *loan* ranger.  
+    return `Alright 😄 What do you call a debt that’s gone on holiday? A *loan* ranger.  
 Now, tell me what’s been happening with the debts and we’ll take it step by step.`;
   }
 
@@ -210,7 +235,6 @@ function faqMatch(userMsg: string, faqs: FaqItem[]): string | null {
   const u = norm(userMsg);
   if (!u) return null;
 
-  // simple keyword scoring
   let best: { score: number; a: string } | null = null;
 
   for (const f of faqs) {
@@ -219,17 +243,13 @@ function faqMatch(userMsg: string, faqs: FaqItem[]): string | null {
     const keys = (f.keywords || []).map(norm).filter(Boolean);
 
     let score = 0;
-
-    // direct contains
     if (q && u.includes(q)) score += 6;
 
-    // keyword hits
     for (const k of keys) {
       if (!k) continue;
       if (u.includes(k)) score += 2;
     }
 
-    // overlap heuristic (cheap + effective)
     const uq = new Set(stripPunctuation(u).split(" "));
     const qq = new Set(stripPunctuation(q).split(" "));
     let overlap = 0;
@@ -275,13 +295,11 @@ function chooseNextIndex(script: ScriptJson, currentIndex: number, userMsg: stri
   const step = script.steps[currentIndex];
   if (!step) return currentIndex;
 
-  // basic branching if provided
   if (typeof step.onYes === "number" && looksLikeYes(userMsg)) return step.onYes;
   if (typeof step.onNo === "number" && looksLikeNo(userMsg)) return step.onNo;
 
   if (typeof step.next === "number") return step.next;
 
-  // default: advance by 1 (safe)
   const next = currentIndex + 1;
   return next < script.steps.length ? next : currentIndex;
 }
@@ -295,14 +313,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
   const sessionId = (body.sessionId || "").trim() || `sess_${Math.random().toString(36).slice(2)}`;
   const userMessage = (body.userMessage || body.message || "").toString().trim();
-  const language = (body.language || "English").toString();
+  const language = (body.language || "English").toString(); // kept for later, not used yet
 
   const script = loadScript();
   const faqs = loadFaqs();
 
   const state = getState(sessionId);
 
-  // First message safety
   if (!userMessage) {
     const first = state.name
       ? `${getGreetingNow()}, ${state.name}. What prompted you to seek help with your debts today?`
@@ -310,7 +327,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     return res.status(200).json({ reply: first, displayName: state.name });
   }
 
-  // Always allow reset during testing
   if (norm(userMessage) === "reset") {
     const resetState: SessionState = { stepIndex: 0, greeted: false };
     setState(sessionId, resetState);
@@ -319,14 +335,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  // If we still don’t have a name, try to capture it from ANY message naturally
+  // Capture name from ANY message (fixed)
   if (!state.name) {
     const maybeName = extractFirstName(userMessage);
     if (maybeName) {
       const nextState = { ...state, name: maybeName };
       setState(sessionId, nextState);
 
-      // friendly acknowledgement + move forward naturally
       return res.status(200).json({
         reply: `Nice to meet you, ${maybeName}. What’s the main concern with the debts at the moment?`,
         displayName: maybeName,
@@ -334,18 +349,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
   }
 
-  // Smalltalk layer: respond like a human FIRST, then gently bring it back
+  // Smalltalk layer
   if (isSmallTalk(userMessage)) {
     const r = smallTalkReply(userMessage);
     if (r) {
-      // If they asked smalltalk and we still don't have a name, we can ask after
       if (!state.name && /how are you|hello|hi|hey|morning|afternoon|evening/.test(norm(userMessage))) {
         return res.status(200).json({
           reply: `${r} Can you tell me your first name?`,
         });
       }
 
-      // We have a name: keep it natural and then guide back
       if (state.name) {
         return res.status(200).json({
           reply: `${r} When you’re ready, tell me what’s been happening with the debts and we’ll take it step by step.`,
@@ -357,7 +370,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
   }
 
-  // FAQ layer: answer common questions without derailing the flow
+  // FAQ layer
   const faqAnswer = faqMatch(userMessage, faqs);
   if (faqAnswer) {
     const nudge = state.name
@@ -370,8 +383,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  // Script engine (light touch): only push the next step AFTER acknowledging user message
-  // If script is missing, keep the bot useful rather than looping
+  // If script missing, stay helpful
   if (!script.steps.length) {
     const nm = state.name ? `, ${state.name}` : "";
     return res.status(200).json({
@@ -380,17 +392,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  // If we’re early in the script and the user gave meaningful info, acknowledge it
-  const acknowledgePrefix = state.name
-    ? `Thanks, ${state.name}. `
-    : `Thanks. `;
+  const acknowledgePrefix = state.name ? `Thanks, ${state.name}. ` : `Thanks. `;
 
-  // Decide next step index based on current + user reply
   const nextIndex = chooseNextIndex(script, state.stepIndex, userMessage);
   const nextStep = script.steps[nextIndex];
   const stepText = getStepText(nextStep);
 
-  // If step text is empty, fail gracefully
   if (!stepText) {
     const fallback = `${acknowledgePrefix}I’m with you. What would you say is the main thing you want help with right now — stopping pressure, reducing payments, or finding a formal solution?`;
     const nextState: SessionState = { ...state, stepIndex: nextIndex, lastBot: fallback };
@@ -398,7 +405,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     return res.status(200).json({ reply: fallback, displayName: state.name });
   }
 
-  // If the step is the "ask name" type step but we already have a name, skip it
+  // Skip name prompt if name already captured
   const stepNorm = norm(stepText);
   const isNamePrompt =
     stepNorm.includes("who i’m speaking with") ||
@@ -419,7 +426,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  // Normal script reply
   const finalReply = `${acknowledgePrefix}${stepText}`;
   const nextState: SessionState = { ...state, stepIndex: nextIndex, lastBot: finalReply };
   setState(sessionId, nextState);
@@ -427,6 +433,5 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   return res.status(200).json({
     reply: finalReply,
     displayName: state.name,
-    // openPortal: true when your script reaches that moment later (we’ll wire this to your new doc popup triggers next)
   });
 }
