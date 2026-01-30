@@ -2,552 +2,431 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import fs from "fs";
 import path from "path";
 
-type Msg = { role: "user" | "bot"; text: string; ts?: string };
-
-type ChatState = {
-  step: number;
-  name?: string | null;
-
-  askedNameTries?: number;
-  lastBotPrompt?: string;
-
-  paying?: number | null;
-  affordable?: number | null;
-
-  portalOpened?: boolean;
+type ChatReqBody = {
+  sessionId?: string;
+  userMessage?: string;
+  message?: string; // support older client payloads
+  history?: string[];
+  language?: string;
 };
 
-type ScriptStep = {
-  id: number;
-  name?: string;
-  expects?: string;
-  prompt: string;
-  keywords?: string[];
+type ChatResBody = {
+  reply: string;
+  displayName?: string;
   openPortal?: boolean;
 };
 
-type ScriptFile = {
-  steps: ScriptStep[];
-  small_talk?: Record<string, string[]>;
+type ScriptStep = {
+  id?: string;
+  text?: string;
+  prompt?: string;
+  // optional branching fields (your JSON may differ)
+  next?: number;
+  onYes?: number;
+  onNo?: number;
+  keywords?: string[];
 };
 
-type FAQ = { q: string; a: string; keywords?: string[] };
-type FAQFile = { faqs: FAQ[] } | FAQ[];
+type ScriptJson = {
+  steps: ScriptStep[];
+};
 
-let SCRIPT_CACHE: ScriptFile | null = null;
-let FAQ_CACHE: FAQ[] | null = null;
+type FaqItem = {
+  q: string;
+  a: string;
+  keywords?: string[];
+};
 
-function readJson<T>(p: string): T {
-  return JSON.parse(fs.readFileSync(p, "utf8"));
+type FaqJson =
+  | FaqItem[]
+  | {
+      faqs: FaqItem[];
+    };
+
+type SessionState = {
+  stepIndex: number;
+  name?: string;
+  lastBot?: string;
+  greeted?: boolean;
+};
+
+const memStore = new Map<string, SessionState>();
+
+function safeJsonParse<T>(raw: string, fallback: T): T {
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
 }
 
-function loadScript(): ScriptFile {
-  if (SCRIPT_CACHE) return SCRIPT_CACHE;
-
-  const candidates = [
-    path.join(process.cwd(), "full_script_logic.json"),
-    path.join(process.cwd(), "utils", "full_script_logic.json"),
-    path.join(process.cwd(), "data", "full_script_logic.json"),
-  ];
-
-  const found = candidates.find((p) => fs.existsSync(p));
-  if (!found) throw new Error("full_script_logic.json not found in root/utils/data");
-
-  SCRIPT_CACHE = readJson<ScriptFile>(found);
-  return SCRIPT_CACHE!;
+function loadScript(): ScriptJson {
+  // You told me you have full_script_logic.json in the project
+  const p = path.join(process.cwd(), "full_script_logic.json");
+  if (!fs.existsSync(p)) return { steps: [] };
+  const raw = fs.readFileSync(p, "utf8");
+  const parsed = safeJsonParse<ScriptJson>(raw, { steps: [] });
+  return parsed?.steps?.length ? parsed : { steps: [] };
 }
 
-function loadFaqs(): FAQ[] {
-  if (FAQ_CACHE) return FAQ_CACHE;
-
+function loadFaqs(): FaqItem[] {
+  // You uploaded faqs.json – it may be either [] or {faqs:[]}
   const candidates = [
     path.join(process.cwd(), "faqs.json"),
+    path.join(process.cwd(), "utils", "faqs.json"),
     path.join(process.cwd(), "utils", "faqs.json"),
     path.join(process.cwd(), "data", "faqs.json"),
   ];
 
-  const found = candidates.find((p) => fs.existsSync(p));
-  if (!found) {
-    FAQ_CACHE = [];
-    return FAQ_CACHE;
-  }
+  const hit = candidates.find((p) => fs.existsSync(p));
+  if (!hit) return [];
 
-  const raw = readJson<FAQFile>(found);
-  FAQ_CACHE = Array.isArray(raw) ? raw : raw.faqs || [];
-  return FAQ_CACHE!;
+  const raw = fs.readFileSync(hit, "utf8");
+  const parsed = safeJsonParse<FaqJson>(raw, []);
+  if (Array.isArray(parsed)) return parsed;
+  if (parsed && Array.isArray((parsed as any).faqs)) return (parsed as any).faqs;
+  return [];
 }
 
-function stripTags(s: string) {
-  // removes accidental debug tags like §SOMETHING
-  return (s || "").replace(/\s*§[A-Z0-9_]+\s*/g, " ").replace(/\s{2,}/g, " ").trim();
-}
-
-function capFirst(s: string) {
-  const t = (s || "").trim();
-  if (!t) return t;
-  return t[0].toUpperCase() + t.slice(1);
-}
-
-function normaliseText(s: string) {
+function norm(s: string) {
   return (s || "").trim().toLowerCase();
 }
 
-function isGreetingOnly(t: string) {
-  const x = normaliseText(t);
-  return /^(hi|hiya|hello|hey|good morning|good afternoon|good evening|morning|afternoon|evening)[!. ]*$/.test(x);
+function stripPunctuation(s: string) {
+  return (s || "")
+    .replace(/[^\p{L}\p{N}\s']/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
-function isHowAreYou(t: string) {
-  const x = normaliseText(t);
-  return /(how are you|how r u|hru|how you doing|you alright|you ok|how's it going)/.test(x);
-}
-
-function isAskTime(t: string) {
-  const x = normaliseText(t);
-  return /(what('?s| is)? the time|time is it|current time)/.test(x);
-}
-
-function isAskJoke(t: string) {
-  const x = normaliseText(t);
-  return /(tell me a joke|joke|make me laugh|something funny)/.test(x);
-}
-
-function pickGreeting(userText: string) {
-  // If user says "good morning" but it's afternoon/evening, we reply with actual time-of-day
-  const hour = new Date().getHours();
-  const tod = hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening";
-  const saidMorning = /good morning|morning/.test(normaliseText(userText));
-  const saidAfternoon = /good afternoon|afternoon/.test(normaliseText(userText));
-  const saidEvening = /good evening|evening/.test(normaliseText(userText));
-
-  // If they said one that doesn't match, lightly correct
-  if ((saidMorning && tod !== "morning") || (saidAfternoon && tod !== "afternoon") || (saidEvening && tod !== "evening")) {
-    return `Good ${tod} 😄`;
-  }
-  // Otherwise mirror them
-  if (saidMorning) return "Good morning";
-  if (saidAfternoon) return "Good afternoon";
-  if (saidEvening) return "Good evening";
-  return "Hello";
-}
-
-function looksLikeNameCandidate(raw: string) {
-  const t = raw.trim();
-  if (!t) return false;
-  if (t.length > 40) return false;
-  if (/\d/.test(t)) return false;
-  if (/[<>/\\{}[\]=+_*^%$#@]/.test(t)) return false;
-  return true;
-}
-
-const BANNED_NAME_WORDS = new Set([
-  "shit", "crap", "fuck", "twat", "cunt", "bitch", "asshole", "wanker", "prick", "bollocks", "dick",
-  "fuckoff", "fuck off"
-]);
-
-function extractName(userText: string): string | null {
-  const t = userText.trim();
+function extractFirstName(input: string): string | null {
+  const t = stripPunctuation(input).trim();
+  if (!t) return null;
 
   // common patterns
-  const m =
-    t.match(/\b(my name is|i am|i'm|im|call me|this is)\s+([a-zA-Z][a-zA-Z' -]{1,40})\b/i) ||
-    t.match(/^\s*([a-zA-Z][a-zA-Z' -]{1,40})\s*$/);
+  const lowered = t.toLowerCase();
+  const patterns = [
+    "my name is ",
+    "i am ",
+    "im ",
+    "i'm ",
+    "this is ",
+    "it is ",
+    "its ",
+    "it's ",
+  ];
 
-  if (!m) return null;
+  for (const p of patterns) {
+    if (lowered.startsWith(p)) {
+      const rest = t.slice(p.length).trim();
+      const first = rest.split(" ")[0]?.trim();
+      return first && first.length >= 2 ? cap(first) : null;
+    }
+  }
 
-  const candidate = (m[2] || m[1] || "").trim();
-  if (!looksLikeNameCandidate(candidate)) return null;
+  // If user typed full name like "Mark Hughes", we accept first token
+  const firstToken = t.split(" ")[0]?.trim();
+  if (!firstToken) return null;
 
-  // If they gave full name, store first name for friendliness
-  const first = candidate.split(/\s+/)[0].trim();
-  if (!first) return null;
+  // reject obvious non-names
+  const bad = new Set(["hello", "hi", "hey", "morning", "evening", "afternoon", "test"]);
+  if (bad.has(firstToken.toLowerCase())) return null;
 
-  const key = normaliseText(first.replace(/[^a-z]/g, ""));
-  if (BANNED_NAME_WORDS.has(normaliseText(candidate)) || BANNED_NAME_WORDS.has(key)) return "__BANNED__";
+  // must contain letters
+  if (!/[a-zA-Z]/.test(firstToken)) return null;
 
-  // allow names like Harshit (contains "shit" substring) by checking whole token only
-  return capFirst(first);
+  return cap(firstToken);
 }
 
-function moneyFromText(t: string): number | null {
-  const x = normaliseText(t).replace(/,/g, "");
-  // find £1234 or 1234
-  const pound = x.match(/£\s*([0-9]{1,6}(\.[0-9]{1,2})?)/);
-  if (pound) return Number(pound[1]);
+function cap(s: string) {
+  const x = (s || "").trim();
+  if (!x) return x;
+  return x.charAt(0).toUpperCase() + x.slice(1).toLowerCase();
+}
 
-  const plain = x.match(/\b([0-9]{1,6})(\.[0-9]{1,2})?\b/);
-  if (plain) return Number(plain[1]);
+function getGreetingNow(): string {
+  const h = new Date().getHours();
+  if (h < 12) return "Good morning";
+  if (h < 18) return "Good afternoon";
+  return "Good evening";
+}
+
+function isSmallTalk(msg: string) {
+  const m = norm(msg);
+  return (
+    m === "hello" ||
+    m === "hi" ||
+    m === "hey" ||
+    m.includes("how are you") ||
+    m.includes("how r u") ||
+    m.includes("hows it going") ||
+    m.includes("good morning") ||
+    m.includes("good afternoon") ||
+    m.includes("good evening") ||
+    m.includes("what is the time") ||
+    m === "time" ||
+    m.includes("tell me a joke") ||
+    m === "joke" ||
+    m.includes("thank") ||
+    m.includes("thanks")
+  );
+}
+
+function smallTalkReply(msg: string): string | null {
+  const m = norm(msg);
+
+  if (m === "hello" || m === "hi" || m === "hey") {
+    return `${getGreetingNow()}! How are you doing today?`;
+  }
+
+  if (m.includes("good morning") || m.includes("good afternoon") || m.includes("good evening")) {
+    return `${getGreetingNow()}! How are you doing today?`;
+  }
+
+  if (m.includes("how are you") || m.includes("how r u") || m.includes("hows it going")) {
+    return `I’m doing well, thanks for asking. How are you feeling today?`;
+  }
+
+  if (m.includes("what is the time") || m === "time") {
+    const d = new Date();
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    return `It’s ${hh}:${mm}. What’s brought you to reach out today?`;
+  }
+
+  if (m.includes("tell me a joke") || m === "joke") {
+    return `Alright 😄  What do you call a debt that’s gone on holiday? A *loan* ranger.  
+Now, tell me what’s been happening with the debts and we’ll take it step by step.`;
+  }
+
+  if (m.includes("thank")) {
+    return `You’re welcome. Take your time — what’s the main thing you want help with today?`;
+  }
 
   return null;
 }
 
-function findFAQAnswer(userText: string): string | null {
-  const faqs = loadFaqs();
-  if (!faqs.length) return null;
+function faqMatch(userMsg: string, faqs: FaqItem[]): string | null {
+  const u = norm(userMsg);
+  if (!u) return null;
 
-  const x = normaliseText(userText);
+  // simple keyword scoring
   let best: { score: number; a: string } | null = null;
 
   for (const f of faqs) {
-    const keys = (f.keywords || []).map((k) => normaliseText(k));
+    const q = norm(f.q);
+    const a = f.a || "";
+    const keys = (f.keywords || []).map(norm).filter(Boolean);
+
     let score = 0;
 
-    // keyword scoring
+    // direct contains
+    if (q && u.includes(q)) score += 6;
+
+    // keyword hits
     for (const k of keys) {
-      if (k && x.includes(k)) score += 2;
+      if (!k) continue;
+      if (u.includes(k)) score += 2;
     }
 
-    // question phrase overlap (light)
-    const qWords = normaliseText(f.q).split(/\s+/).filter(Boolean);
-    for (const w of qWords.slice(0, 10)) {
-      if (w.length >= 4 && x.includes(w)) score += 1;
+    // overlap heuristic (cheap + effective)
+    const uq = new Set(stripPunctuation(u).split(" "));
+    const qq = new Set(stripPunctuation(q).split(" "));
+    let overlap = 0;
+    for (const w of uq) if (qq.has(w) && w.length > 3) overlap++;
+    score += Math.min(4, overlap);
+
+    if (score >= 6) {
+      if (!best || score > best.score) best = { score, a };
     }
-
-    if (!best || score > best.score) best = { score, a: f.a };
   }
 
-  if (!best || best.score < 3) return null;
-  return stripTags(best.a);
+  return best ? best.a : null;
 }
 
-function rephraseIfRepeated(next: string, prev?: string) {
-  const a = stripTags(next);
-  const b = stripTags(prev || "");
-  if (!b) return a;
-  if (normaliseText(a) !== normaliseText(b)) return a;
+function getState(sessionId: string): SessionState {
+  const hit = memStore.get(sessionId);
+  if (hit) return hit;
+  const init: SessionState = { stepIndex: 0, greeted: false };
+  memStore.set(sessionId, init);
+  return init;
+}
 
-  // If the exact same prompt would repeat, rephrase slightly
-  if (a.toLowerCase().includes("who i’m speaking")) {
-    return "Quick one so I can address you properly — what’s your first name?";
+function setState(sessionId: string, next: SessionState) {
+  memStore.set(sessionId, next);
+}
+
+function getStepText(step: ScriptStep | undefined): string {
+  if (!step) return "";
+  return (step.text || step.prompt || "").trim();
+}
+
+function looksLikeYes(msg: string) {
+  const m = norm(msg);
+  return ["yes", "y", "yeah", "yep", "ok", "okay", "alright", "sure"].includes(m) || m.startsWith("yes ");
+}
+
+function looksLikeNo(msg: string) {
+  const m = norm(msg);
+  return ["no", "n", "nope", "not really"].includes(m) || m.startsWith("no ");
+}
+
+function chooseNextIndex(script: ScriptJson, currentIndex: number, userMsg: string): number {
+  const step = script.steps[currentIndex];
+  if (!step) return currentIndex;
+
+  // basic branching if provided
+  if (typeof step.onYes === "number" && looksLikeYes(userMsg)) return step.onYes;
+  if (typeof step.onNo === "number" && looksLikeNo(userMsg)) return step.onNo;
+
+  if (typeof step.next === "number") return step.next;
+
+  // default: advance by 1 (safe)
+  const next = currentIndex + 1;
+  return next < script.steps.length ? next : currentIndex;
+}
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse<ChatResBody>) {
+  if (req.method !== "POST") {
+    return res.status(405).json({ reply: "Method not allowed." });
   }
-  if (a.toLowerCase().includes("main concern")) {
-    return "What’s the biggest worry with the debts right now — payments, interest, letters, or something else?";
+
+  const body = (req.body || {}) as ChatReqBody;
+
+  const sessionId = (body.sessionId || "").trim() || `sess_${Math.random().toString(36).slice(2)}`;
+  const userMessage = (body.userMessage || body.message || "").toString().trim();
+  const language = (body.language || "English").toString();
+
+  const script = loadScript();
+  const faqs = loadFaqs();
+
+  const state = getState(sessionId);
+
+  // First message safety
+  if (!userMessage) {
+    const first = state.name
+      ? `${getGreetingNow()}, ${state.name}. What prompted you to seek help with your debts today?`
+      : `Hello! My name’s Mark. What prompted you to seek help with your debts today?`;
+    return res.status(200).json({ reply: first, displayName: state.name });
   }
-  if (a.toLowerCase().includes("how much do you pay")) {
-    return "Roughly what do you pay in total each month, and what would feel manageable?";
+
+  // Always allow reset during testing
+  if (norm(userMessage) === "reset") {
+    const resetState: SessionState = { stepIndex: 0, greeted: false };
+    setState(sessionId, resetState);
+    return res.status(200).json({
+      reply: "No problem — I’ve reset things. What prompted you to seek help with your debts today?",
+    });
   }
-  if (a.toLowerCase().includes("urgent")) {
-    return "Anything urgent we need to prioritise today — bailiffs, court letters, or priority bills like council tax?";
-  }
-  if (a.toLowerCase().includes("open it now")) {
-    return "Want me to open your secure portal now, or would you rather keep chatting for a moment?";
-  }
-  return a;
-}
 
-function stepById(script: ScriptFile, id: number) {
-  return script.steps.find((s) => s.id === id) || null;
-}
+  // If we still don’t have a name, try to capture it from ANY message naturally
+  if (!state.name) {
+    const maybeName = extractFirstName(userMessage);
+    if (maybeName) {
+      const nextState = { ...state, name: maybeName };
+      setState(sessionId, nextState);
 
-function nextStepPrompt(state: ChatState, script: ScriptFile): { prompt: string; step: number } {
-  const s = stepById(script, state.step);
-  if (!s) {
-    const last = script.steps[script.steps.length - 1];
-    return { prompt: stripTags(last?.prompt || "How can I help?"), step: last?.id ?? 0 };
-  }
-  return { prompt: stripTags(s.prompt), step: s.id };
-}
-
-function progressStep(state: ChatState) {
-  return { ...state, step: Math.min(state.step + 1, 999) };
-}
-
-function isYes(t: string) {
-  const x = normaliseText(t);
-  return /^(yes|yep|yeah|ok|okay|sure|go ahead|please do|do it|open|start|let’s do it|lets do it)\b/.test(x);
-}
-
-function isNo(t: string) {
-  const x = normaliseText(t);
-  return /^(no|nope|not now|later|can we do it later|maybe later|don’t|dont)\b/.test(x);
-}
-
-function personalise(text: string, name?: string | null) {
-  const cleaned = stripTags(text);
-  if (!name) return cleaned;
-  // avoid overusing em dashes; keep simple
-  return cleaned.replace(/\b(you)\b/i, "you").replace(/\bcan you\b/i, `can you`);
-}
-
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  try {
-    if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
-
-    const script = loadScript();
-    const { message, state, recent } = req.body as {
-      message: string;
-      sessionId?: string;
-      state?: ChatState;
-      recent?: Msg[];
-    };
-
-    const userText = (message || "").trim();
-    let s: ChatState = {
-      step: 0,
-      name: null,
-      askedNameTries: 0,
-      lastBotPrompt: "",
-      paying: null,
-      affordable: null,
-      portalOpened: false,
-      ...(state || {}),
-    };
-
-    // reset (testing only)
-    if (normaliseText(userText) === "reset") {
-      const p = stripTags(script.steps[0]?.prompt || "Can you let me know who I’m speaking with?");
+      // friendly acknowledgement + move forward naturally
       return res.status(200).json({
-        reply: p,
-        state: { step: 0, name: null, askedNameTries: 0, lastBotPrompt: p, paying: null, affordable: null, portalOpened: false },
+        reply: `Nice to meet you, ${maybeName}. What’s the main concern with the debts at the moment?`,
+        displayName: maybeName,
       });
     }
-
-    // 1) Human small talk FIRST (do not advance the script on these)
-    if (isAskTime(userText)) {
-      const t = new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-      const reply = `It’s ${t}. 😊\n\nNow, so I can help properly — what prompted you to seek help with your debts today?`;
-      return res.status(200).json({ reply: stripTags(reply), state: { ...s, lastBotPrompt: stripTags(reply) } });
-    }
-
-    if (isAskJoke(userText)) {
-      const reply =
-        "Quick one 😄\n\nWhy did the credit card break up with the wallet?\nBecause it needed a little more space.\n\nRight — what’s been going on with the debts?";
-      return res.status(200).json({ reply: stripTags(reply), state: { ...s, lastBotPrompt: stripTags(reply) } });
-    }
-
-    if (isHowAreYou(userText) || isGreetingOnly(userText)) {
-      const greet = pickGreeting(userText);
-      const reply = `${greet}! I’m good thanks — how are you doing today?\n\nWhen you’re ready, tell me what’s been happening with your debts and we’ll take it step by step.`;
-      return res.status(200).json({ reply: stripTags(reply), state: { ...s, lastBotPrompt: stripTags(reply) } });
-    }
-
-    // 2) FAQ router (answer, then gently return to script)
-    const faq = findFAQAnswer(userText);
-    if (faq) {
-      // keep it human + continue flow
-      const next = nextStepPrompt(s, script).prompt;
-      const reply = `${faq}\n\nIf you’re happy, we’ll carry on. ${next}`;
-      return res.status(200).json({
-        reply: stripTags(reply),
-        state: { ...s, lastBotPrompt: stripTags(reply) },
-      });
-    }
-
-    // 3) Script engine (strict + non-loopy)
-
-    // step 0: ask name
-    if (s.step === 0) {
-      const name = extractName(userText);
-
-      // user gave a valid name
-      if (name && name !== "__BANNED__") {
-        s.name = name;
-        s.askedNameTries = 0;
-
-        // move to next step
-        s = progressStep(s);
-        const base = `Nice to meet you, ${name}.`;
-        const next = rephraseIfRepeated(nextStepPrompt(s, script).prompt, s.lastBotPrompt);
-        const reply = `${base} ${next}`;
-        s.lastBotPrompt = stripTags(reply);
-        return res.status(200).json({ reply: stripTags(reply), state: s });
-      }
-
-      // banned/profane “name”
-      if (name === "__BANNED__") {
-        const tries = (s.askedNameTries || 0) + 1;
-        s.askedNameTries = tries;
-
-        if (tries === 1) {
-          const reply = "Let’s keep it respectful 🙂 What first name would you like me to use?";
-          s.lastBotPrompt = stripTags(reply);
-          return res.status(200).json({ reply: stripTags(reply), state: s });
-        }
-
-        if (tries === 2) {
-          const reply = "No worries — just a first name is perfect (e.g., Sam). What should I call you?";
-          s.lastBotPrompt = stripTags(reply);
-          return res.status(200).json({ reply: stripTags(reply), state: s });
-        }
-
-        // stop looping: continue without a name
-        s.name = null;
-        s.askedNameTries = tries;
-        s = progressStep(s);
-        const next = rephraseIfRepeated(nextStepPrompt(s, script).prompt, s.lastBotPrompt);
-        const reply = `No problem — we can carry on for now and you can tell me your name later. ${next}`;
-        s.lastBotPrompt = stripTags(reply);
-        return res.status(200).json({ reply: stripTags(reply), state: s });
-      }
-
-      // user didn’t give a name (avoid “misheard dinosaur language”)
-      const tries = (s.askedNameTries || 0) + 1;
-      s.askedNameTries = tries;
-
-      const base =
-        tries === 1
-          ? "Quick one so I can address you properly — can you let me know your first name?"
-          : tries === 2
-          ? "Just your first name is perfect (for example: John). What should I call you?"
-          : "No worries — when you’re ready, tell me your first name. For now, what’s your main concern with the debts?";
-
-      if (tries >= 3) {
-        // stop looping: move on
-        s = progressStep(s);
-        const reply = `${base}`;
-        s.lastBotPrompt = stripTags(reply);
-        return res.status(200).json({ reply: stripTags(reply), state: s });
-      }
-
-      s.lastBotPrompt = stripTags(base);
-      return res.status(200).json({ reply: stripTags(base), state: s });
-    }
-
-    // step 1: concern
-    if (s.step === 1) {
-      // accept anything as “concern” and move on
-      const empathy = "Thanks for sharing — that can feel heavy, but we’ll take it step by step.";
-      s = progressStep(s);
-      const next = rephraseIfRepeated(nextStepPrompt(s, script).prompt, s.lastBotPrompt);
-      const reply = `${empathy} ${next}`;
-      s.lastBotPrompt = stripTags(reply);
-      return res.status(200).json({ reply: stripTags(reply), state: s });
-    }
-
-    // step 2: amounts (avoid loops by collecting missing piece only)
-    if (s.step === 2) {
-      const num = moneyFromText(userText);
-
-      // Try to capture both if user wrote two numbers
-      const allNums = (normaliseText(userText).replace(/£/g, "").match(/\b\d{1,6}\b/g) || []).map((n) => Number(n));
-      if (allNums.length >= 2) {
-        s.paying = allNums[0];
-        s.affordable = allNums[1];
-      } else if (num !== null) {
-        // If we don't yet have paying, assume first number is paying, otherwise affordable
-        if (!s.paying) s.paying = num;
-        else if (!s.affordable) s.affordable = num;
-      }
-
-      const missingPaying = !s.paying;
-      const missingAffordable = !s.affordable;
-
-      if (missingPaying && missingAffordable) {
-        const q = "Roughly what do you pay towards all debts each month, and what would feel affordable?";
-        const reply = rephraseIfRepeated(q, s.lastBotPrompt);
-        s.lastBotPrompt = stripTags(reply);
-        return res.status(200).json({ reply: stripTags(reply), state: s });
-      }
-
-      if (missingAffordable) {
-        const q = `Thanks — and what would feel affordable each month? (Example: “£200”)`;
-        const reply = rephraseIfRepeated(q, s.lastBotPrompt);
-        s.lastBotPrompt = stripTags(reply);
-        return res.status(200).json({ reply: stripTags(reply), state: s });
-      }
-
-      // both captured -> move on
-      s = progressStep(s);
-      const next = rephraseIfRepeated(nextStepPrompt(s, script).prompt, s.lastBotPrompt);
-      const reply = `Got it — thanks. ${next}`;
-      s.lastBotPrompt = stripTags(reply);
-      return res.status(200).json({ reply: stripTags(reply), state: s });
-    }
-
-    // step 3: urgency
-    if (s.step === 3) {
-      const ack =
-        /council tax|rent|gas|electric|water|bailiff|enforcement|ccj|court|default/i.test(userText)
-          ? "Thanks — we’ll prioritise anything urgent and protect the essentials first."
-          : "Okay — that helps. We’ll keep things calm and structured.";
-
-      s = progressStep(s);
-      const next = rephraseIfRepeated(nextStepPrompt(s, script).prompt, s.lastBotPrompt);
-      const reply = `${ack} ${next}`;
-      s.lastBotPrompt = stripTags(reply);
-      return res.status(200).json({ reply: stripTags(reply), state: s });
-    }
-
-    // step 4: acknowledgement (MoneyHelper carry on)
-    if (s.step === 4) {
-      if (!isYes(userText)) {
-        const reply = "No problem — we can pause here. If you’d like to continue later, just message me when you’re ready.";
-        s.lastBotPrompt = stripTags(reply);
-        return res.status(200).json({ reply: stripTags(reply), state: s });
-      }
-      s = progressStep(s);
-      const next = rephraseIfRepeated(nextStepPrompt(s, script).prompt, s.lastBotPrompt);
-      const reply = `Perfect — let’s carry on. ${next}`;
-      s.lastBotPrompt = stripTags(reply);
-      return res.status(200).json({ reply: stripTags(reply), state: s });
-    }
-
-    // step 5: portal invite (ONLY open on explicit yes)
-    if (s.step === 5) {
-      if (isNo(userText)) {
-        const reply =
-          "No worries — we can keep chatting and do the portal later. When you’re ready, just say “open portal” and I’ll bring it up.";
-        s.lastBotPrompt = stripTags(reply);
-        return res.status(200).json({ reply: stripTags(reply), state: s });
-      }
-
-      if (isYes(userText) || /open portal/i.test(userText)) {
-        s.portalOpened = true;
-        s = progressStep(s);
-
-        const follow = stepById(script, 6)?.prompt || "While you’re in the portal, I’ll stay here to guide you.";
-        const reply =
-          "Opening your portal now.\n\n" +
-          stripTags(follow) +
-          "\n\nYou can come back to the chat any time using the button in the top-right corner.";
-        s.lastBotPrompt = stripTags(reply);
-        return res.status(200).json({ reply: stripTags(reply), state: s });
-      }
-
-      const p = rephraseIfRepeated(nextStepPrompt(s, script).prompt, s.lastBotPrompt);
-      s.lastBotPrompt = stripTags(p);
-      return res.status(200).json({ reply: stripTags(p), state: s });
-    }
-
-    // step 6: portal followup (wait for done)
-    if (s.step === 6) {
-      if (/done|saved|submitted|uploaded|finished|complete/i.test(userText)) {
-        s = progressStep(s);
-        const next = rephraseIfRepeated(nextStepPrompt(s, script).prompt, s.lastBotPrompt);
-        const reply = `Nice one — thanks. ${next}`;
-        s.lastBotPrompt = stripTags(reply);
-        return res.status(200).json({ reply: stripTags(reply), state: s });
-      }
-
-      const reply =
-        "No rush. Take your time in the portal.\n\nWhen you’ve finished the outstanding tasks, just reply “done” and I’ll continue.";
-      s.lastBotPrompt = stripTags(reply);
-      return res.status(200).json({ reply: stripTags(reply), state: s });
-    }
-
-    // step 7: docs prompt (ack and move)
-    if (s.step === 7) {
-      // if user uploaded, progress. Otherwise keep them moving.
-      if (/uploaded|attached|sent|done/i.test(normaliseText(userText))) {
-        s = progressStep(s);
-        const next = rephraseIfRepeated(nextStepPrompt(s, script).prompt, s.lastBotPrompt);
-        const reply = `Perfect — thanks. ${next}`;
-        s.lastBotPrompt = stripTags(reply);
-        return res.status(200).json({ reply: stripTags(reply), state: s });
-      }
-
-      const reply =
-        stripTags(nextStepPrompt(s, script).prompt) +
-        "\n\nIf you don’t have everything right now, that’s okay — upload what you can, and we’ll pick up the rest later.";
-      s.lastBotPrompt = stripTags(reply);
-      return res.status(200).json({ reply: stripTags(reply), state: s });
-    }
-
-    // step 8+: wrap up
-    const final = stripTags(nextStepPrompt(s, script).prompt);
-    s.lastBotPrompt = final;
-    return res.status(200).json({ reply: final, state: s });
-  } catch (e: any) {
-    return res.status(500).json({ error: "chat_failed", detail: e?.message || "unknown" });
   }
+
+  // Smalltalk layer: respond like a human FIRST, then gently bring it back
+  if (isSmallTalk(userMessage)) {
+    const r = smallTalkReply(userMessage);
+    if (r) {
+      // If they asked smalltalk and we still don't have a name, we can ask after
+      if (!state.name && /how are you|hello|hi|hey|morning|afternoon|evening/.test(norm(userMessage))) {
+        return res.status(200).json({
+          reply: `${r} Can you tell me your first name?`,
+        });
+      }
+
+      // We have a name: keep it natural and then guide back
+      if (state.name) {
+        return res.status(200).json({
+          reply: `${r} When you’re ready, tell me what’s been happening with the debts and we’ll take it step by step.`,
+          displayName: state.name,
+        });
+      }
+
+      return res.status(200).json({ reply: r });
+    }
+  }
+
+  // FAQ layer: answer common questions without derailing the flow
+  const faqAnswer = faqMatch(userMessage, faqs);
+  if (faqAnswer) {
+    const nudge = state.name
+      ? `\n\nIf you’re happy, ${state.name}, tell me what’s been going on with the debts and I’ll guide you through the options.`
+      : `\n\nIf you’re happy, tell me what’s been going on with the debts and I’ll guide you through the options.`;
+
+    return res.status(200).json({
+      reply: `${faqAnswer}${nudge}`,
+      displayName: state.name,
+    });
+  }
+
+  // Script engine (light touch): only push the next step AFTER acknowledging user message
+  // If script is missing, keep the bot useful rather than looping
+  if (!script.steps.length) {
+    const nm = state.name ? `, ${state.name}` : "";
+    return res.status(200).json({
+      reply: `Thanks${nm}. Tell me a bit more about what’s happening — roughly how much you owe, who to, and what your biggest worry is right now?`,
+      displayName: state.name,
+    });
+  }
+
+  // If we’re early in the script and the user gave meaningful info, acknowledge it
+  const acknowledgePrefix = state.name
+    ? `Thanks, ${state.name}. `
+    : `Thanks. `;
+
+  // Decide next step index based on current + user reply
+  const nextIndex = chooseNextIndex(script, state.stepIndex, userMessage);
+  const nextStep = script.steps[nextIndex];
+  const stepText = getStepText(nextStep);
+
+  // If step text is empty, fail gracefully
+  if (!stepText) {
+    const fallback = `${acknowledgePrefix}I’m with you. What would you say is the main thing you want help with right now — stopping pressure, reducing payments, or finding a formal solution?`;
+    const nextState: SessionState = { ...state, stepIndex: nextIndex, lastBot: fallback };
+    setState(sessionId, nextState);
+    return res.status(200).json({ reply: fallback, displayName: state.name });
+  }
+
+  // If the step is the "ask name" type step but we already have a name, skip it
+  const stepNorm = norm(stepText);
+  const isNamePrompt =
+    stepNorm.includes("who i’m speaking with") ||
+    stepNorm.includes("who i'm speaking with") ||
+    stepNorm.includes("first name");
+
+  if (isNamePrompt && state.name) {
+    const skipIndex = Math.min(nextIndex + 1, script.steps.length - 1);
+    const skipStep = script.steps[skipIndex];
+    const skipText = getStepText(skipStep) || "What would you say your main concern is with the debts?";
+
+    const nextState: SessionState = { ...state, stepIndex: skipIndex, lastBot: skipText };
+    setState(sessionId, nextState);
+
+    return res.status(200).json({
+      reply: `${acknowledgePrefix}${skipText}`,
+      displayName: state.name,
+    });
+  }
+
+  // Normal script reply
+  const finalReply = `${acknowledgePrefix}${stepText}`;
+  const nextState: SessionState = { ...state, stepIndex: nextIndex, lastBot: finalReply };
+  setState(sessionId, nextState);
+
+  return res.status(200).json({
+    reply: finalReply,
+    displayName: state.name,
+    // openPortal: true when your script reaches that moment later (we’ll wire this to your new doc popup triggers next)
+  });
 }
