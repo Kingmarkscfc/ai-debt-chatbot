@@ -183,6 +183,19 @@ function looksLikeGreetingOrSmallTalk(s: string) {
   return false;
 }
 
+function hasSubstantiveDebtContent(s: string) {
+  const t = normalise(s);
+
+  const debtish =
+    /debt|debts|repayment|repayments|loan|loans|credit|card|cards|overdraft|arrears|missed|behind|bailiff|ccj|interest|minimum|defaults|consolidat/i.test(
+      t
+    );
+
+  const hasMoneyOrNumbers = /£\s*\d+|\b\d{2,}\b/.test(s);
+
+  return debtish || hasMoneyOrNumbers;
+}
+
 /**
  * IMPORTANT: small talk reply should NOT ask the user questions.
  * We answer briefly, then the handler appends the current scripted prompt.
@@ -424,7 +437,7 @@ function step0SmalltalkVariant(cleanPrompt: string) {
   // professional alternative phrasing (no "kick things off" football vibe)
   const canon = "what prompted you to seek help with your debts today?";
   if (normalise(cleanPrompt) === canon) {
-    return "To begin, what’s made you reach out about your debts today?";
+    return "How can I help you with your debts today?";
   }
   return cleanPrompt;
 }
@@ -434,7 +447,6 @@ function shouldAdvanceFree(userText: string) {
   const t = userText.trim();
   if (!t) return false;
   if (isAckOnly(t)) return false;
-  // short "yes/no" should generally not advance free steps
   const tn = normalise(t);
   if (tn === "yes" || tn === "no" || tn === "yep" || tn === "nah") return false;
   return t.length >= 3;
@@ -499,7 +511,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   }
 
   // Small talk: answer + return to current step prompt (do not advance)
-  if (looksLikeGreetingOrSmallTalk(userText)) {
+  // IMPORTANT FIX: if the message contains real debt content, do NOT treat it as smalltalk.
+  if (looksLikeGreetingOrSmallTalk(userText) && !hasSubstantiveDebtContent(userText)) {
     const st = smallTalkReply(userText);
 
     let follow = currentPromptClean;
@@ -511,7 +524,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     if (state.lastPromptKey === key) {
       const alt =
         state.step === 0
-          ? "When you’re ready, tell me what’s brought you here today about your debts."
+          ? "When you’re ready, tell me what’s prompted you to reach out about your debts."
           : "When you’re ready, we can carry on from where we left off.";
       return res.status(200).json({
         reply: st ? `${st}\n\n${alt}` : alt,
@@ -641,9 +654,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const nextState: ChatState = { ...state, concern: t, step: state.step + 1 };
     const nm = nextState.name && nextState.name !== "there" ? nextState.name : null;
 
-    const empathy = nm
-      ? `Thanks for explaining that, ${nm}.`
-      : `Thanks for explaining that.`;
+    const empathy = nm ? `Thanks for explaining that, ${nm}.` : `Thanks for explaining that.`;
 
     const nextStepDef = script.steps?.length ? nextScriptPrompt(script, nextState) : null;
     const nextPrompt = nextStepDef?.prompt || "Roughly how much do you pay towards your debts each month?";
@@ -654,11 +665,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  // ✅ FIX: FREE STEPS MUST ADVANCE WHEN USER ANSWERS
+  // FREE steps must advance when user answers
   if (expects === "free") {
     const currentPrompt = stepDef?.prompt || currentPromptFull;
 
-    // If user provides a real answer, capture + advance
     if (shouldAdvanceFree(userText)) {
       const nextState: ChatState = {
         ...state,
@@ -678,7 +688,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       });
     }
 
-    // Otherwise repeat the current prompt (but avoid exact duplicate forever)
     const key = promptKey(state.step, currentPrompt);
     if (state.lastPromptKey === key) {
       const alt =
@@ -697,7 +706,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  // If this step expects something else and we don't have a handler, keep script-first
+  // If expects something else and we don't have a handler, keep script-first
   if (expects !== "free") {
     const follow = stepDef?.prompt || currentPromptFull;
     const key = promptKey(state.step, follow);
