@@ -148,10 +148,8 @@ const NAME_BLOCKLIST = new Set(
   ].map((x) => x.toLowerCase())
 );
 
-/** Words we should drop if they appear after a name (e.g., "Mark too"). */
-const NAME_TAIL_STOPWORDS = new Set(
-  ["too", "as", "also", "thanks", "thank", "mate", "pal"].map((x) => x.toLowerCase())
-);
+/** Words we should drop if they appear after a name (e.g. "Mark too"). */
+const NAME_TAIL_STOPWORDS = new Set(["too", "as", "also", "thanks", "thank", "mate", "pal"].map((x) => x.toLowerCase()));
 
 /** Obvious profanity we should refuse as a name (keep this short + safe). */
 const PROFANITY = ["fuck", "fuck off", "shit", "twat", "cunt", "bitch", "crap", "wanker", "dick"];
@@ -240,12 +238,25 @@ function isAckOnly(userText: string) {
     "yep",
     "yeah",
     "yes",
+    "no",
+    "nope",
+    "nah",
     "no worries",
     "got it",
     "fine",
     "great",
   ]);
   return acks.has(t);
+}
+
+/** "yes/ok" etc is not a substantive answer to progress a free step */
+function isSubstantiveAnswer(userText: string) {
+  const t = normalise(userText);
+  if (!t) return false;
+  if (isAckOnly(t)) return false;
+  // if it's very short and not a number or meaningful phrase, don't progress
+  if (t.length <= 2) return false;
+  return true;
 }
 
 function extractName(userText: string): { ok: boolean; name?: string; reason?: string } {
@@ -256,17 +267,14 @@ function extractName(userText: string): { ok: boolean; name?: string; reason?: s
 
   const t = stripPunctuation(raw);
 
-  // helper: trim name tail like "too", "as well", "thanks"
   const trimTail = (nameText: string) => {
     const tokens = stripPunctuation(nameText)
       .split(" ")
       .filter(Boolean)
       .filter((tok) => !NAME_TAIL_STOPWORDS.has(normalise(tok)));
-    // prefer first name (and optionally surname) but avoid swallowing filler
     return tokens.slice(0, 2).join(" ");
   };
 
-  // Common explicit patterns
   const m1 = t.match(/\bmy name is\s+(.+)$/i);
   if (m1?.[1]) {
     const cand = titleCaseName(trimTail(m1[1]));
@@ -285,15 +293,11 @@ function extractName(userText: string): { ok: boolean; name?: string; reason?: s
     return { ok: true, name: cand };
   }
 
-  // If user enters two words like "Mark Hughes" treat as name (unless it begins with a stopword)
   const tokens = t.split(" ").filter(Boolean);
   if (tokens.length >= 1 && tokens.length <= 3) {
-    // If the first token is a blocklisted word (yes/so/and/hello etc), refuse
     const first = normalise(tokens[0]);
     if (NAME_BLOCKLIST.has(first)) return { ok: false, reason: "block" };
 
-    // If they typed a whole sentence, don't treat it as a name
-    // Heuristic: if > 3 tokens or contains debt keywords, it's not a name.
     const debtish = /debt|debts|loan|loans|credit|card|cards|struggling|help|worried/i.test(t);
     if (!debtish && tokens.length <= 3) {
       const cand = titleCaseName(tokens.join(" "));
@@ -329,18 +333,15 @@ function bestFaqMatch(userText: string, faqs: FaqItem[]) {
     const q = normalise(f.q || "");
     if (!q) continue;
 
-    // direct contains gets high score
     let score = 0;
     if (t === q) score += 100;
     if (t.includes(q) || q.includes(t)) score += 60;
 
-    // tag keyword hits
     const tags = (f.tags || []).map(normalise);
     for (const tag of tags) {
       if (tag && t.includes(tag)) score += 10;
     }
 
-    // shared token overlap
     const tTokens = new Set(t.split(" ").filter((x) => x.length >= 3));
     const qTokens = q.split(" ").filter((x) => x.length >= 3);
     let overlap = 0;
@@ -350,7 +351,6 @@ function bestFaqMatch(userText: string, faqs: FaqItem[]) {
     if (!best || score > best.score) best = { score, a: f.a };
   }
 
-  // threshold to avoid random firing
   if (best && best.score >= 18) return best.a;
   return null;
 }
@@ -490,12 +490,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
   const currentStepDef = script.steps?.length ? nextScriptPrompt(script, state) : null;
   const currentPromptFull = currentStepDef?.prompt || FALLBACK_STEP0;
-  const currentPromptClean = stripLeadingIntroFromPrompt(currentPromptFull) || currentPromptFull;
+
+  // If we already know the user's name, avoid repeating the "Hello! My name’s Mark." intro
+  const currentPromptClean = state.name ? stripLeadingIntroFromPrompt(currentPromptFull) || currentPromptFull : currentPromptFull;
 
   if (isAckOnly(userText)) {
-    const key = promptKey(state.step, currentPromptFull);
+    const key = promptKey(state.step, currentPromptClean);
     return res.status(200).json({
-      reply: currentPromptFull,
+      reply: currentPromptClean,
       state: { ...state, lastPromptKey: key, lastStepPrompted: state.step },
     });
   }
@@ -503,15 +505,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   if (looksLikeGreetingOrSmallTalk(userText)) {
     const st = smallTalkReply(userText);
 
-    // NEW: if user included a name during small talk at step 0, acknowledge + store it
     let extractedName: string | null = null;
     if (state.step === 0) {
       const np = extractName(userText);
       if (np.ok && np.name) extractedName = np.name;
     }
 
-    // After smalltalk, use a revised version of step 0 question so it doesn’t look copy/pasted
-    let follow = currentPromptClean;
+    let follow = stripLeadingIntroFromPrompt(currentPromptFull) || currentPromptFull;
     if (state.step === 0) follow = step0SmalltalkVariant(follow);
 
     const nameAck =
@@ -548,7 +548,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
   const faqAnswer = bestFaqMatch(userText, faqs);
   if (faqAnswer) {
-    const follow = currentPromptFull;
+    const follow = currentPromptClean;
     const reply = `${faqAnswer}\n\n${follow}`;
 
     const key = promptKey(state.step, follow);
@@ -674,9 +674,40 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  // Script-first guardrail
+  // NEW: "free" steps must still progress (otherwise OpenAI can stall the script forever)
+  if (expects === "free") {
+    if (!isSubstantiveAnswer(userText)) {
+      const follow = currentPromptClean;
+      return res.status(200).json({
+        reply: follow,
+        state: { ...state, lastPromptKey: promptKey(state.step, follow), lastStepPrompted: state.step },
+      });
+    }
+
+    const name = state.name && state.name !== "there" ? state.name : null;
+
+    // Step 0: treat the first real answer as their initial concern so we don't lose it
+    const nextState: ChatState =
+      state.step === 0
+        ? { ...state, concern: userText, step: state.step + 1 }
+        : { ...state, step: state.step + 1 };
+
+    const nextStepDef = script.steps?.length ? nextScriptPrompt(script, nextState) : null;
+    const nextPrompt = nextStepDef?.prompt || "Can you tell me a bit more so I can help?";
+
+    const ack = name
+      ? `Thanks, ${name} — got it.`
+      : "Thanks — got it.";
+
+    return res.status(200).json({
+      reply: `${ack} ${nextPrompt}`,
+      state: { ...nextState, lastPromptKey: promptKey(nextState.step, nextPrompt), lastStepPrompted: nextState.step },
+    });
+  }
+
+  // Script-first guardrail for other expects types
   if (expects !== "free") {
-    const follow = stepDef?.prompt || currentPromptFull;
+    const follow = stepDef?.prompt || currentPromptClean;
     const key = promptKey(state.step, follow);
     return res.status(200).json({
       reply: follow,
@@ -684,7 +715,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  const scriptPrompt = stepDef?.prompt || currentPromptFull;
+  // OpenAI fallback (only used if we somehow got here)
+  const scriptPrompt = stepDef?.prompt || currentPromptClean;
   const openAiReply = await callOpenAI({
     userText,
     history,
