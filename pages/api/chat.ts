@@ -98,7 +98,7 @@ function nowTimeStr() {
 const FALLBACK_STEP0 = "Hello! My name’s Mark. What prompted you to seek help with your debts today?";
 
 // Professional “step 1” fallback (never drop back to step 0)
-const FALLBACK_STEP1 = "Thank you. What would you say is the main issue with the debts at the moment?";
+const FALLBACK_STEP1 = "What would you say is the main issue with the debts at the moment?";
 
 function promptKey(step: number, prompt: string) {
   return `${step}:${normalise(prompt).slice(0, 120)}`;
