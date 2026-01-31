@@ -7,7 +7,7 @@ type Role = "user" | "assistant";
 type StepDef = {
   id?: number;
   name?: string;
-  expects?: string; // "name" | "concern" | etc
+  expects?: string; // "name" | "concern" | "amounts" | "free"
   prompt?: string;
   keywords?: string[];
 };
@@ -30,9 +30,8 @@ type ChatState = {
   affordable?: number | null;
   urgent?: string | null;
 
-  // loop guards
   askedNameTries?: number;
-  lastPromptKey?: string; // dedupe key of last bot prompt
+  lastPromptKey?: string;
   lastStepPrompted?: number;
 };
 
@@ -96,6 +95,23 @@ function nowTimeStr() {
   return `${hh}:${mm}`;
 }
 
+const FALLBACK_STEP0 = "Hello! My name’s Mark. What prompted you to seek help with your debts today?";
+
+// Professional “step 1” fallback (never drop back to step 0)
+const FALLBACK_STEP1 = "Thank you. What would you say is the main issue with the debts at the moment?";
+
+function promptKey(step: number, prompt: string) {
+  return `${step}:${normalise(prompt).slice(0, 120)}`;
+}
+
+function stripLeadingIntroFromPrompt(prompt: string) {
+  const p = (prompt || "").trim();
+  const lowered = normalise(p);
+  if (lowered.startsWith("hello! my name’s mark.")) return p.replace(/^Hello!\s+My name’s Mark\.\s*/i, "");
+  if (lowered.startsWith("hello! my name's mark.")) return p.replace(/^Hello!\s+My name'?s Mark\.\s*/i, "");
+  return p;
+}
+
 /** Words we never want to treat as a name */
 const NAME_BLOCKLIST = new Set(
   [
@@ -112,6 +128,7 @@ const NAME_BLOCKLIST = new Set(
     "hello",
     "hi",
     "hey",
+    "hiya",
     "good",
     "morning",
     "afternoon",
@@ -151,9 +168,7 @@ const NAME_BLOCKLIST = new Set(
 /** Words we should drop if they appear after a name (e.g. "Mark too"). */
 const NAME_TAIL_STOPWORDS = new Set(["too", "as", "also", "thanks", "thank", "mate", "pal"].map((x) => x.toLowerCase()));
 
-/** Obvious profanity we should refuse as a name (keep this short + safe). */
 const PROFANITY = ["fuck", "fuck off", "shit", "twat", "cunt", "bitch", "crap", "wanker", "dick"];
-
 function containsProfanity(s: string) {
   const t = normalise(s);
   return PROFANITY.some((w) => t.includes(w));
@@ -161,78 +176,9 @@ function containsProfanity(s: string) {
 
 function containsDebtContent(s: string) {
   const t = normalise(s);
-  return /debt|debts|credit|card|cards|loan|loans|overdraft|arrears|repayments|interest|missed|struggling|behind|bailiff|ccj|default|collections|payday/i.test(
+  return /debt|debts|credit|card|cards|loan|loans|overdraft|arrears|repayment|repayments|interest|missed|struggling|behind|bailiff|ccj|default|collections|consolidat/i.test(
     t
   );
-}
-
-/**
- * Small-talk detection:
- * IMPORTANT: if the message contains debt content, it is NOT small talk.
- */
-function looksLikeGreetingOrSmallTalk(s: string) {
-  const t = normalise(s);
-  if (!t) return false;
-
-  // If there's real debt content, do NOT route to small talk
-  if (containsDebtContent(t)) return false;
-
-  // strict greetings
-  const isBareHello =
-    t === "hello" || t === "hi" || t === "hey" || t === "hiya" || t === "morning" || t === "afternoon" || t === "evening";
-
-  const isGoodGreeting =
-    t === "good morning" ||
-    t === "good afternoon" ||
-    t === "good evening" ||
-    t.startsWith("good morning") ||
-    t.startsWith("good afternoon") ||
-    t.startsWith("good evening");
-
-  // "how are you" small talk
-  const isHowAreYou = t.includes("how are you") || t.includes("how r you") || t.includes("how are u");
-
-  // time question
-  const isTime = t.includes("what is the time") || t === "what time is it" || t.startsWith("what time");
-
-  // joke request
-  const isJoke = t.includes("tell me a joke") || t === "joke" || t.includes("make me laugh");
-
-  // If message is longer than a small greeting and doesn't match the above patterns, don't treat as small talk
-  if (t.length > 45 && !isHowAreYou && !isTime && !isJoke) return false;
-
-  return isBareHello || isGoodGreeting || isHowAreYou || isTime || isJoke;
-}
-
-/**
- * IMPORTANT: small talk reply should NOT ask the user questions.
- * We answer briefly, then the handler appends the current scripted prompt.
- */
-function smallTalkReply(userText: string) {
-  const t = normalise(userText);
-  const greeting = getLocalTimeGreeting();
-
-  if (t.includes("what is the time") || t === "what time is it" || t.startsWith("what time")) {
-    return `It’s ${nowTimeStr()} right now.`;
-  }
-
-  if (t.includes("tell me a joke") || t === "joke" || t.includes("make me laugh")) {
-    return `Okay — quick one: Why did the scarecrow get promoted? Because he was outstanding in his field.`;
-  }
-
-  if (t.includes("how are you") || t.includes("how r you") || t.includes("how are u")) {
-    return `${greeting}! I’m doing well, thanks for asking.`;
-  }
-
-  if (t.includes("good morning") || t.includes("good afternoon") || t.includes("good evening")) {
-    return `${greeting}!`;
-  }
-
-  if (t === "hello" || t === "hi" || t === "hey" || t === "hiya") {
-    return `${greeting}!`;
-  }
-
-  return null;
 }
 
 /** Acknowledgement-only messages should NOT advance any step. */
@@ -270,6 +216,78 @@ function isSubstantiveAnswer(userText: string) {
   if (isAckOnly(t)) return false;
   if (t.length <= 2) return false;
   return true;
+}
+
+/**
+ * Small-talk detection:
+ * IMPORTANT: if the message contains debt content, it is NOT small talk.
+ */
+function looksLikeGreetingOrSmallTalk(s: string) {
+  const t = normalise(s);
+  if (!t) return false;
+
+  // if there's real debt content, do NOT route to small talk
+  if (containsDebtContent(t)) return false;
+
+  const isBareHello =
+    t === "hello" || t === "hi" || t === "hey" || t === "hiya" || t === "morning" || t === "afternoon" || t === "evening";
+
+  const isGoodGreeting =
+    t === "good morning" ||
+    t === "good afternoon" ||
+    t === "good evening" ||
+    t.startsWith("good morning") ||
+    t.startsWith("good afternoon") ||
+    t.startsWith("good evening");
+
+  const isHowAreYou = t.includes("how are you") || t.includes("how r you") || t.includes("how are u");
+
+  const isTime = t.includes("what is the time") || t === "what time is it" || t.startsWith("what time");
+
+  const isJoke = t.includes("tell me a joke") || t === "joke" || t.includes("make me laugh");
+
+  // NEW: "nice to meet you" is small talk
+  const isNiceToMeet = t.includes("nice to meet you");
+
+  // if message is long and not one of these patterns, don't treat as small talk
+  if (t.length > 70 && !isHowAreYou && !isTime && !isJoke && !isNiceToMeet) return false;
+
+  return isBareHello || isGoodGreeting || isHowAreYou || isTime || isJoke || isNiceToMeet;
+}
+
+/**
+ * small talk reply should NOT ask the user questions.
+ * We answer briefly, then the handler appends the current scripted prompt.
+ */
+function smallTalkReply(userText: string) {
+  const t = normalise(userText);
+  const greeting = getLocalTimeGreeting();
+
+  if (t.includes("what is the time") || t === "what time is it" || t.startsWith("what time")) {
+    return `It’s ${nowTimeStr()} right now.`;
+  }
+
+  if (t.includes("tell me a joke") || t === "joke" || t.includes("make me laugh")) {
+    return `Okay — quick one: Why did the scarecrow get promoted? Because he was outstanding in his field.`;
+  }
+
+  if (t.includes("nice to meet you")) {
+    return `Nice to meet you too.`;
+  }
+
+  if (t.includes("how are you") || t.includes("how r you") || t.includes("how are u")) {
+    return `${greeting}! I’m doing well, thanks for asking.`;
+  }
+
+  if (t.includes("good morning") || t.includes("good afternoon") || t.includes("good evening")) {
+    return `${greeting}!`;
+  }
+
+  if (t === "hello" || t === "hi" || t === "hey" || t === "hiya") {
+    return `${greeting}!`;
+  }
+
+  return null;
 }
 
 function extractName(userText: string): { ok: boolean; name?: string; reason?: string } {
@@ -368,29 +386,6 @@ function bestFaqMatch(userText: string, faqs: FaqItem[]) {
   return null;
 }
 
-function promptKey(step: number, prompt: string) {
-  return `${step}:${normalise(prompt).slice(0, 120)}`;
-}
-
-const FALLBACK_STEP0 = "Hello! My name’s Mark. What prompted you to seek help with your debts today?";
-
-function stripLeadingIntroFromPrompt(prompt: string) {
-  const p = (prompt || "").trim();
-  const lowered = normalise(p);
-  if (lowered.startsWith("hello! my name’s mark.")) return p.replace(/^Hello!\s+My name’s Mark\.\s*/i, "");
-  if (lowered.startsWith("hello! my name's mark.")) return p.replace(/^Hello!\s+My name'?s Mark\.\s*/i, "");
-  return p;
-}
-
-/** Step 0 variant so we don’t repeat the exact same question after small talk (professional wording) */
-function step0SmalltalkVariant(cleanPrompt: string) {
-  const canon = "what prompted you to seek help with your debts today?";
-  if (normalise(cleanPrompt) === canon) {
-    return "To begin, what has made you reach out about your debts today?";
-  }
-  return cleanPrompt;
-}
-
 /**
  * Robust script loader:
  * Accepts {steps:[...]}, {script:{steps:[...]}}, {flow:{steps:[...]}}, or just an array.
@@ -443,6 +438,19 @@ function clampNextStep(script: ScriptDef, next: number) {
   return Math.max(0, Math.min(next, maxIndex));
 }
 
+function getPromptForCurrentStep(script: ScriptDef, step: number) {
+  const p = resolveStep(script, step)?.prompt?.trim();
+  return p || (step === 0 ? FALLBACK_STEP0 : FALLBACK_STEP1);
+}
+
+function getPromptForNextStep(script: ScriptDef, nextStep: number) {
+  const p = resolveStep(script, nextStep)?.prompt?.trim();
+  if (p) return p;
+
+  // Never drop back to step 0 as a fallback if we're beyond it
+  return nextStep <= 0 ? FALLBACK_STEP0 : FALLBACK_STEP1;
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ApiResp>) {
   if (req.method !== "POST") {
     return res.status(405).json({
@@ -478,18 +486,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     ...body.state,
   };
 
+  // RESET
   if (normalise(userText) === "reset") {
-    const first = resolveStep(script, 0)?.prompt || FALLBACK_STEP0;
+    const first = getPromptForCurrentStep(script, 0);
     const s: ChatState = { step: 0, askedNameTries: 0, name: null, lastPromptKey: undefined, lastStepPrompted: undefined };
     return res.status(200).json({ reply: first, state: s });
   }
 
-  const currentStepDef = resolveStep(script, state.step);
-  const currentPromptFull = currentStepDef?.prompt || FALLBACK_STEP0;
-
+  const currentPromptFull = getPromptForCurrentStep(script, state.step);
   const currentPromptClean = state.name ? stripLeadingIntroFromPrompt(currentPromptFull) || currentPromptFull : currentPromptFull;
 
-  // ACK-only should just repeat the current scripted prompt, cleanly
+  // ACK-only → repeat current scripted prompt cleanly
   if (isAckOnly(userText)) {
     const key = promptKey(state.step, currentPromptClean);
     return res.status(200).json({
@@ -498,48 +505,41 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  // 1) Small talk — but only when it's truly small talk
+  // Small talk (true small talk only)
   if (looksLikeGreetingOrSmallTalk(userText)) {
     const st = smallTalkReply(userText);
 
     let follow = stripLeadingIntroFromPrompt(currentPromptFull) || currentPromptFull;
-    if (state.step === 0) follow = step0SmalltalkVariant(follow);
+
+    // For step 0 after small talk, keep professional wording (no “football commentator” vibe)
+    if (state.step === 0) {
+      const clean = stripLeadingIntroFromPrompt(currentPromptFull) || "What prompted you to seek help with your debts today?";
+      follow = normalise(clean) === normalise("What prompted you to seek help with your debts today?")
+        ? "To begin, what has made you reach out about your debts today?"
+        : clean;
+    }
 
     const reply = st ? `${st}\n\n${follow}` : follow;
     const key = promptKey(state.step, follow);
 
-    // Avoid repeating exact same prompt forever
-    if (state.lastPromptKey === key) {
-      const alt =
-        state.step === 0
-          ? "When you’re ready, please tell me what has made you reach out about your debts today."
-          : "When you’re ready, we can continue from where we left off.";
-      return res.status(200).json({
-        reply: st ? `${st}\n\n${alt}` : alt,
-        state: { ...state, lastPromptKey: promptKey(state.step, alt), lastStepPrompted: state.step },
-      });
-    }
-
     return res.status(200).json({
       reply,
       state: { ...state, lastPromptKey: key, lastStepPrompted: state.step },
     });
   }
 
-  // 2) FAQ handling (if user asks a question)
+  // FAQ
   const faqAnswer = bestFaqMatch(userText, faqs);
   if (faqAnswer) {
     const follow = currentPromptClean;
     const reply = `${faqAnswer}\n\n${follow}`;
-
-    const key = promptKey(state.step, follow);
     return res.status(200).json({
       reply,
-      state: { ...state, lastPromptKey: key, lastStepPrompted: state.step },
+      state: { ...state, lastPromptKey: promptKey(state.step, follow), lastStepPrompted: state.step },
     });
   }
 
-  // 3) Script progression
+  // Script progression
   const stepDef = resolveStep(script, state.step);
   const expects = stepDef?.expects || "free";
 
@@ -563,7 +563,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         step: clampNextStep(script, state.step + 1),
       };
 
-      const nextPrompt = resolveStep(script, nextState.step)?.prompt || "What’s the main concern with the debts at the moment?";
+      const nextPrompt = getPromptForNextStep(script, nextState.step);
 
       return res.status(200).json({
         reply: `${greet} ${nextPrompt}`,
@@ -581,7 +581,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         askedNameTries: nextTries,
         step: clampNextStep(script, state.step + 1),
       };
-      const nextPrompt = resolveStep(script, nextState.step)?.prompt || "What’s the main concern with the debts at the moment?";
+      const nextPrompt = getPromptForNextStep(script, nextState.step);
       return res.status(200).json({
         reply: `No problem. ${nextPrompt}`,
         state: { ...nextState, lastPromptKey: promptKey(nextState.step, nextPrompt), lastStepPrompted: nextState.step },
@@ -603,7 +603,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  // amounts step
+  // AMOUNTS step
   if (expects === "amounts") {
     const { paying, affordable } = extractAmounts(userText);
 
@@ -617,7 +617,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     if (!haveBoth) {
       const prompt =
-        "Thanks. Roughly what do you pay towards all debts each month, and what would feel affordable? For example: “I pay £600 and could afford £200.”";
+        "Thank you. Roughly what do you pay towards all debts each month, and what would feel affordable? For example: “I pay £600 and could afford £200.”";
       return res.status(200).json({
         reply: prompt,
         state: { ...nextState, lastPromptKey: promptKey(state.step, prompt), lastStepPrompted: state.step },
@@ -625,10 +625,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     nextState.step = clampNextStep(script, state.step + 1);
-    const nextPrompt = resolveStep(script, nextState.step)?.prompt || "Is there anything urgent like bailiff action or missed priority bills?";
+    const nextPrompt = getPromptForNextStep(script, nextState.step);
     const name = nextState.name && nextState.name !== "there" ? nextState.name : null;
 
-    const ack = name ? `Thanks, ${name}.` : "Thanks.";
+    const ack = name ? `Thank you, ${name}.` : "Thank you.";
 
     return res.status(200).json({
       reply: `${ack} ${nextPrompt}`,
@@ -636,12 +636,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  // concern step
+  // CONCERN step
   if (expects === "concern") {
     const t = userText.trim();
-    const isTooShort = t.length < 3;
-    if (isTooShort) {
-      const prompt = stepDef?.prompt || "What would you say your main concern is with the debts?";
+    if (t.length < 3) {
+      const prompt = stepDef?.prompt?.trim() || FALLBACK_STEP1;
       return res.status(200).json({
         reply: prompt,
         state: { ...state, lastPromptKey: promptKey(state.step, prompt), lastStepPrompted: state.step },
@@ -652,10 +651,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const name = nextState.name && nextState.name !== "there" ? nextState.name : null;
 
     const empathy = name
-      ? `Thanks for sharing that, ${name}. That can feel really heavy, but we’ll take it step by step.`
-      : `Thanks for sharing that. That can feel really heavy, but we’ll take it step by step.`;
+      ? `Thank you for explaining that, ${name}.`
+      : `Thank you for explaining that.`;
 
-    const nextPrompt = resolveStep(script, nextState.step)?.prompt || "Roughly how much do you pay towards your debts each month?";
+    const nextPrompt = getPromptForNextStep(script, nextState.step);
 
     return res.status(200).json({
       reply: `${empathy} ${nextPrompt}`,
@@ -663,13 +662,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  // free steps must progress using the script prompt
+  // FREE step progression (script-first)
   if (expects === "free") {
     if (!isSubstantiveAnswer(userText)) {
-      const follow = currentPromptClean;
       return res.status(200).json({
-        reply: follow,
-        state: { ...state, lastPromptKey: promptKey(state.step, follow), lastStepPrompted: state.step },
+        reply: currentPromptClean,
+        state: { ...state, lastPromptKey: promptKey(state.step, currentPromptClean), lastStepPrompted: state.step },
       });
     }
 
@@ -677,14 +675,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     const nextState: ChatState =
       state.step === 0
-        ? { ...state, concern: userText, step: clampNextStep(script, state.step + 1) }
-        : { ...state, step: clampNextStep(script, state.step + 1) };
+        ? { ...state, concern: userText, step: state.step + 1 } // intentionally NOT clamped; clamping can force a loop if script is malformed
+        : { ...state, step: state.step + 1 };
 
-    const nextPrompt =
-      resolveStep(script, nextState.step)?.prompt ||
-      (currentPromptClean || FALLBACK_STEP0);
+    const nextPrompt = getPromptForNextStep(script, nextState.step);
 
-    const ack = name ? `Thanks, ${name} — understood.` : "Thanks — understood.";
+    const ack = name ? `Thank you, ${name}.` : "Thank you.";
 
     return res.status(200).json({
       reply: `${ack} ${nextPrompt}`,
@@ -692,10 +688,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  // last resort: just return current prompt
+  // last resort: return current prompt
   return res.status(200).json({
-    reply: currentPromptClean || FALLBACK_STEP0,
-    state: { ...state, lastPromptKey: promptKey(state.step, currentPromptClean || FALLBACK_STEP0), lastStepPrompted: state.step },
+    reply: currentPromptClean,
+    state: { ...state, lastPromptKey: promptKey(state.step, currentPromptClean), lastStepPrompted: state.step },
   });
 }
-
