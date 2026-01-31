@@ -159,27 +159,49 @@ function containsProfanity(s: string) {
   return PROFANITY.some((w) => t.includes(w));
 }
 
+function containsDebtContent(s: string) {
+  const t = normalise(s);
+  return /debt|debts|credit|card|cards|loan|loans|overdraft|arrears|repayments|interest|missed|struggling|behind|bailiff|ccj|default|collections|payday/i.test(
+    t
+  );
+}
+
+/**
+ * Small-talk detection:
+ * IMPORTANT: if the message contains debt content, it is NOT small talk.
+ */
 function looksLikeGreetingOrSmallTalk(s: string) {
   const t = normalise(s);
-  if (
-    t === "hello" ||
-    t === "hi" ||
-    t === "hey" ||
-    t.startsWith("hello ") ||
-    t.startsWith("hi ") ||
-    t.startsWith("hey ")
-  )
-    return true;
+  if (!t) return false;
 
-  if (t.includes("good morning") || t.includes("good afternoon") || t.includes("good evening")) return true;
+  // If there's real debt content, do NOT route to small talk
+  if (containsDebtContent(t)) return false;
 
-  if (t.includes("how are you") || t.includes("how r you") || t.includes("how are u")) return true;
+  // strict greetings
+  const isBareHello =
+    t === "hello" || t === "hi" || t === "hey" || t === "hiya" || t === "morning" || t === "afternoon" || t === "evening";
 
-  if (t.includes("what is the time") || t === "what time is it" || t.startsWith("what time")) return true;
+  const isGoodGreeting =
+    t === "good morning" ||
+    t === "good afternoon" ||
+    t === "good evening" ||
+    t.startsWith("good morning") ||
+    t.startsWith("good afternoon") ||
+    t.startsWith("good evening");
 
-  if (t.includes("tell me a joke") || t === "joke" || t.includes("make me laugh")) return true;
+  // "how are you" small talk
+  const isHowAreYou = t.includes("how are you") || t.includes("how r you") || t.includes("how are u");
 
-  return false;
+  // time question
+  const isTime = t.includes("what is the time") || t === "what time is it" || t.startsWith("what time");
+
+  // joke request
+  const isJoke = t.includes("tell me a joke") || t === "joke" || t.includes("make me laugh");
+
+  // If message is longer than a small greeting and doesn't match the above patterns, don't treat as small talk
+  if (t.length > 45 && !isHowAreYou && !isTime && !isJoke) return false;
+
+  return isBareHello || isGoodGreeting || isHowAreYou || isTime || isJoke;
 }
 
 /**
@@ -206,14 +228,7 @@ function smallTalkReply(userText: string) {
     return `${greeting}!`;
   }
 
-  if (
-    t === "hello" ||
-    t === "hi" ||
-    t === "hey" ||
-    t.startsWith("hello ") ||
-    t.startsWith("hi ") ||
-    t.startsWith("hey ")
-  ) {
+  if (t === "hello" || t === "hi" || t === "hey" || t === "hiya") {
     return `${greeting}!`;
   }
 
@@ -367,11 +382,11 @@ function stripLeadingIntroFromPrompt(prompt: string) {
   return p;
 }
 
-/** Step 0 variant so we don’t repeat the exact same question after small talk */
+/** Step 0 variant so we don’t repeat the exact same question after small talk (professional wording) */
 function step0SmalltalkVariant(cleanPrompt: string) {
   const canon = "what prompted you to seek help with your debts today?";
   if (normalise(cleanPrompt) === canon) {
-    return "To kick things off, what’s made you reach out about your debts today?";
+    return "To begin, what has made you reach out about your debts today?";
   }
   return cleanPrompt;
 }
@@ -428,63 +443,6 @@ function clampNextStep(script: ScriptDef, next: number) {
   return Math.max(0, Math.min(next, maxIndex));
 }
 
-async function callOpenAI(args: {
-  userText: string;
-  history: string[];
-  language: string;
-  state: ChatState;
-  scriptStepPrompt: string;
-}) {
-  const key = process.env.OPENAI_API_KEY;
-  if (!key) return null;
-
-  const { userText, history, language, state, scriptStepPrompt } = args;
-
-  const isComplex =
-    userText.length > 140 ||
-    /bankrupt|iva|dmp|dro|court|bailiff|enforcement|council tax|ccj|credit rating|interest/i.test(userText);
-
-  const model = isComplex ? "gpt-4o" : "gpt-4o-mini";
-
-  const system = `
-You are a professional, friendly UK debt-advice assistant.
-Goals:
-- Sound human, calm, empathetic, and professional (avoid em dashes).
-- Always respond to what the user just said (acknowledge it properly).
-- If the user asks a side question, answer briefly, then return to the current step naturally.
-- Follow the current script step without looping.
-- Never show internal markers or tags.
-- Keep language: ${language}.
-Current known name: ${state.name || "unknown"}.
-Current step prompt: ${scriptStepPrompt}
-`.trim();
-
-  const messages: { role: Role; content: string }[] = [
-    { role: "assistant", content: system },
-    ...history.slice(-10).map((h) => ({ role: "user" as const, content: h })),
-    { role: "user", content: userText },
-  ];
-
-  const r = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${key}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      temperature: 0.5,
-    }),
-  });
-
-  if (!r.ok) return null;
-  const j = await r.json();
-  const reply = j?.choices?.[0]?.message?.content;
-  if (typeof reply === "string" && reply.trim()) return reply.trim();
-  return null;
-}
-
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ApiResp>) {
   if (req.method !== "POST") {
     return res.status(405).json({
@@ -495,7 +453,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
   const body = (req.body || {}) as ApiReqBody;
   const userText = (body.userMessage ?? body.message ?? "").toString().trim();
-  const language = (body.language || "English").toString();
 
   const history: string[] = Array.isArray(body.history)
     ? typeof (body.history as any)[0] === "string"
@@ -532,6 +489,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
   const currentPromptClean = state.name ? stripLeadingIntroFromPrompt(currentPromptFull) || currentPromptFull : currentPromptFull;
 
+  // ACK-only should just repeat the current scripted prompt, cleanly
   if (isAckOnly(userText)) {
     const key = promptKey(state.step, currentPromptClean);
     return res.status(200).json({
@@ -540,38 +498,35 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
+  // 1) Small talk — but only when it's truly small talk
   if (looksLikeGreetingOrSmallTalk(userText)) {
     const st = smallTalkReply(userText);
-
-    let extractedName: string | null = null;
-    if (state.step === 0) {
-      const np = extractName(userText);
-      if (np.ok && np.name) extractedName = np.name;
-    }
 
     let follow = stripLeadingIntroFromPrompt(currentPromptFull) || currentPromptFull;
     if (state.step === 0) follow = step0SmalltalkVariant(follow);
 
-    const nameAck =
-      extractedName
-        ? normalise(extractedName) === "mark"
-          ? "Nice to meet you, Mark — nice to meet a fellow Mark."
-          : `Nice to meet you, ${extractedName}.`
-        : null;
+    const reply = st ? `${st}\n\n${follow}` : follow;
+    const key = promptKey(state.step, follow);
 
-    const combinedFollow = nameAck ? `${nameAck} ${follow}` : follow;
-    const reply = st ? `${st}\n\n${combinedFollow}` : combinedFollow;
+    // Avoid repeating exact same prompt forever
+    if (state.lastPromptKey === key) {
+      const alt =
+        state.step === 0
+          ? "When you’re ready, please tell me what has made you reach out about your debts today."
+          : "When you’re ready, we can continue from where we left off.";
+      return res.status(200).json({
+        reply: st ? `${st}\n\n${alt}` : alt,
+        state: { ...state, lastPromptKey: promptKey(state.step, alt), lastStepPrompted: state.step },
+      });
+    }
 
-    const nextState: ChatState = extractedName ? { ...state, name: extractedName } : { ...state };
-
-    const key = promptKey(nextState.step, combinedFollow);
     return res.status(200).json({
       reply,
-      state: { ...nextState, lastPromptKey: key, lastStepPrompted: nextState.step },
-      displayName: extractedName || undefined,
+      state: { ...state, lastPromptKey: key, lastStepPrompted: state.step },
     });
   }
 
+  // 2) FAQ handling (if user asks a question)
   const faqAnswer = bestFaqMatch(userText, faqs);
   if (faqAnswer) {
     const follow = currentPromptClean;
@@ -584,9 +539,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
+  // 3) Script progression
   const stepDef = resolveStep(script, state.step);
   const expects = stepDef?.expects || "free";
 
+  // NAME step
   if (expects === "name") {
     const tries = state.askedNameTries || 0;
     const nameParse = extractName(userText);
@@ -631,13 +588,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       });
     }
 
-    const ask = safeAskNameVariant(nextTries);
+    const ask =
+      nextTries <= 0
+        ? "Can you let me know who I’m speaking with? A first name is perfect."
+        : nextTries === 1
+          ? "Sorry, what first name would you like me to use?"
+          : nextTries === 2
+            ? "No worries. Just pop a first name and we’ll carry on."
+            : "That’s fine. I’ll just call you ‘there’ for now. What’s the main thing you want help with today?";
+
     return res.status(200).json({
       reply: ask,
       state: { ...state, askedNameTries: nextTries, lastPromptKey: promptKey(state.step, ask), lastStepPrompted: state.step },
     });
   }
 
+  // amounts step
   if (expects === "amounts") {
     const { paying, affordable } = extractAmounts(userText);
 
@@ -670,6 +636,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
+  // concern step
   if (expects === "concern") {
     const t = userText.trim();
     const isTooShort = t.length < 3;
@@ -696,7 +663,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  // Free steps must progress using the script prompt (NOT generic fallback)
+  // free steps must progress using the script prompt
   if (expects === "free") {
     if (!isSubstantiveAnswer(userText)) {
       const follow = currentPromptClean;
@@ -715,10 +682,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     const nextPrompt =
       resolveStep(script, nextState.step)?.prompt ||
-      // if script prompt is missing, fall back to the *current* prompt, not a generic one
       (currentPromptClean || FALLBACK_STEP0);
 
-    const ack = name ? `Thanks, ${name} — got it.` : "Thanks — got it.";
+    const ack = name ? `Thanks, ${name} — understood.` : "Thanks — understood.";
 
     return res.status(200).json({
       reply: `${ack} ${nextPrompt}`,
@@ -726,34 +692,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  // As a last resort, respond with OpenAI but always include the current scripted prompt
-  const scriptPrompt = currentPromptClean || FALLBACK_STEP0;
-  const openAiReply = await callOpenAI({
-    userText,
-    history,
-    language,
-    state,
-    scriptStepPrompt: scriptPrompt,
-  });
-
-  if (openAiReply) {
-    return res.status(200).json({
-      reply: openAiReply,
-      state: { ...state },
-    });
-  }
-
-  const n = state.name && state.name !== "there" ? state.name : null;
-  const ack = n ? `Thanks, ${n}.` : "Thanks.";
+  // last resort: just return current prompt
   return res.status(200).json({
-    reply: `${ack} ${scriptPrompt}`,
-    state: { ...state, lastPromptKey: promptKey(state.step, scriptPrompt), lastStepPrompted: state.step },
+    reply: currentPromptClean || FALLBACK_STEP0,
+    state: { ...state, lastPromptKey: promptKey(state.step, currentPromptClean || FALLBACK_STEP0), lastStepPrompted: state.step },
   });
 }
 
-function safeAskNameVariant(tries: number) {
-  if (tries <= 0) return "Can you let me know who I’m speaking with? A first name is perfect.";
-  if (tries === 1) return "Sorry, what first name would you like me to use?";
-  if (tries === 2) return "No worries. Just pop a first name and we’ll carry on.";
-  return "That’s fine. I’ll just call you ‘there’ for now. What’s the main thing you want help with today?";
-}
