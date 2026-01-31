@@ -407,12 +407,20 @@ function safeAskNameVariant(tries: number) {
 const FALLBACK_STEP0 = "Hello! My name’s Mark. What prompted you to seek help with your debts today?";
 
 function stripLeadingIntroFromPrompt(prompt: string) {
-  // Removes "Hello! My name’s Mark." (and variants) from the beginning for cleaner follow-ups after smalltalk.
   const p = (prompt || "").trim();
   const lowered = normalise(p);
   if (lowered.startsWith("hello! my name’s mark.")) return p.replace(/^Hello!\s+My name’s Mark\.\s*/i, "");
   if (lowered.startsWith("hello! my name's mark.")) return p.replace(/^Hello!\s+My name'?s Mark\.\s*/i, "");
   return p;
+}
+
+/** Step 0 variant so we don’t repeat the exact same question after small talk */
+function step0SmalltalkVariant(cleanPrompt: string) {
+  const canon = "what prompted you to seek help with your debts today?";
+  if (normalise(cleanPrompt) === canon) {
+    return "To kick things off, what’s made you reach out about your debts today?";
+  }
+  return cleanPrompt;
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ApiResp>) {
@@ -458,7 +466,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
   const currentStepDef = script.steps?.length ? nextScriptPrompt(script, state) : null;
   const currentPromptFull = currentStepDef?.prompt || FALLBACK_STEP0;
-  const currentPromptForFollowup = stripLeadingIntroFromPrompt(currentPromptFull) || currentPromptFull;
+  const currentPromptClean = stripLeadingIntroFromPrompt(currentPromptFull) || currentPromptFull;
 
   if (isAckOnly(userText)) {
     const key = promptKey(state.step, currentPromptFull);
@@ -471,15 +479,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   if (looksLikeGreetingOrSmallTalk(userText)) {
     const st = smallTalkReply(userText);
 
-    // After smalltalk, use the clean follow-up prompt (no "Hello! My name’s Mark." repetition)
-    const follow = currentPromptForFollowup;
+    // After smalltalk, use a revised version of step 0 question so it doesn’t look copy/pasted
+    let follow = currentPromptClean;
+    if (state.step === 0) follow = step0SmalltalkVariant(follow);
+
     const reply = st ? `${st}\n\n${follow}` : follow;
 
     const key = promptKey(state.step, follow);
     if (state.lastPromptKey === key) {
       const alt =
         state.step === 0
-          ? "When you’re ready, tell me what prompted you to reach out about your debts today."
+          ? "When you’re ready, tell me what’s brought you here today about your debts."
           : "When you’re ready, we can carry on from where we left off.";
       return res.status(200).json({
         reply: st ? `${st}\n\n${alt}` : alt,
@@ -655,7 +665,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   if (state.lastPromptKey === key) {
     const alt =
       state.step === 0
-        ? "When you’re ready, tell me what prompted you to reach out about your debts today."
+        ? "When you’re ready, tell me what’s brought you here today about your debts."
         : "When you’re ready, we can carry on from where we left off.";
     return res.status(200).json({
       reply: `${ack} ${alt}`,
