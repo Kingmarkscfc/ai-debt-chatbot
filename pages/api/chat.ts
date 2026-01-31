@@ -5,10 +5,10 @@ import path from "path";
 type Role = "user" | "assistant";
 
 type StepDef = {
-  id: number;
-  name: string;
-  expects: string; // "name" | "concern" | etc
-  prompt: string;
+  id?: number;
+  name?: string;
+  expects?: string; // "name" | "concern" | etc
+  prompt?: string;
   keywords?: string[];
 };
 
@@ -61,20 +61,6 @@ function readJsonSafe<T>(p: string, fallback: T): T {
   }
 }
 
-function getLocalTimeGreeting() {
-  const h = new Date().getHours();
-  if (h < 12) return "Good morning";
-  if (h < 18) return "Good afternoon";
-  return "Good evening";
-}
-
-function nowTimeStr() {
-  const d = new Date();
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  return `${hh}:${mm}`;
-}
-
 function normalise(s: string) {
   return (s || "")
     .trim()
@@ -94,6 +80,20 @@ function titleCaseName(s: string) {
     .filter(Boolean)
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
     .join(" ");
+}
+
+function getLocalTimeGreeting() {
+  const h = new Date().getHours();
+  if (h < 12) return "Good morning";
+  if (h < 18) return "Good afternoon";
+  return "Good evening";
+}
+
+function nowTimeStr() {
+  const d = new Date();
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${hh}:${mm}`;
 }
 
 /** Words we never want to treat as a name */
@@ -249,12 +249,10 @@ function isAckOnly(userText: string) {
   return acks.has(t);
 }
 
-/** "yes/ok" etc is not a substantive answer to progress a free step */
 function isSubstantiveAnswer(userText: string) {
   const t = normalise(userText);
   if (!t) return false;
   if (isAckOnly(t)) return false;
-  // if it's very short and not a number or meaningful phrase, don't progress
   if (t.length <= 2) return false;
   return true;
 }
@@ -355,6 +353,81 @@ function bestFaqMatch(userText: string, faqs: FaqItem[]) {
   return null;
 }
 
+function promptKey(step: number, prompt: string) {
+  return `${step}:${normalise(prompt).slice(0, 120)}`;
+}
+
+const FALLBACK_STEP0 = "Hello! My name’s Mark. What prompted you to seek help with your debts today?";
+
+function stripLeadingIntroFromPrompt(prompt: string) {
+  const p = (prompt || "").trim();
+  const lowered = normalise(p);
+  if (lowered.startsWith("hello! my name’s mark.")) return p.replace(/^Hello!\s+My name’s Mark\.\s*/i, "");
+  if (lowered.startsWith("hello! my name's mark.")) return p.replace(/^Hello!\s+My name'?s Mark\.\s*/i, "");
+  return p;
+}
+
+/** Step 0 variant so we don’t repeat the exact same question after small talk */
+function step0SmalltalkVariant(cleanPrompt: string) {
+  const canon = "what prompted you to seek help with your debts today?";
+  if (normalise(cleanPrompt) === canon) {
+    return "To kick things off, what’s made you reach out about your debts today?";
+  }
+  return cleanPrompt;
+}
+
+/**
+ * Robust script loader:
+ * Accepts {steps:[...]}, {script:{steps:[...]}}, {flow:{steps:[...]}}, or just an array.
+ */
+function loadScriptDef(scriptPath: string): ScriptDef {
+  const raw = readJsonSafe<any>(scriptPath, null);
+
+  let steps: any[] = [];
+  if (Array.isArray(raw)) steps = raw;
+  else if (raw && Array.isArray(raw.steps)) steps = raw.steps;
+  else if (raw && raw.script && Array.isArray(raw.script.steps)) steps = raw.script.steps;
+  else if (raw && raw.flow && Array.isArray(raw.flow.steps)) steps = raw.flow.steps;
+  else if (raw && raw.fullScriptLogic && Array.isArray(raw.fullScriptLogic.steps)) steps = raw.fullScriptLogic.steps;
+
+  const normalized: StepDef[] = steps
+    .filter(Boolean)
+    .map((s: any, idx: number) => {
+      const id = typeof s?.id === "number" ? s.id : idx;
+      return {
+        id,
+        name: typeof s?.name === "string" ? s.name : `step_${id}`,
+        expects: typeof s?.expects === "string" ? s.expects : "free",
+        prompt: typeof s?.prompt === "string" ? s.prompt : "",
+        keywords: Array.isArray(s?.keywords) ? s.keywords : undefined,
+      };
+    });
+
+  return { steps: normalized };
+}
+
+/**
+ * Step resolver:
+ * - If script uses IDs matching state.step, use that.
+ * - Otherwise treat state.step as an index.
+ */
+function resolveStep(script: ScriptDef, step: number): StepDef | null {
+  if (!script.steps?.length) return null;
+
+  const hasIds = script.steps.some((s) => typeof s.id === "number");
+  if (hasIds) {
+    const byId = script.steps.find((s) => s.id === step);
+    if (byId) return byId;
+  }
+  return script.steps[step] || script.steps[0];
+}
+
+function clampNextStep(script: ScriptDef, next: number) {
+  if (!script.steps?.length) return next;
+  const maxIndex = script.steps.length - 1;
+  return Math.max(0, Math.min(next, maxIndex));
+}
+
 async function callOpenAI(args: {
   userText: string;
   history: string[];
@@ -412,41 +485,6 @@ Current step prompt: ${scriptStepPrompt}
   return null;
 }
 
-function promptKey(step: number, prompt: string) {
-  return `${step}:${normalise(prompt).slice(0, 120)}`;
-}
-
-function nextScriptPrompt(script: ScriptDef, state: ChatState) {
-  const stepDef = script.steps.find((s) => s.id === state.step) || script.steps[0];
-  return stepDef;
-}
-
-function safeAskNameVariant(tries: number) {
-  if (tries <= 0) return "Can you let me know who I’m speaking with? A first name is perfect.";
-  if (tries === 1) return "Sorry, what first name would you like me to use?";
-  if (tries === 2) return "No worries. Just pop a first name and we’ll carry on.";
-  return "That’s fine. I’ll just call you ‘there’ for now. What’s the main thing you want help with today?";
-}
-
-const FALLBACK_STEP0 = "Hello! My name’s Mark. What prompted you to seek help with your debts today?";
-
-function stripLeadingIntroFromPrompt(prompt: string) {
-  const p = (prompt || "").trim();
-  const lowered = normalise(p);
-  if (lowered.startsWith("hello! my name’s mark.")) return p.replace(/^Hello!\s+My name’s Mark\.\s*/i, "");
-  if (lowered.startsWith("hello! my name's mark.")) return p.replace(/^Hello!\s+My name'?s Mark\.\s*/i, "");
-  return p;
-}
-
-/** Step 0 variant so we don’t repeat the exact same question after small talk */
-function step0SmalltalkVariant(cleanPrompt: string) {
-  const canon = "what prompted you to seek help with your debts today?";
-  if (normalise(cleanPrompt) === canon) {
-    return "To kick things off, what’s made you reach out about your debts today?";
-  }
-  return cleanPrompt;
-}
-
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ApiResp>) {
   if (req.method !== "POST") {
     return res.status(405).json({
@@ -467,7 +505,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
   const scriptPath = path.join(process.cwd(), "utils", "full_script_logic.json");
   const faqPath = path.join(process.cwd(), "utils", "faqs.json");
-  const script = readJsonSafe<ScriptDef>(scriptPath, { steps: [] });
+
+  const script = loadScriptDef(scriptPath);
   const faqRaw = readJsonSafe<any>(faqPath, []);
   const faqs: FaqItem[] = Array.isArray(faqRaw)
     ? faqRaw
@@ -483,15 +522,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   };
 
   if (normalise(userText) === "reset") {
-    const first = script.steps?.[0]?.prompt || FALLBACK_STEP0;
+    const first = resolveStep(script, 0)?.prompt || FALLBACK_STEP0;
     const s: ChatState = { step: 0, askedNameTries: 0, name: null, lastPromptKey: undefined, lastStepPrompted: undefined };
     return res.status(200).json({ reply: first, state: s });
   }
 
-  const currentStepDef = script.steps?.length ? nextScriptPrompt(script, state) : null;
+  const currentStepDef = resolveStep(script, state.step);
   const currentPromptFull = currentStepDef?.prompt || FALLBACK_STEP0;
 
-  // If we already know the user's name, avoid repeating the "Hello! My name’s Mark." intro
   const currentPromptClean = state.name ? stripLeadingIntroFromPrompt(currentPromptFull) || currentPromptFull : currentPromptFull;
 
   if (isAckOnly(userText)) {
@@ -527,18 +565,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const nextState: ChatState = extractedName ? { ...state, name: extractedName } : { ...state };
 
     const key = promptKey(nextState.step, combinedFollow);
-    if (nextState.lastPromptKey === key) {
-      const alt =
-        nextState.step === 0
-          ? "When you’re ready, tell me what’s brought you here today about your debts."
-          : "When you’re ready, we can carry on from where we left off.";
-      return res.status(200).json({
-        reply: st ? `${st}\n\n${alt}` : alt,
-        state: { ...nextState, lastPromptKey: promptKey(nextState.step, alt), lastStepPrompted: nextState.step },
-        displayName: extractedName || undefined,
-      });
-    }
-
     return res.status(200).json({
       reply,
       state: { ...nextState, lastPromptKey: key, lastStepPrompted: nextState.step },
@@ -558,7 +584,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  const stepDef = script.steps?.length ? nextScriptPrompt(script, state) : null;
+  const stepDef = resolveStep(script, state.step);
   const expects = stepDef?.expects || "free";
 
   if (expects === "name") {
@@ -577,11 +603,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         ...state,
         name,
         askedNameTries: 0,
-        step: state.step + 1,
+        step: clampNextStep(script, state.step + 1),
       };
 
-      const nextStepDef = script.steps?.length ? nextScriptPrompt(script, nextState) : null;
-      const nextPrompt = nextStepDef?.prompt || "What’s the main concern with the debts at the moment?";
+      const nextPrompt = resolveStep(script, nextState.step)?.prompt || "What’s the main concern with the debts at the moment?";
 
       return res.status(200).json({
         reply: `${greet} ${nextPrompt}`,
@@ -597,10 +622,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         ...state,
         name: "there",
         askedNameTries: nextTries,
-        step: state.step + 1,
+        step: clampNextStep(script, state.step + 1),
       };
-      const nextStepDef = script.steps?.length ? nextScriptPrompt(script, nextState) : null;
-      const nextPrompt = nextStepDef?.prompt || "What’s the main concern with the debts at the moment?";
+      const nextPrompt = resolveStep(script, nextState.step)?.prompt || "What’s the main concern with the debts at the moment?";
       return res.status(200).json({
         reply: `No problem. ${nextPrompt}`,
         state: { ...nextState, lastPromptKey: promptKey(nextState.step, nextPrompt), lastStepPrompted: nextState.step },
@@ -634,9 +658,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       });
     }
 
-    nextState.step = state.step + 1;
-    const nextStepDef = script.steps?.length ? nextScriptPrompt(script, nextState) : null;
-    const nextPrompt = nextStepDef?.prompt || "Is there anything urgent like bailiff action or missed priority bills?";
+    nextState.step = clampNextStep(script, state.step + 1);
+    const nextPrompt = resolveStep(script, nextState.step)?.prompt || "Is there anything urgent like bailiff action or missed priority bills?";
     const name = nextState.name && nextState.name !== "there" ? nextState.name : null;
 
     const ack = name ? `Thanks, ${name}.` : "Thanks.";
@@ -658,15 +681,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       });
     }
 
-    const nextState: ChatState = { ...state, concern: t, step: state.step + 1 };
+    const nextState: ChatState = { ...state, concern: t, step: clampNextStep(script, state.step + 1) };
     const name = nextState.name && nextState.name !== "there" ? nextState.name : null;
 
     const empathy = name
       ? `Thanks for sharing that, ${name}. That can feel really heavy, but we’ll take it step by step.`
       : `Thanks for sharing that. That can feel really heavy, but we’ll take it step by step.`;
 
-    const nextStepDef = script.steps?.length ? nextScriptPrompt(script, nextState) : null;
-    const nextPrompt = nextStepDef?.prompt || "Roughly how much do you pay towards your debts each month?";
+    const nextPrompt = resolveStep(script, nextState.step)?.prompt || "Roughly how much do you pay towards your debts each month?";
 
     return res.status(200).json({
       reply: `${empathy} ${nextPrompt}`,
@@ -674,7 +696,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  // NEW: "free" steps must still progress (otherwise OpenAI can stall the script forever)
+  // Free steps must progress using the script prompt (NOT generic fallback)
   if (expects === "free") {
     if (!isSubstantiveAnswer(userText)) {
       const follow = currentPromptClean;
@@ -686,18 +708,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     const name = state.name && state.name !== "there" ? state.name : null;
 
-    // Step 0: treat the first real answer as their initial concern so we don't lose it
     const nextState: ChatState =
       state.step === 0
-        ? { ...state, concern: userText, step: state.step + 1 }
-        : { ...state, step: state.step + 1 };
+        ? { ...state, concern: userText, step: clampNextStep(script, state.step + 1) }
+        : { ...state, step: clampNextStep(script, state.step + 1) };
 
-    const nextStepDef = script.steps?.length ? nextScriptPrompt(script, nextState) : null;
-    const nextPrompt = nextStepDef?.prompt || "Can you tell me a bit more so I can help?";
+    const nextPrompt =
+      resolveStep(script, nextState.step)?.prompt ||
+      // if script prompt is missing, fall back to the *current* prompt, not a generic one
+      (currentPromptClean || FALLBACK_STEP0);
 
-    const ack = name
-      ? `Thanks, ${name} — got it.`
-      : "Thanks — got it.";
+    const ack = name ? `Thanks, ${name} — got it.` : "Thanks — got it.";
 
     return res.status(200).json({
       reply: `${ack} ${nextPrompt}`,
@@ -705,18 +726,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  // Script-first guardrail for other expects types
-  if (expects !== "free") {
-    const follow = stepDef?.prompt || currentPromptClean;
-    const key = promptKey(state.step, follow);
-    return res.status(200).json({
-      reply: follow,
-      state: { ...state, lastPromptKey: key, lastStepPrompted: state.step },
-    });
-  }
-
-  // OpenAI fallback (only used if we somehow got here)
-  const scriptPrompt = stepDef?.prompt || currentPromptClean;
+  // As a last resort, respond with OpenAI but always include the current scripted prompt
+  const scriptPrompt = currentPromptClean || FALLBACK_STEP0;
   const openAiReply = await callOpenAI({
     userText,
     history,
@@ -732,24 +743,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  const name = state.name && state.name !== "there" ? state.name : null;
-  const ack = name ? `Thanks, ${name}.` : "Thanks.";
-  const follow = scriptPrompt;
-
-  const key = promptKey(state.step, follow);
-  if (state.lastPromptKey === key) {
-    const alt =
-      state.step === 0
-        ? "When you’re ready, tell me what’s brought you here today about your debts."
-        : "When you’re ready, we can carry on from where we left off.";
-    return res.status(200).json({
-      reply: `${ack} ${alt}`,
-      state: { ...state, lastPromptKey: promptKey(state.step, alt), lastStepPrompted: state.step },
-    });
-  }
-
+  const n = state.name && state.name !== "there" ? state.name : null;
+  const ack = n ? `Thanks, ${n}.` : "Thanks.";
   return res.status(200).json({
-    reply: `${ack} ${follow}`,
-    state: { ...state, lastPromptKey: key, lastStepPrompted: state.step },
+    reply: `${ack} ${scriptPrompt}`,
+    state: { ...state, lastPromptKey: promptKey(state.step, scriptPrompt), lastStepPrompted: state.step },
   });
+}
+
+function safeAskNameVariant(tries: number) {
+  if (tries <= 0) return "Can you let me know who I’m speaking with? A first name is perfect.";
+  if (tries === 1) return "Sorry, what first name would you like me to use?";
+  if (tries === 2) return "No worries. Just pop a first name and we’ll carry on.";
+  return "That’s fine. I’ll just call you ‘there’ for now. What’s the main thing you want help with today?";
 }
