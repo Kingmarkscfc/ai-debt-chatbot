@@ -148,6 +148,11 @@ const NAME_BLOCKLIST = new Set(
   ].map((x) => x.toLowerCase())
 );
 
+/** Words we should drop if they appear after a name (e.g., "Mark too"). */
+const NAME_TAIL_STOPWORDS = new Set(
+  ["too", "as", "also", "thanks", "thank", "mate", "pal"].map((x) => x.toLowerCase())
+);
+
 /** Obvious profanity we should refuse as a name (keep this short + safe). */
 const PROFANITY = ["fuck", "fuck off", "shit", "twat", "cunt", "bitch", "crap", "wanker", "dick"];
 
@@ -251,9 +256,20 @@ function extractName(userText: string): { ok: boolean; name?: string; reason?: s
 
   const t = stripPunctuation(raw);
 
+  // helper: trim name tail like "too", "as well", "thanks"
+  const trimTail = (nameText: string) => {
+    const tokens = stripPunctuation(nameText)
+      .split(" ")
+      .filter(Boolean)
+      .filter((tok) => !NAME_TAIL_STOPWORDS.has(normalise(tok)));
+    // prefer first name (and optionally surname) but avoid swallowing filler
+    return tokens.slice(0, 2).join(" ");
+  };
+
+  // Common explicit patterns
   const m1 = t.match(/\bmy name is\s+(.+)$/i);
   if (m1?.[1]) {
-    const cand = titleCaseName(m1[1]);
+    const cand = titleCaseName(trimTail(m1[1]));
     const simple = normalise(cand);
     if (!cand) return { ok: false, reason: "empty" };
     if (NAME_BLOCKLIST.has(simple)) return { ok: false, reason: "block" };
@@ -262,18 +278,22 @@ function extractName(userText: string): { ok: boolean; name?: string; reason?: s
 
   const m2 = t.match(/\bi am\s+(.+)$/i) || t.match(/\bi'?m\s+(.+)$/i) || t.match(/\bim\s+(.+)$/i);
   if (m2?.[1]) {
-    const cand = titleCaseName(m2[1]);
+    const cand = titleCaseName(trimTail(m2[1]));
     const simple = normalise(cand);
     if (!cand) return { ok: false, reason: "empty" };
     if (NAME_BLOCKLIST.has(simple)) return { ok: false, reason: "block" };
     return { ok: true, name: cand };
   }
 
+  // If user enters two words like "Mark Hughes" treat as name (unless it begins with a stopword)
   const tokens = t.split(" ").filter(Boolean);
   if (tokens.length >= 1 && tokens.length <= 3) {
+    // If the first token is a blocklisted word (yes/so/and/hello etc), refuse
     const first = normalise(tokens[0]);
     if (NAME_BLOCKLIST.has(first)) return { ok: false, reason: "block" };
 
+    // If they typed a whole sentence, don't treat it as a name
+    // Heuristic: if > 3 tokens or contains debt keywords, it's not a name.
     const debtish = /debt|debts|loan|loans|credit|card|cards|struggling|help|worried/i.test(t);
     if (!debtish && tokens.length <= 3) {
       const cand = titleCaseName(tokens.join(" "));
@@ -309,15 +329,18 @@ function bestFaqMatch(userText: string, faqs: FaqItem[]) {
     const q = normalise(f.q || "");
     if (!q) continue;
 
+    // direct contains gets high score
     let score = 0;
     if (t === q) score += 100;
     if (t.includes(q) || q.includes(t)) score += 60;
 
+    // tag keyword hits
     const tags = (f.tags || []).map(normalise);
     for (const tag of tags) {
       if (tag && t.includes(tag)) score += 10;
     }
 
+    // shared token overlap
     const tTokens = new Set(t.split(" ").filter((x) => x.length >= 3));
     const qTokens = q.split(" ").filter((x) => x.length >= 3);
     let overlap = 0;
@@ -327,6 +350,7 @@ function bestFaqMatch(userText: string, faqs: FaqItem[]) {
     if (!best || score > best.score) best = { score, a: f.a };
   }
 
+  // threshold to avoid random firing
   if (best && best.score >= 18) return best.a;
   return null;
 }
@@ -479,27 +503,46 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   if (looksLikeGreetingOrSmallTalk(userText)) {
     const st = smallTalkReply(userText);
 
+    // NEW: if user included a name during small talk at step 0, acknowledge + store it
+    let extractedName: string | null = null;
+    if (state.step === 0) {
+      const np = extractName(userText);
+      if (np.ok && np.name) extractedName = np.name;
+    }
+
     // After smalltalk, use a revised version of step 0 question so it doesn’t look copy/pasted
     let follow = currentPromptClean;
     if (state.step === 0) follow = step0SmalltalkVariant(follow);
 
-    const reply = st ? `${st}\n\n${follow}` : follow;
+    const nameAck =
+      extractedName
+        ? normalise(extractedName) === "mark"
+          ? "Nice to meet you, Mark — nice to meet a fellow Mark."
+          : `Nice to meet you, ${extractedName}.`
+        : null;
 
-    const key = promptKey(state.step, follow);
-    if (state.lastPromptKey === key) {
+    const combinedFollow = nameAck ? `${nameAck} ${follow}` : follow;
+    const reply = st ? `${st}\n\n${combinedFollow}` : combinedFollow;
+
+    const nextState: ChatState = extractedName ? { ...state, name: extractedName } : { ...state };
+
+    const key = promptKey(nextState.step, combinedFollow);
+    if (nextState.lastPromptKey === key) {
       const alt =
-        state.step === 0
+        nextState.step === 0
           ? "When you’re ready, tell me what’s brought you here today about your debts."
           : "When you’re ready, we can carry on from where we left off.";
       return res.status(200).json({
         reply: st ? `${st}\n\n${alt}` : alt,
-        state: { ...state, lastPromptKey: promptKey(state.step, alt), lastStepPrompted: state.step },
+        state: { ...nextState, lastPromptKey: promptKey(nextState.step, alt), lastStepPrompted: nextState.step },
+        displayName: extractedName || undefined,
       });
     }
 
     return res.status(200).json({
       reply,
-      state: { ...state, lastPromptKey: key, lastStepPrompted: state.step },
+      state: { ...nextState, lastPromptKey: key, lastStepPrompted: nextState.step },
+      displayName: extractedName || undefined,
     });
   }
 
