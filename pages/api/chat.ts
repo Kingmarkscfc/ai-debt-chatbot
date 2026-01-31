@@ -422,7 +422,6 @@ function safeAskNameVariant(tries: number) {
 }
 
 const FALLBACK_STEP0 = "Hello! My name’s Mark. What prompted you to seek help with your debts today?";
-// IMPORTANT: no "Thank you" in fallback, we do acknowledgements separately.
 const FALLBACK_STEP1 = "What would you say is the main issue with the debts at the moment?";
 
 function stripLeadingIntroFromPrompt(prompt: string) {
@@ -434,7 +433,6 @@ function stripLeadingIntroFromPrompt(prompt: string) {
 }
 
 function step0SmalltalkVariant(cleanPrompt: string) {
-  // professional alternative phrasing (no "kick things off" football vibe)
   const canon = "what prompted you to seek help with your debts today?";
   if (normalise(cleanPrompt) === canon) {
     return "How can I help you with your debts today?";
@@ -442,7 +440,24 @@ function step0SmalltalkVariant(cleanPrompt: string) {
   return cleanPrompt;
 }
 
-/** If step expects "free", we still need to advance when user provides a real answer. */
+function startsWithThanks(p: string) {
+  const t = normalise(p);
+  return t.startsWith("thanks") || t.startsWith("thank you");
+}
+
+function ackPrefix(state: ChatState) {
+  const nm = state.name && state.name !== "there" ? state.name : null;
+  return nm ? `Thanks, ${nm}.` : "Thanks.";
+}
+
+/** Avoid "Thanks. Thanks." by not prefixing if prompt already begins with thanks/thank you. */
+function joinAckAndPrompt(state: ChatState, prompt: string) {
+  const p = (prompt || "").trim();
+  if (!p) return ackPrefix(state);
+  if (startsWithThanks(p)) return p; // prompt already acknowledges
+  return `${ackPrefix(state)} ${p}`;
+}
+
 function shouldAdvanceFree(userText: string) {
   const t = userText.trim();
   if (!t) return false;
@@ -483,7 +498,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     ...body.state,
   };
 
-  // RESET (debug)
   if (normalise(userText) === "reset") {
     const first = script.steps?.[0]?.prompt || FALLBACK_STEP0;
     const s: ChatState = {
@@ -498,10 +512,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   }
 
   const currentStepDef = script.steps?.length ? nextScriptPrompt(script, state) : null;
-  const currentPromptFull = currentStepDef?.prompt || (state.step === 1 ? FALLBACK_STEP1 : FALLBACK_STEP0);
+  const currentPromptFull =
+    currentStepDef?.prompt || (state.step === 1 ? FALLBACK_STEP1 : FALLBACK_STEP0);
   const currentPromptClean = stripLeadingIntroFromPrompt(currentPromptFull) || currentPromptFull;
 
-  // Ack-only: repeat current prompt (no step advance)
   if (isAckOnly(userText)) {
     const key = promptKey(state.step, currentPromptFull);
     return res.status(200).json({
@@ -510,8 +524,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  // Small talk: answer + return to current step prompt (do not advance)
-  // IMPORTANT FIX: if the message contains real debt content, do NOT treat it as smalltalk.
+  // Small talk (ONLY if greeting-only; if debt content present, do normal flow)
   if (looksLikeGreetingOrSmallTalk(userText) && !hasSubstantiveDebtContent(userText)) {
     const st = smallTalkReply(userText);
 
@@ -538,7 +551,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  // FAQ interception: answer + return to current step prompt (do not advance)
+  // FAQ
   const faqAnswer = bestFaqMatch(userText, faqs);
   if (faqAnswer) {
     const follow = currentPromptFull;
@@ -631,16 +644,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     nextState.step = state.step + 1;
     const nextStepDef = script.steps?.length ? nextScriptPrompt(script, nextState) : null;
     const nextPrompt = nextStepDef?.prompt || "Is there anything urgent like bailiff action or missed priority bills?";
-    const nm = nextState.name && nextState.name !== "there" ? nextState.name : null;
-    const ack = nm ? `Thanks, ${nm}.` : "Thanks.";
 
     return res.status(200).json({
-      reply: `${ack} ${nextPrompt}`,
+      reply: joinAckAndPrompt(nextState, nextPrompt),
       state: { ...nextState, lastPromptKey: promptKey(nextState.step, nextPrompt), lastStepPrompted: nextState.step },
     });
   }
 
-  // CONCERN (explicit)
+  // CONCERN
   if (expects === "concern") {
     const t = userText.trim();
     if (t.length < 3) {
@@ -652,20 +663,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     const nextState: ChatState = { ...state, concern: t, step: state.step + 1 };
-    const nm = nextState.name && nextState.name !== "there" ? nextState.name : null;
-
-    const empathy = nm ? `Thanks for explaining that, ${nm}.` : `Thanks for explaining that.`;
-
     const nextStepDef = script.steps?.length ? nextScriptPrompt(script, nextState) : null;
     const nextPrompt = nextStepDef?.prompt || "Roughly how much do you pay towards your debts each month?";
 
+    const empathy = nextState.name && nextState.name !== "there" ? `Thanks for explaining that, ${nextState.name}.` : `Thanks for explaining that.`;
+    const combined = startsWithThanks(nextPrompt) ? `${empathy} ${stripLeadingIntroFromPrompt(nextPrompt) || nextPrompt}` : `${empathy} ${nextPrompt}`;
+
     return res.status(200).json({
-      reply: `${empathy} ${nextPrompt}`,
+      reply: combined.trim(),
       state: { ...nextState, lastPromptKey: promptKey(nextState.step, nextPrompt), lastStepPrompted: nextState.step },
     });
   }
 
-  // FREE steps must advance when user answers
+  // FREE steps: advance when user answers (and if step0 answered, store as concern for later)
   if (expects === "free") {
     const currentPrompt = stepDef?.prompt || currentPromptFull;
 
@@ -673,17 +683,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       const nextState: ChatState = {
         ...state,
         lastFreeAnswer: userText,
+        // if we are at step 0, treat it as the user's core reason/concern
+        concern: state.step === 0 && !state.concern ? userText : state.concern ?? null,
         step: state.step + 1,
       };
 
       const nextStepDef = script.steps?.length ? nextScriptPrompt(script, nextState) : null;
-      const nextPrompt = nextStepDef?.prompt || "Thanks. Can you tell me a little more?";
 
-      const nm = nextState.name && nextState.name !== "there" ? nextState.name : null;
-      const ack = nm ? `Thanks, ${nm}.` : "Thanks.";
+      // KEY FIX: do NOT fall back to "Thanks. Can you tell me a little more?"
+      // We fall back to a proper professional next question (step1) instead.
+      const nextPrompt = nextStepDef?.prompt || FALLBACK_STEP1;
 
       return res.status(200).json({
-        reply: `${ack} ${nextPrompt}`,
+        reply: joinAckAndPrompt(nextState, nextPrompt),
         state: { ...nextState, lastPromptKey: promptKey(nextState.step, nextPrompt), lastStepPrompted: nextState.step },
       });
     }
@@ -706,7 +718,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  // If expects something else and we don't have a handler, keep script-first
+  // Script-first guardrail for other expects
   if (expects !== "free") {
     const follow = stepDef?.prompt || currentPromptFull;
     const key = promptKey(state.step, follow);
@@ -716,7 +728,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  // OpenAI fallback (rare path)
+  // OpenAI fallback (rare)
   const scriptPrompt = stepDef?.prompt || currentPromptFull;
   const openAiReply = await callOpenAI({
     userText,
@@ -734,9 +746,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   }
 
   // Last resort deterministic reply
-  const nm = state.name && state.name !== "there" ? state.name : null;
-  const ack = nm ? `Thanks, ${nm}.` : "Thanks.";
   const follow = scriptPrompt;
+  const combined = joinAckAndPrompt(state, follow);
 
   const key = promptKey(state.step, follow);
   if (state.lastPromptKey === key) {
@@ -745,13 +756,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         ? "When you’re ready, tell me what’s prompted you to reach out about your debts."
         : "When you’re ready, we can carry on from where we left off.";
     return res.status(200).json({
-      reply: `${ack} ${alt}`,
+      reply: alt,
       state: { ...state, lastPromptKey: promptKey(state.step, alt), lastStepPrompted: state.step },
     });
   }
 
   return res.status(200).json({
-    reply: `${ack} ${follow}`,
+    reply: combined,
     state: { ...state, lastPromptKey: key, lastStepPrompted: state.step },
   });
 }
