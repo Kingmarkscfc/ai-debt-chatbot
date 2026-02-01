@@ -62,20 +62,6 @@ function readJsonSafe<T>(p: string, fallback: T): T {
   }
 }
 
-function getLocalTimeGreeting() {
-  const h = new Date().getHours();
-  if (h < 12) return "Good morning";
-  if (h < 18) return "Good afternoon";
-  return "Good evening";
-}
-
-function nowTimeStr() {
-  const d = new Date();
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  return `${hh}:${mm}`;
-}
-
 function normalise(s: string) {
   return (s || "")
     .trim()
@@ -95,6 +81,38 @@ function titleCaseName(s: string) {
     .filter(Boolean)
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
     .join(" ");
+}
+
+/**
+ * ✅ Use Europe/London time so greetings match the UK user experience,
+ * not Vercel/server timezone.
+ */
+function getLocalHourLondon() {
+  try {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Europe/London",
+      hour: "2-digit",
+      hour12: false,
+    }).formatToParts(new Date());
+    const hour = Number(parts.find((p) => p.type === "hour")?.value ?? "12");
+    return Number.isFinite(hour) ? hour : new Date().getHours();
+  } catch {
+    return new Date().getHours();
+  }
+}
+
+function getLocalTimeGreeting() {
+  const h = getLocalHourLondon();
+  if (h < 12) return "Good morning";
+  if (h < 18) return "Good afternoon";
+  return "Good evening";
+}
+
+function nowTimeStr() {
+  const d = new Date();
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${hh}:${mm}`;
 }
 
 const NAME_BLOCKLIST = new Set(
@@ -251,10 +269,6 @@ function isAckOnly(userText: string) {
   return acks.has(t);
 }
 
-/**
- * ✅ NEW: Only treat as FAQ if it "looks like a question".
- * Prevents single-word answers like "loans" triggering FAQ matches.
- */
 function isQuestionLike(userText: string) {
   const raw = (userText || "").trim();
   if (!raw) return false;
@@ -262,7 +276,6 @@ function isQuestionLike(userText: string) {
 
   const t = normalise(raw);
 
-  // starts with a question word / helper phrase
   if (
     t.startsWith("can you") ||
     t.startsWith("could you") ||
@@ -277,9 +290,9 @@ function isQuestionLike(userText: string) {
     t.startsWith("are ") ||
     t.startsWith("will ") ||
     t.startsWith("does ")
-  ) return true;
+  )
+    return true;
 
-  // contains common question framing
   if (t.includes("can i ") || t.includes("do i ") || t.includes("should i ") || t.includes("am i ")) return true;
 
   return false;
@@ -472,16 +485,57 @@ function startsWithThanks(p: string) {
   return t.startsWith("thanks") || t.startsWith("thank you");
 }
 
-function ackPrefix(state: ChatState) {
-  const nm = state.name && state.name !== "there" ? state.name : null;
-  return nm ? `Thanks, ${nm}.` : "Thanks.";
+/**
+ * ✅ NEW: generates a short professional acknowledgement based on what the user said.
+ * This is the piece that stops “Thanks.” feeling half-baked.
+ */
+function buildAcknowledgement(userText: string, state: ChatState) {
+  const t = normalise(userText);
+  const name = state.name && state.name !== "there" ? state.name : null;
+
+  if (!t) return null;
+
+  // Keep it short. 1 line. Professional tone.
+  if (t.includes("consolidat")) {
+    return name
+      ? `Thanks, ${name} — I understand you’re looking to consolidate your debts.`
+      : `Thanks — I understand you’re looking to consolidate your debts.`;
+  }
+
+  if (t.includes("credit card") || t.includes("credit cards")) {
+    return name
+      ? `Thanks, ${name} — I understand it’s mainly your credit cards.`
+      : `Thanks — I understand it’s mainly your credit cards.`;
+  }
+
+  if (t.includes("loan") || t.includes("loans")) {
+    return name ? `Thanks, ${name} — I understand it’s mainly loans.` : `Thanks — I understand it’s mainly loans.`;
+  }
+
+  if (t.includes("high interest")) {
+    return name ? `Thanks, ${name} — high interest can make things feel relentless.` : `Thanks — high interest can make things feel relentless.`;
+  }
+
+  if (t.length <= 18) {
+    // short answer like "overdraft", "repayments", "arrears"
+    return name ? `Thanks, ${name} — understood.` : `Thanks — understood.`;
+  }
+
+  // generic but still reflective
+  return name ? `Thanks for explaining that, ${name}.` : `Thanks for explaining that.`;
 }
 
-function joinAckAndPrompt(state: ChatState, prompt: string) {
+function joinAckAndPrompt(state: ChatState, userText: string | null, prompt: string) {
   const p = (prompt || "").trim();
-  if (!p) return ackPrefix(state);
+  if (!p) return buildAcknowledgement(userText || "", state) || "Thanks.";
+
+  // If prompt already starts with Thanks/Thank you, don't prepend an acknowledgement
   if (startsWithThanks(p)) return p;
-  return `${ackPrefix(state)} ${p}`;
+
+  const ack = userText ? buildAcknowledgement(userText, state) : null;
+  if (ack) return `${ack} ${p}`.trim();
+
+  return `Thanks. ${p}`.trim();
 }
 
 function shouldAdvanceFree(userText: string) {
@@ -538,8 +592,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   }
 
   const currentStepDef = getStep(script, state);
-  const currentPromptFull =
-    currentStepDef?.prompt || (state.step === 1 ? FALLBACK_STEP1 : FALLBACK_STEP0);
+  const currentPromptFull = currentStepDef?.prompt || (state.step === 1 ? FALLBACK_STEP1 : FALLBACK_STEP0);
   const currentPromptClean = stripLeadingIntroFromPrompt(currentPromptFull) || currentPromptFull;
 
   if (isAckOnly(userText)) {
@@ -576,14 +629,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  /**
-   * ✅ FIX: FAQ interception ONLY when the user is actually asking a question.
-   * Prevents "loans" / "credit cards" being hijacked by FAQ.
-   */
   if (isQuestionLike(userText)) {
     const faqAnswer = bestFaqMatch(userText, faqs);
     if (faqAnswer) {
-      // append CLEAN prompt (prevents repeating the "Hello! My name’s Mark..." intro)
       const follow = currentPromptClean || currentPromptFull;
       const reply = `${faqAnswer}\n\n${follow}`;
       const key = promptKey(state.step, follow);
@@ -675,7 +723,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const nextPrompt = nextStepDef?.prompt || "Is there anything urgent like bailiff action or missed priority bills?";
 
     return res.status(200).json({
-      reply: joinAckAndPrompt(nextState, nextPrompt),
+      reply: joinAckAndPrompt(nextState, userText, nextPrompt),
       state: { ...nextState, lastPromptKey: promptKey(nextState.step, nextPrompt), lastStepPrompted: nextState.step },
     });
   }
@@ -694,14 +742,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const nextStepDef = getStep(script, nextState);
     const nextPrompt = nextStepDef?.prompt || "Roughly how much do you pay towards your debts each month?";
 
-    const empathy =
-      nextState.name && nextState.name !== "there"
-        ? `Thanks for explaining that, ${nextState.name}.`
-        : `Thanks for explaining that.`;
-
+    const ack = buildAcknowledgement(userText, nextState) || "Thanks for explaining that.";
     const combined = startsWithThanks(nextPrompt)
-      ? `${empathy} ${stripLeadingIntroFromPrompt(nextPrompt) || nextPrompt}`
-      : `${empathy} ${nextPrompt}`;
+      ? `${ack} ${stripLeadingIntroFromPrompt(nextPrompt) || nextPrompt}`
+      : `${ack} ${nextPrompt}`;
 
     return res.status(200).json({
       reply: combined.trim(),
@@ -724,7 +768,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       const nextPrompt = nextStepDef?.prompt || FALLBACK_STEP1;
 
       return res.status(200).json({
-        reply: joinAckAndPrompt(nextState, nextPrompt),
+        reply: joinAckAndPrompt(nextState, userText, nextPrompt),
         state: { ...nextState, lastPromptKey: promptKey(nextState.step, nextPrompt), lastStepPrompted: nextState.step },
       });
     }
@@ -764,7 +808,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   }
 
   const follow = scriptPrompt;
-  const combined = joinAckAndPrompt(state, follow);
+  const combined = joinAckAndPrompt(state, userText, follow);
 
   const key = promptKey(state.step, follow);
   if (state.lastPromptKey === key) {
