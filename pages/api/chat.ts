@@ -23,7 +23,7 @@ type FaqItem = {
 };
 
 type ChatState = {
-  step: number; // IMPORTANT: we treat this as the steps[] INDEX for progression
+  step: number; // treated as steps[] index
   name?: string | null;
   concern?: string | null;
   paying?: number | null;
@@ -251,6 +251,40 @@ function isAckOnly(userText: string) {
   return acks.has(t);
 }
 
+/**
+ * ✅ NEW: Only treat as FAQ if it "looks like a question".
+ * Prevents single-word answers like "loans" triggering FAQ matches.
+ */
+function isQuestionLike(userText: string) {
+  const raw = (userText || "").trim();
+  if (!raw) return false;
+  if (raw.includes("?")) return true;
+
+  const t = normalise(raw);
+
+  // starts with a question word / helper phrase
+  if (
+    t.startsWith("can you") ||
+    t.startsWith("could you") ||
+    t.startsWith("do you") ||
+    t.startsWith("should i") ||
+    t.startsWith("what ") ||
+    t.startsWith("why ") ||
+    t.startsWith("how ") ||
+    t.startsWith("when ") ||
+    t.startsWith("where ") ||
+    t.startsWith("is ") ||
+    t.startsWith("are ") ||
+    t.startsWith("will ") ||
+    t.startsWith("does ")
+  ) return true;
+
+  // contains common question framing
+  if (t.includes("can i ") || t.includes("do i ") || t.includes("should i ") || t.includes("am i ")) return true;
+
+  return false;
+}
+
 function extractName(userText: string): { ok: boolean; name?: string; reason?: string } {
   const raw = userText.trim();
 
@@ -400,12 +434,6 @@ function promptKey(step: number, prompt: string) {
   return `${step}:${normalise(prompt).slice(0, 120)}`;
 }
 
-/**
- * ✅ CRITICAL FIX:
- * Treat state.step as the steps[] INDEX first.
- * Only use id matching as a fallback.
- * This prevents loops when script IDs are not 0..N.
- */
 function getStep(script: ScriptDef, state: ChatState) {
   if (!script?.steps?.length) return null;
   if (script.steps[state.step]) return script.steps[state.step]; // index first
@@ -548,15 +576,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  const faqAnswer = bestFaqMatch(userText, faqs);
-  if (faqAnswer) {
-    const follow = currentPromptFull;
-    const reply = `${faqAnswer}\n\n${follow}`;
-    const key = promptKey(state.step, follow);
-    return res.status(200).json({
-      reply,
-      state: { ...state, lastPromptKey: key, lastStepPrompted: state.step },
-    });
+  /**
+   * ✅ FIX: FAQ interception ONLY when the user is actually asking a question.
+   * Prevents "loans" / "credit cards" being hijacked by FAQ.
+   */
+  if (isQuestionLike(userText)) {
+    const faqAnswer = bestFaqMatch(userText, faqs);
+    if (faqAnswer) {
+      // append CLEAN prompt (prevents repeating the "Hello! My name’s Mark..." intro)
+      const follow = currentPromptClean || currentPromptFull;
+      const reply = `${faqAnswer}\n\n${follow}`;
+      const key = promptKey(state.step, follow);
+      return res.status(200).json({
+        reply,
+        state: { ...state, lastPromptKey: key, lastStepPrompted: state.step },
+      });
+    }
   }
 
   const stepDef = getStep(script, state);
@@ -659,8 +694,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const nextStepDef = getStep(script, nextState);
     const nextPrompt = nextStepDef?.prompt || "Roughly how much do you pay towards your debts each month?";
 
-    const empathy = nextState.name && nextState.name !== "there" ? `Thanks for explaining that, ${nextState.name}.` : `Thanks for explaining that.`;
-    const combined = startsWithThanks(nextPrompt) ? `${empathy} ${stripLeadingIntroFromPrompt(nextPrompt) || nextPrompt}` : `${empathy} ${nextPrompt}`;
+    const empathy =
+      nextState.name && nextState.name !== "there"
+        ? `Thanks for explaining that, ${nextState.name}.`
+        : `Thanks for explaining that.`;
+
+    const combined = startsWithThanks(nextPrompt)
+      ? `${empathy} ${stripLeadingIntroFromPrompt(nextPrompt) || nextPrompt}`
+      : `${empathy} ${nextPrompt}`;
 
     return res.status(200).json({
       reply: combined.trim(),
@@ -706,7 +747,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  // OpenAI fallback (rare)
   const scriptPrompt = stepDef?.prompt || currentPromptFull;
   const openAiReply = await callOpenAI({
     userText,
