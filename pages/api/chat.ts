@@ -24,7 +24,7 @@ type FaqItem = {
 };
 
 type ChatState = {
-  step: number; // we treat this as index into steps[]
+  step: number; // index into steps[]
   name?: string | null;
   concern?: string | null;
   paying?: number | null;
@@ -35,7 +35,6 @@ type ChatState = {
   lastPromptKey?: string;
   lastStepPrompted?: number;
 
-  // used to prevent “repeat the same question” moments
   lastFreeAnswer?: string | null;
 };
 
@@ -201,7 +200,7 @@ function looksLikeGreetingOrSmallTalk(s: string) {
 function hasSubstantiveDebtContent(s: string) {
   const t = normalise(s);
   const debtish =
-    /debt|debts|repayment|repayments|loan|loans|credit|card|cards|overdraft|arrears|missed|behind|bailiff|ccj|interest|minimum|defaults|consolidat/i.test(
+    /debt|debts|repayment|repayments|loan|loans|credit|card|cards|overdraft|arrears|missed|behind|bailiff|ccj|interest|minimum|defaults|consolidat|fine|fines|pcn|parking|ticket|tickets|council tax|rent|mortgage|utilities|gas|electric|magistrates|hmrc|tax/i.test(
       t
     );
   const hasMoneyOrNumbers = /£\s*\d+|\b\d{2,}\b/.test(s);
@@ -331,7 +330,7 @@ function extractName(userText: string): { ok: boolean; name?: string; reason?: s
     const first = normalise(tokens[0]);
     if (NAME_BLOCKLIST.has(first)) return { ok: false, reason: "block" };
 
-    const debtish = /debt|debts|loan|loans|credit|card|cards|struggling|help|worried/i.test(t);
+    const debtish = /debt|debts|loan|loans|credit|card|cards|struggling|help|worried|fine|pcn|parking|ticket/i.test(t);
     if (!debtish && tokens.length <= 3) {
       const cand = titleCaseName(tokens.join(" "));
       const simple = normalise(cand);
@@ -404,9 +403,7 @@ function inferExpects(stepDef: StepDef | null): string {
   if (explicit) return explicit;
 
   const p = normalise(stepDef?.prompt || "");
-  if (/\bwho\s+i['’]?m\s+speaking\s+with\b/.test(p) || p.includes("first name") || (p.includes("name") && p.includes("speaking"))) {
-    return "name";
-  }
+  if (p.includes("first name") || (p.includes("name") && p.includes("speaking"))) return "name";
   if (p.includes("what would you say is the main issue") || p.includes("main issue")) return "concern";
   if (p.includes("how much") && p.includes("pay")) return "amounts";
 
@@ -443,7 +440,7 @@ function startsWithThanks(p: string) {
   return t.startsWith("thanks") || t.startsWith("thank you");
 }
 
-/** Detect debt types for “don’t repeat yourself” improvement */
+/** Debt types for “don’t repeat yourself” */
 function detectDebtTypes(text: string) {
   const t = normalise(text);
   const cards = t.includes("credit card") || t.includes("credit cards") || t.includes("cards");
@@ -452,9 +449,33 @@ function detectDebtTypes(text: string) {
   return { cards, loans, overdraft };
 }
 
+/** Priority / enforcement style debts (PCNs, council tax, rent arrears etc.) */
+function detectPriorityDebts(text: string) {
+  const t = normalise(text);
+
+  const parking =
+    t.includes("parking ticket") ||
+    t.includes("parking tickets") ||
+    t.includes("pcn") ||
+    t.includes("penalty charge") ||
+    t.includes("penalty notice");
+
+  const councilTax = t.includes("council tax");
+  const rent = t.includes("rent arrears") || (t.includes("rent") && t.includes("behind"));
+  const mortgage = t.includes("mortgage arrears") || (t.includes("mortgage") && t.includes("behind"));
+  const utilities = t.includes("gas") || t.includes("electric") || t.includes("electricity") || t.includes("utility");
+  const magistrates = t.includes("magistrates") || t.includes("court fine") || t.includes("court fines");
+  const hmrc = t.includes("hmrc") || t.includes("tax arrears") || (t.includes("tax") && t.includes("arrears"));
+  const child = t.includes("child maintenance") || t.includes("cms") || t.includes("maintenance");
+
+  const any = parking || councilTax || rent || mortgage || utilities || magistrates || hmrc || child;
+
+  return { any, parking, councilTax, rent, mortgage, utilities, magistrates, hmrc, child };
+}
+
 /**
- * If the user already said the debt type at step 0, don’t ask “main issue” as if it’s new.
- * Ask what *about* that debt is causing the issue.
+ * If the next prompt is “main issue”, but the user already gave a category,
+ * pivot into a professional clarifier rather than repeating.
  */
 function adaptMainIssuePromptIfRepeating(userText: string, prompt: string) {
   const p = (prompt || "").trim();
@@ -462,8 +483,33 @@ function adaptMainIssuePromptIfRepeating(userText: string, prompt: string) {
 
   const pn = normalise(p);
   const looksLikeMainIssue = pn.includes("main issue") || pn.includes("main problem") || pn.includes("main concern");
-
   if (!looksLikeMainIssue) return p;
+
+  const pr = detectPriorityDebts(userText);
+  if (pr.any) {
+    if (pr.parking) {
+      return "Thanks — with the parking tickets/PCNs, are there any deadlines, reminders, charge certificates, or enforcement agents involved at the moment?";
+    }
+    if (pr.councilTax) {
+      return "Thanks — with the council tax, are you behind right now, and have you had any reminders, summons, or enforcement letters?";
+    }
+    if (pr.rent || pr.mortgage) {
+      return "Thanks — with the housing payments, are you behind, and have you had any letters about possession or eviction action?";
+    }
+    if (pr.utilities) {
+      return "Thanks — with the utilities, are there arrears or disconnection threats we need to treat as urgent?";
+    }
+    if (pr.magistrates) {
+      return "Thanks — with court fines, do you have any enforcement letters or deductions already in place?";
+    }
+    if (pr.hmrc) {
+      return "Thanks — with HMRC/tax arrears, have they contacted you about payment demands or enforcement action?";
+    }
+    if (pr.child) {
+      return "Thanks — with child maintenance, are there arrears or enforcement/deductions happening right now?";
+    }
+    return "Thanks — are any of these debts urgent, with deadlines or enforcement action involved?";
+  }
 
   const { cards, loans, overdraft } = detectDebtTypes(userText);
   if (!(cards || loans || overdraft)) return p;
@@ -491,12 +537,26 @@ function buildAcknowledgement(userText: string, state: ChatState) {
 
   const saidNiceToMeetYou = t.includes("nice to meet you");
 
+  const pr = detectPriorityDebts(userText);
   const { cards, loans, overdraft } = detectDebtTypes(userText);
-  const hasDebtType = cards || loans || overdraft;
 
   const opener = saidNiceToMeetYou ? "Nice to meet you too." : null;
 
-  if (hasDebtType) {
+  if (pr.any) {
+    let what = "those debts";
+    if (pr.parking) what = "parking tickets/PCNs";
+    else if (pr.councilTax) what = "council tax";
+    else if (pr.rent || pr.mortgage) what = "housing payments";
+    else if (pr.utilities) what = "utilities";
+    else if (pr.magistrates) what = "court fines";
+    else if (pr.hmrc) what = "HMRC/tax";
+    else if (pr.child) what = "child maintenance";
+
+    const body = name ? `Thanks, ${name} — I understand it relates to ${what}.` : `Thanks — I understand it relates to ${what}.`;
+    return opener ? `${opener} ${body}` : body;
+  }
+
+  if (cards || loans || overdraft) {
     let debtPhrase = "";
     if (cards && loans) debtPhrase = "your credit cards and loans";
     else if (cards) debtPhrase = "your credit cards";
@@ -506,7 +566,6 @@ function buildAcknowledgement(userText: string, state: ChatState) {
     const body = name
       ? `Thanks, ${name} — I understand you’ve been struggling with ${debtPhrase}.`
       : `Thanks — I understand you’ve been struggling with ${debtPhrase}.`;
-
     return opener ? `${opener} ${body}` : body;
   }
 
@@ -558,7 +617,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
   const body = (req.body || {}) as ApiReqBody;
   const userText = (body.userMessage ?? body.message ?? "").toString().trim();
-  const language = (body.language || "English").toString();
 
   const history: string[] = Array.isArray(body.history)
     ? typeof (body.history as any)[0] === "string"
@@ -581,7 +639,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     ...body.state,
   };
 
-  // RESET (test tool)
+  // RESET
   if (normalise(userText) === "reset") {
     const first = getStep(script, { ...state, step: 0 })?.prompt || FALLBACK_STEP0;
     const s: ChatState = {
@@ -673,8 +731,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
       const nextStepDef = getStep(script, nextState);
       const nextPromptRaw = nextStepDef?.prompt || "How can I help you with your debts today?";
-
-      // if next prompt is “main issue” but user has already said debt types, adapt it
       const nextPrompt = adaptMainIssuePromptIfRepeating(userText, stripLeadingIntroFromPrompt(nextPromptRaw) || nextPromptRaw);
 
       return res.status(200).json({
@@ -706,38 +762,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     return res.status(200).json({
       reply: ask,
       state: { ...state, askedNameTries: nextTries, lastPromptKey: promptKey(state.step, ask), lastStepPrompted: state.step },
-    });
-  }
-
-  // AMOUNTS step
-  if (expects === "amounts") {
-    const { paying, affordable } = extractAmounts(userText);
-
-    const nextState: ChatState = {
-      ...state,
-      paying: typeof paying === "number" ? paying : state.paying ?? null,
-      affordable: typeof affordable === "number" ? affordable : state.affordable ?? null,
-    };
-
-    const haveBoth = typeof nextState.paying === "number" && typeof nextState.affordable === "number";
-
-    if (!haveBoth) {
-      const prompt =
-        "Thanks. Roughly what do you pay towards all debts each month, and what would feel affordable? For example: “I pay £600 and could afford £200.”";
-      return res.status(200).json({
-        reply: prompt,
-        state: { ...nextState, lastPromptKey: promptKey(state.step, prompt), lastStepPrompted: state.step },
-      });
-    }
-
-    nextState.step = state.step + 1;
-    const nextStepDef = getStep(script, nextState);
-    const nextPromptRaw = nextStepDef?.prompt || "Is there anything urgent like bailiff action or missed priority bills?";
-    const nextPrompt = stripLeadingIntroFromPrompt(nextPromptRaw) || nextPromptRaw;
-
-    return res.status(200).json({
-      reply: joinAckAndPrompt(nextState, userText, nextPrompt),
-      state: { ...nextState, lastPromptKey: promptKey(nextState.step, nextPrompt), lastStepPrompted: nextState.step },
     });
   }
 
@@ -777,7 +801,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
       const nextStepDef = getStep(script, nextState);
       const nextPromptRaw = nextStepDef?.prompt || "What would you say is the main issue with the debts at the moment?";
-      // ✅ KEY FIX: adapt “main issue” to avoid repeating debt type
       const nextPrompt = adaptMainIssuePromptIfRepeating(userText, stripLeadingIntroFromPrompt(nextPromptRaw) || nextPromptRaw);
 
       return res.status(200).json({
@@ -804,7 +827,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  // Deterministic fallback: acknowledge + repeat the current step prompt (adapt if it’s “main issue” repeat)
+  // Deterministic fallback: acknowledge + current step prompt (adapt if needed)
   const scriptPromptRaw = stepDef?.prompt || currentPromptFull;
   const scriptPrompt = adaptMainIssuePromptIfRepeating(userText, stripLeadingIntroFromPrompt(scriptPromptRaw) || scriptPromptRaw);
 
@@ -825,4 +848,3 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     state: { ...state, lastPromptKey: key, lastStepPrompted: state.step },
   });
 }
-
