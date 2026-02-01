@@ -84,7 +84,7 @@ function titleCaseName(s: string) {
 }
 
 /**
- * ✅ Use Europe/London time so greetings match the UK user experience,
+ * Use Europe/London time so greetings match the UK user experience,
  * not Vercel/server timezone.
  */
 function getLocalHourLondon() {
@@ -361,14 +361,14 @@ function bestFaqMatch(userText: string, faqs: FaqItem[]) {
   let best: { score: number; a: string } | null = null;
 
   for (const f of faqs) {
-    const q = normalise(f.q || "");
+    const q = normalise((f as any).q || "");
     if (!q) continue;
 
     let score = 0;
     if (t === q) score += 100;
     if (t.includes(q) || q.includes(t)) score += 60;
 
-    const tags = (f.tags || []).map(normalise);
+    const tags = ((f as any).tags || (f as any).keywords || []).map(normalise);
     for (const tag of tags) {
       if (tag && t.includes(tag)) score += 10;
     }
@@ -379,7 +379,7 @@ function bestFaqMatch(userText: string, faqs: FaqItem[]) {
     for (const tok of qTokens) if (tTokens.has(tok)) overlap++;
     score += overlap;
 
-    if (!best || score > best.score) best = { score, a: f.a };
+    if (!best || score > best.score) best = { score, a: (f as any).a };
   }
 
   if (best && best.score >= 18) return best.a;
@@ -449,7 +449,7 @@ function promptKey(step: number, prompt: string) {
 
 function getStep(script: ScriptDef, state: ChatState) {
   if (!script?.steps?.length) return null;
-  if (script.steps[state.step]) return script.steps[state.step]; // index first
+  if (script.steps[state.step]) return script.steps[state.step];
   const byId = script.steps.find((s) => s.id === state.step);
   return byId || script.steps[0];
 }
@@ -486,8 +486,7 @@ function startsWithThanks(p: string) {
 }
 
 /**
- * ✅ NEW: generates a short professional acknowledgement based on what the user said.
- * This is the piece that stops “Thanks.” feeling half-baked.
+ * A short professional acknowledgement based on what the user said.
  */
 function buildAcknowledgement(userText: string, state: ChatState) {
   const t = normalise(userText);
@@ -495,33 +494,40 @@ function buildAcknowledgement(userText: string, state: ChatState) {
 
   if (!t) return null;
 
-  // Keep it short. 1 line. Professional tone.
+  // ✅ FIX: acknowledge BOTH when both are present
+  const mentionsCards = t.includes("credit card") || t.includes("credit cards") || t.includes("cards");
+  const mentionsLoans = t.includes("loan") || t.includes("loans");
+
+  if (mentionsCards && mentionsLoans) {
+    return name
+      ? `Thanks, ${name} — I understand it’s mainly your credit cards and loans.`
+      : `Thanks — I understand it’s mainly your credit cards and loans.`;
+  }
+
   if (t.includes("consolidat")) {
     return name
       ? `Thanks, ${name} — I understand you’re looking to consolidate your debts.`
       : `Thanks — I understand you’re looking to consolidate your debts.`;
   }
 
-  if (t.includes("credit card") || t.includes("credit cards")) {
-    return name
-      ? `Thanks, ${name} — I understand it’s mainly your credit cards.`
-      : `Thanks — I understand it’s mainly your credit cards.`;
+  if (mentionsCards) {
+    return name ? `Thanks, ${name} — I understand it’s mainly your credit cards.` : `Thanks — I understand it’s mainly your credit cards.`;
   }
 
-  if (t.includes("loan") || t.includes("loans")) {
+  if (mentionsLoans) {
     return name ? `Thanks, ${name} — I understand it’s mainly loans.` : `Thanks — I understand it’s mainly loans.`;
   }
 
   if (t.includes("high interest")) {
-    return name ? `Thanks, ${name} — high interest can make things feel relentless.` : `Thanks — high interest can make things feel relentless.`;
+    return name
+      ? `Thanks, ${name} — high interest can make things feel relentless.`
+      : `Thanks — high interest can make things feel relentless.`;
   }
 
   if (t.length <= 18) {
-    // short answer like "overdraft", "repayments", "arrears"
     return name ? `Thanks, ${name} — understood.` : `Thanks — understood.`;
   }
 
-  // generic but still reflective
   return name ? `Thanks for explaining that, ${name}.` : `Thanks for explaining that.`;
 }
 
@@ -529,7 +535,6 @@ function joinAckAndPrompt(state: ChatState, userText: string | null, prompt: str
   const p = (prompt || "").trim();
   if (!p) return buildAcknowledgement(userText || "", state) || "Thanks.";
 
-  // If prompt already starts with Thanks/Thank you, don't prepend an acknowledgement
   if (startsWithThanks(p)) return p;
 
   const ack = userText ? buildAcknowledgement(userText, state) : null;
@@ -653,9 +658,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       const name = nameParse.name;
       const isSameAsMark = normalise(name) === "mark";
 
-      const greet = isSameAsMark
-        ? `Nice to meet you, Mark — nice to meet a fellow Mark.`
-        : `Nice to meet you, ${name}.`;
+      const greet = isSameAsMark ? `Nice to meet you, Mark — nice to meet a fellow Mark.` : `Nice to meet you, ${name}.`;
 
       const nextState: ChatState = {
         ...state,
