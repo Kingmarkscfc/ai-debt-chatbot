@@ -1,1 +1,83 @@
-PASTE_THE_FULL_JSON_I_SENT_HERE
+{
+  "steps": [
+    {
+      "id": 1,
+      "name": "intro",
+      "expects": "concern",
+      "prompt": "Hello! My name’s Mark. What prompted you to seek help with your debts today?"
+    },
+    {
+      "id": 2,
+      "name": "capture_name",
+      "expects": "name",
+      "prompt": "Thank you — and I’m sorry you’re dealing with this. Please can you let me know who I’m speaking with?"
+    },
+    {
+      "id": 3,
+      "name": "main_concern",
+      "expects": "issue",
+      "prompt": "Just so I can help find you the right solution, what would you say your main concern is with the debts?"
+    },
+    {
+      "id": 4,
+      "name": "compliance_and_factfind_intro",
+      "expects": "free",
+      "prompt": "Before we look at solutions, I just need to make you aware there is no obligation for you to act on any information you receive here, and there are sources of free debt advice and services available. You can find out more at moneyhelper.org.uk. To continue, please complete a few details so we can help you find the right solution. [TRIGGER: OPEN_FACT_FIND_POPUP]"
+    },
+    {
+      "id": 5,
+      "name": "factfind_capture",
+      "expects": "profile",
+      "prompt": "[POPUP: FACT_FIND_CLIENT_INFORMATION] Please complete the fact find. Once submitted, your details will link to your client portal and a client reference will be created."
+    },
+    {
+      "id": 6,
+      "name": "total_debt",
+      "expects": "total_debt",
+      "prompt": "Thanks for providing that information — we’re now building your personal client portal and you’ll have access to it very shortly. Well done for getting this far. Roughly how much debt do you have outstanding? [POPUP: DEBT_SLIDER £0–£100000+ in £500 steps]"
+    },
+    {
+      "id": 7,
+      "name": "monthly_payments",
+      "expects": "paying",
+      "prompt": "Thank you. Roughly how much are you paying per month to your creditors?"
+    },
+    {
+      "id": 8,
+      "name": "affordable_offer",
+      "expects": "affordable",
+      "prompt": "If we could consolidate everything into one payment, how much do you feel you can afford to offer your creditors on a monthly basis? [POPUP: AFFORDABLE_SLIDER £0–£2000+ in £50 steps]"
+    },
+    {
+      "id": 9,
+      "name": "portal_praise_and_intro",
+      "expects": "free",
+      "prompt": "You’re doing a great job so far, {name}. You’ve helped me understand your situation clearly. The next step is your personal client portal. Here you can upload documents, add supporting information, see live progress updates, and message the team directly. We’ll keep you updated so you can focus on life without constant financial worry."
+    },
+    {
+      "id": 10,
+      "name": "open_portal",
+      "expects": "free",
+      "prompt": "[TRIGGER: OPEN_CLIENT_PORTAL] The chat will stay available alongside your client portal so you can continue talking while you complete the next steps."
+    },
+    {
+      "id": 11,
+      "name": "debts_tab",
+      "expects": "debts_list",
+      "prompt": "[PORTAL: TAB_2_OUTSTANDING_DEBTS] Please add each outstanding debt (creditor, balance, reference if known)."
+    },
+    {
+      "id": 12,
+      "name": "debts_confirmed",
+      "expects": "free",
+      "prompt": "Thank you, {name}, for letting us know about all of your outstanding debts. If you need to make changes or add additional debts, you can log back into the client portal at any time."
+    },
+    {
+      "id": 13,
+      "name": "handover_questions",
+      "expects": "free",
+      "prompt": "Your case will now be passed to the admin and assessments team to review what options you qualify for. We will contact you shortly. Do you have any further questions at this stage?"
+    }
+  ]
+}
+
