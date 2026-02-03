@@ -1257,8 +1257,8 @@ function hasExtraDebtTerm(userText: string) {
 
     // word-ish boundary to reduce false hits on very short terms
     if (nt.length <= 3) {
-      const safe = nt.replace(/[.*+?^${}()|[\]\]/g, "\$&");
-      const re = new RegExp(`\b${safe}\b`, "i");
+      const safe = nt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const re = new RegExp(`\\b${safe}\\b`, "i");
       if (re.test(raw)) return true;
       continue;
     }
