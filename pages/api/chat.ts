@@ -7,7 +7,7 @@ type Role = "user" | "assistant";
 type StepDef = {
   id?: number;
   name?: string;
-  expects?: string; // "name" | "concern" | "issue" | "profile" | "total_debt" | "paying" | "affordable" | "debts_list" | etc
+  expects?: string; // "name" | "concern" | "amounts" | etc
   prompt: string;
   keywords?: string[];
 };
@@ -23,12 +23,10 @@ type FaqItem = {
 };
 
 type ChatState = {
-  // IMPORTANT: step is the STEP INDEX (0..n-1), not StepDef.id
-  step: number;
+  step: number; // IMPORTANT: this is the step INDEX (0..n-1), not the StepDef.id
   name?: string | null;
   concern?: string | null; // what prompted them / overall concern
   issue?: string | null; // main issue with the debts
-  totalDebt?: number | null;
   paying?: number | null;
   affordable?: number | null;
   urgent?: string | null;
@@ -51,12 +49,7 @@ type ApiReqBody = {
 type ApiResp = {
   reply: string;
   state: ChatState;
-
-  // UI hints for the frontend (safe: ignored if not implemented)
-  uiTrigger?: string; // e.g. "OPEN_CLIENT_PORTAL" / "OPEN_FACT_FIND_POPUP"
-  popup?: string; // e.g. "FACT_FIND_CLIENT_INFORMATION" / "DEBT_SLIDER" / "AFFORDABLE_SLIDER"
-  portalTab?: string; // e.g. "TAB_2_OUTSTANDING_DEBTS"
-  openPortal?: boolean; // legacy flag used by some UIs
+  openPortal?: boolean;
   displayName?: string;
 };
 
@@ -159,74 +152,81 @@ const NAME_BLOCKLIST = new Set(
 /**
  * Expanded profanity list (used only for name parsing / abusive slurs as "names").
  * This does NOT block normal debt messages; it just stops "names" like swearwords.
- *
- * NOTE: This list is built from your Naughty words list docx.
  */
 const PROFANITY = [
-  "anal",
-  "anal sex",
-  "anus",
   "arse",
+  "arsehead",
   "arsehole",
   "ass",
   "asshole",
   "bastard",
   "bitch",
   "bloody",
-  "blowjob",
   "bollocks",
-  "boner",
-  "boob",
-  "boobs",
+  "brotherfucker",
   "bugger",
   "bullshit",
-  "buttplug",
-  "clit",
+  "child-fucker",
   "cock",
   "cocksucker",
-  "coon",
   "crap",
-  "cum",
   "cunt",
+  "dammit",
+  "damn",
+  "damned",
   "dick",
-  "dildo",
+  "dick-head",
+  "dickhead",
+  "dumb-ass",
+  "dumbass",
   "dyke",
   "fag",
   "faggot",
-  "felch",
+  "father-fucker",
   "fuck",
   "fucker",
   "fucking",
-  "handjob",
-  "homo",
-  "jerk off",
-  "jizz",
+  "goddammit",
+  "goddamn",
+  "goddamned",
+  "goddamnmotherfucker",
+  "horseshit",
   "kike",
-  "masterbate",
-  "masturbate",
   "motherfucker",
   "nigga",
   "nigger",
+  "pigfucker",
   "piss",
-  "porn",
   "prick",
   "pussy",
-  "rape",
-  "retard",
-  "rimjob",
   "shit",
+  "shit ass",
+  "shite",
+  "sisterfucker",
   "slut",
-  "spastic",
-  "tits",
+  "son of a bitch",
+  "turd",
   "twat",
   "wank",
   "wanker",
   "whore",
+  "fucked",
+  "fuck off",
+  "goddamnit",
+  "godsdamn",
+  "jack-ass",
+  "jackass",
+  "mother-fucker",
+  "nigra",
+  "sisterfuck",
+  "spastic",
+  "Shit cunt",
+  "tranny",
 ];
 
 function containsProfanity(s: string) {
   const t = normalise(s);
-  return PROFANITY.some((w) => w && t.includes(normalise(w)));
+  return PROFANITY.some((w) => w && t.includes(w));
 }
 
 /** Acknowledgement-only messages should NOT advance any step. */
@@ -341,7 +341,7 @@ function smallTalkReply(userText: string) {
   return null;
 }
 
-/** Extra debt / finance terms (from your "likely debt terms" list docx) */
+/** Extra debt / finance terms (from your "likely debt terms" list) */
 const DEBT_TERMS_EXTRA = [
   "Accounts",
   "Accounts payable",
@@ -363,89 +363,918 @@ const DEBT_TERMS_EXTRA = [
   "Bankruptcy",
   "Business health check",
   "Business restructuring or turnaround",
-  "CCJ",
-  "CCJ’s",
   "Cash flow",
-  "Cash flow forecast",
-  "Charging order",
-  "Collection agency",
-  "Collections",
-  "Company voluntary arrangement (CVA)",
-  "Consolidation loan",
-  "Consumer credit",
+  "Certificate of satisfaction",
+  "Charge for payment",
+  "Company registration number",
+  "Company Voluntary Arrangement",
+  "CVA",
+  "Compulsory liquidation",
+  "Concentration",
+  "Consolidation",
+  "Consolidating",
+  "Consumer Credit Act 1974",
+  "Contractual payments",
   "County Court Judgment",
-  "Credit agreement",
-  "Credit card debt",
-  "Credit limit",
+  "CCJ",
+  "CCJs",
+  "CCJ’s",
+  "Court claim form",
+  "Credit control",
+  "Credit insurance",
+  "Credit management",
+  "Credit period",
   "Credit rating",
-  "Credit report",
-  "Credit score",
+  "Credit reference agency",
+  "Credit reports",
+  "Credit terms",
   "Creditor",
-  "Creditors",
-  "Debt",
-  "Debt adviser",
-  "Debt advice",
-  "Debt management plan (DMP)",
-  "Debt relief order (DRO)",
-  "Debt settlement",
-  "Debt write off",
+  "Creditors Voluntary Liquidation",
+  "CVL",
+  "Creditworthiness",
+  "Day Sales Outstanding",
+  "DSO",
+  "Debt’s",
+  "Debt Consolidation",
+  "Debt collection agency",
+  "Debt relief order",
+  "Debt restructuring",
+  "Debtor",
+  "Debtor book",
+  "Debtor days",
   "Default",
-  "Debt collector",
+  "Defaults",
+  "Default notice",
   "Direct debit",
-  "Doorstep collector",
-  "Enforcement",
-  "Equity",
-  "Financial statement",
-  "Garnishment",
-  "High court enforcement officer",
-  "HMRC debt",
-  "Hire purchase",
+  "Dispute",
+  "Factoring",
+  "Financial Conduct Authority",
+  "FCA",
+  "Forward dating",
+  "Fraud",
+  "Guarantees",
+  "Her Majesty’s Revenue & Customs",
+  "HMRC",
+  "Informal arrangement",
+  "Initial writ",
   "Insolvency",
-  "IVA",
-  "Individual voluntary arrangement (IVA)",
-  "Interest",
+  "Insolvency Act 1986",
+  "Insolvency Practitioner",
+  "IP",
+  "IPS",
+  "Insolvency Rules",
+  "Insolvent",
   "Interest rate",
+  "Interim order",
+  "Invoice",
+  "Invoice discounting",
+  "Invoice finance",
+  "Late Payments",
+  "Letter before action",
+  "Liquidation",
+  "Liquidator",
+  "Nominee",
+  "Non-recourse facility",
+  "Office of Fair Trading",
+  "OFT",
+  "Order-to-collections process",
+  "Preferential creditor",
+  "Proof of debt",
+  "Proof of delivery",
+  "Protracted default",
+  "Proxy",
+  "Proxyholder",
+  "Receiver",
+  "Receivership",
+  "Sales ledger",
+  "Secured creditor",
+  "Set aside judgment",
+  "Small claims",
+  "Statutory demand",
+  "Summary cause",
+  "Summons",
+  "Supervisor",
+  "Token payments",
+  "Unsecured creditor",
+  "Winding-up",
+  "Winding-up petition",
+  "Working capital",
+  "Year-end accounts",
+  "Debt",
+  "Principal",
+  "Interest",
+  "Balance",
+  "Liability",
+  "Collateral",
+  "Obligation",
+  "Indebtedness",
+  "Note",
+  "Bond",
   "Lien",
-  "Loan",
-  "Loans",
-  "Mortgage arrears",
+  "Bill",
+  "Due",
+  "Owing",
+  "Debit",
   "Overdraft",
-  "Payment plan",
-  "PCN",
-  "Penalty charge notice",
-  "Priority debts",
-  "Rent arrears",
-  "Secured debt",
-  "Unsecured debt",
-  "Utility arrears",
-  "Warrant of control",
-  // NOTE: keep going in your real file if you extend the list further later.
+  "Deficit",
+  "Encumbrance",
+  "Charge",
+  "Statement",
+  "Commitment",
+  "Duty",
+  "IOU",
+  "Promissory Note",
+  "Mortgage",
+  "Credit Card",
+  "Student Loan",
+  "Auto Loan",
+  "Personal Loan",
+  "Payday Loan",
+  "Medical Debt",
+  "HELOC",
+  "Store Card",
+  "Home Equity Loan",
+  "Catalogue Debt",
+  "Council Tax Arrears",
+  "Utility Bill Debt",
+  "Rent Arrears",
+  "Tax Lien",
+  "Joint Debt",
+  "Logbook Loan",
+  "Car Finance",
+  "Buy Now Pay Later",
+  "Gambling Debt",
+  "Bridge Loan",
+  "Peer-to-Peer Loan",
+  "Cash Advance",
+  "Private Student Loan",
+  "Federal Student Loan",
+  "Second Mortgage",
+  "Overdue Fine",
+  "Court Fine",
+  "Judgment Debt",
+  "Consumer Debt",
+  "Garnishment",
+  "Repossession",
+  "Foreclosure",
+  "Judgment",
+  "Decree",
+  "Diligence",
+  "Charging Order",
+  "Liability Order",
+  "Warrant of Execution",
+  "Statute of Limitations",
+  "Bailiff",
+  "Amortization",
+  "Accrual",
+  "Write-off",
+  "Charge-off",
+  "Delinquency",
+  "Secured Debt",
+  "Unsecured Debt",
+  "Revolving Debt",
+  "Instalment Debt",
+  "Floating Charge",
+  "Hypothecation",
+  "Pari-passu",
+  "Subordinated Debt",
+  "Mezzanine Debt",
+  "Maturity",
+  "Debenture",
+  "Senior Debt",
+  "Junior Debt",
+  "Non-recourse Debt",
+  "Guarantor",
+  "Co-signer",
+  "Indenture",
+  "Escrow",
+  "Title",
+  "Equity",
+  "Water",
+  "Water Arrears",
+  "Council tax",
+  "Gas",
+  "Gas arrears",
+  "Electric arrears",
+  "Mobile phone bill",
+  "Mobile Phone arrears",
+  "Vet Bill",
+  "Vet Bills",
+  "Dentist arrears",
+  "Dentist",
+  "Fines",
+  "Azzurro Associates Limited",
+  "Baker Tilly",
+  "Bamboo",
+  "Ballymena Credit Union",
+  "Bamboo Finance",
+  "Barbon Insurance Group",
+  "BDO",
+  "Believe Housing",
+  "Better Borrow",
+  "Beyond Housing",
+  "Billings finance",
+  "Blue Motor Finance",
+  "Blue Square",
+  "Blues and Twos credit union",
+  "BMW",
+  "Boom Credit Union ALSO West Sussex Credit Union",
+  "BPO Collections",
+  "Brachers LLP",
+  "Bradford District Credit Union",
+  "Brighthouse",
+  "Bristol & wessex water",
+  "BRISTOL CREDIT UNION LIMITED (I)",
+  "BT",
+  "Buchanan Clark & Wells",
+  "Buddy Loans t/a Advancis Ltd",
+  "Bulb Energy (NOW OCTOPUS)",
+  "Business Finance Solutions",
+  "Buy as You View",
+  "BW Legal",
+  "C.A.R.S",
+  "Calderdale Credit Union",
+  "CAMBRIAN credit union",
+  "Cambridge Water",
+  "CAPITAL ON TAP (NEW WAVE)",
+  "Cardiff & Vale Credit Union, Cardiff and Vale",
+  "CARDIFF CREDIT UNION(I)",
+  "Carlisle Credit Union",
+  "Carnegie Consumer Finance Limited",
+  "Cash Converters",
+  "Cash Euro Net",
+  "Cash Generator",
+  "Cash Genie",
+  "Castle Community Bank",
+  "Coal Island Credit Union",
+  "Cater Allen",
+  "CCS Collect",
+  "Cheque Centres Limited",
+  "Chestergates Veterinary LTD",
+  "Child Support Agency",
+  "Citysave Credit Union Ltd",
+  "CL Finance Limited",
+  "Claims Advisory Group",
+  "Clever Money (Blackpool, Fylde & Wyre Credit Union Ltd)",
+  "Clockwise Credit Union",
+  "Clonard Credit Union",
+  "Close Brothers",
+  "CLS Finance",
+  "Commsave Credit Union",
+  "Connaught Collections",
+  "Co-op Credit Union",
+  "Creditstar UK Limited",
+  "Curvissa",
+  "Dacorum Credit Union",
+  "Danske Bank",
+  "Darlington Credit Union",
+  "Derry Credit Union",
+  "Drafty.co.uk",
+  "DRAGON SAVERS CREDIT UNION",
+  "Dromara & Drumgooland Credit Union",
+  "DWP",
+  "East Sussex Credit Union",
+  "EDF Energy",
+  "EE Insolvency Team",
+  "Elevate Credit International (Sunny)",
+  "Elfin Market",
+  "Engage Credit",
+  "Enterprise Credit Union",
+  "Business Enterprise Fund",
+  "Erewash Credit Union",
+  "Essex and Suffolk Water",
+  "Etika Finance",
+  "West Suffolk Council",
+  "Everyday Loans",
+  "E.ON",
+  "Express Gifts",
+  "Express Solicitors",
+  "Every Day Loans",
+  "Fair for you Enterprise",
+  "Family Finance",
+  "Fairshare Credit Union",
+  "FCE Bank PLC",
+  "FGA Capital/ FCA Automotive",
+  "Finance U Limited",
+  "First Response Finance",
+  "First Rate Credit Union",
+  "Fintern limited / Abound",
+  "Five Lamps Organisation",
+  "Flow Energy",
+  "Flo Gas",
+  "Fly now pay later",
+  "Fluro Loans",
+  "FML Loans",
+  "Funding Circle",
+  "Funding Corporation",
+  "Future Finance",
+  "FUNERAL safe",
+  "George Banco",
+  "Glasgow Credit Union Limited",
+  "Glasgow Housing Association",
+  "Glo Loans",
+  "GLENSIDE FINANCE LTD",
+  "GMAC",
+  "Great Western Credit Union",
+  "Match the Cash t/a Guarantor My Loan (Match the Cash trading name)",
+  "Guinness Partnership",
+  "H&T Pawnbrokers",
+  "Harp and Crown Credit Union",
+  "Hastings Direct Loans",
+  "Hastings Car Insurance",
+  "Heliodor Mortgages is a trading name of Topaz Finance Limited",
+  "Hoot credit union",
+  "Hillingdon Credit Union",
+  "Hitachi Capital/Credit / Novuna",
+  "Hoist Finance UK",
+  "HM Revenue & Customs",
+  "HMRC - benefits overpayments",
+  "Howden Joinery",
+  "Hull University",
+  "HULL & EAST YORKSHIRE CREDIT UNION (I)",
+  "Ikano Finance",
+  "IND",
+  "Indigo Michael Ltd",
+  "Instant Cash loans",
+  "Insure The Box",
+  "iSmart Consumer Services",
+  "IWOCA / IWOKA LOANS",
+  "JN Bank Limited are the same as Jamaica Bank",
+  "Just Credit Union",
+  "Kaleidoscope",
+  "Karbon Homes",
+  "Kensington Mortgages c/o Capital Recoveries",
+  "Koyo Loans",
+  "Knowsley Credit Union",
+  "Kroo Bank",
+  "La Redoute",
+  "Land & Property Services",
+  "Legal Aid Agency",
+  "Lending Stream",
+  "Lending Works",
+  "Leap Utilites",
+  "Lendwise",
+  "Leeds City Credit Union",
+  "Lewisham Credit Union",
+  "Likely Loan",
+  "LINK",
+  "Lifestyle Loans",
+  "Livelend",
+  "Central Liverpool Credit Union",
+  "Llanelli & District Credit Union",
+  "Loans 2 Go",
+  "Loans at home",
+  "Loans by Mal",
+  "London Capital Credit Union  / london community credit union",
+  "Loughguile Credit Union",
+  "London Mutual Credit Union",
+  "LURGAN CREDIT UNION",
+  "Max Recovery",
+  "Malden Housing Authority",
+  "Marsh Finance",
+  "Merligen Investments",
+  "Moneybarn",
+  "Manchester Credit Union",
+  "Moneyway",
+  "Monzo",
+  "Moorcroft Debt Recovery",
+  "Morses Club",
+  "Mortgage Express",
+  "Motonovo Finance",
+  "Motor Insurers Bureau",
+  "Motormile Finance",
+  "Mr Lender",
+  "Mutual Clothing",
+  "My Community Finance / Bank  (Brent Shine Credit Union)",
+  "NPower",
+  "Next Directory",
+  "Neyber Ltd",
+  "NHS CREDIT UNION (I)",
+  "No1 Copperpot Credit Union",
+  "Nottingham Credit Union Ltd",
+  "NORTH WALES CREDIT UNION (I)",
+  "Northumbrian Water",
+  "NovaLoans/Cash4UNow",
+  "NEFirst Credit Union",
+  "O2 UK",
+  "Omagh Credit Union",
+  "Oakbrook Finance",
+  "214",
+  "One Stop Money Shop",
+  "Oodle Finance",
+  "Ovo Energy",
+  "Octopus Energy",
+  "Partners Credit Union",
+  "paratusamc",
+  "Payl8r (paylater)",
+  "Peabody Housing",
+  "Peachy.co.uk",
+  "Pennine Community Credit Union",
+  "Penny Post Credit Union",
+  "PennyBurn Credit Union",
+  "Perch Capital Limited",
+  "Perfect Homes",
+  "Peugeot Finance (PSA)",
+  "Piggy Bank",
+  "Pixie Loans",
+  "Plata Loans (BAMBOO)",
+  "Platform",
+  "Places for People",
+  "Plend",
+  "Plane Saver Credit Union",
+  "Police Credit Union (PCU) aka Serve and Protect",
+  "Porterbrook House Ltd",
+  "Portsmouth Water",
+  "Powys Council",
+  "PRA Group",
+  "PRAC Finance",
+  "Progressive Money",
+  "Provident",
+  "PSAF (money options)",
+  "Quick Quid",
+  "Reevo Money",
+  "Reward Rate",
+  "Ratesetter",
+  "RCI Financial",
+  "RIA financial services",
+  "Rise Credit Card",
+  "Specialist Motor Finance",
+  "Safetynet",
+  "Salford Credit Union",
+  "Salad Money",
+  "Salary Finance",
+  "Santander Consumer Finance",
+  "Satsuma Loans",
+  "Savvy (TICK TOCK LOANS)",
+  "SSE ENERGY",
+  "Scottish Power",
+  "Secure Trust Bank",
+  "Severn Trent Water",
+  "Shawbrook",
+  "Shell Energy Retail Limited (NOW OCTOPUS)",
+  "Shoosmiths LLP",
+  "Short Term Finance",
+  "Sheffield Credit Union",
+  "SLL Capital",
+  "Smart Credit Union",
+  "Snap On Finance",
+  "Snap on Tools",
+  "Snap Finance",
+  "South East Water",
+  "South Manchester Credit Union",
+  "South Staffs Water",
+  "South West Water",
+  "South Yorkshire Credit Union",
+  "Southern Water",
+  "Spark Energy",
+  "Startline Motor Finance",
+  "Street UK (street Credit uk)",
+  "Student Loans Company",
+  "Studio Cards & Gifts",
+  "Stockport Credit Union",
+  "Sunny Loans",
+  "Swift Sterling",
+  "Swinton",
+  "Trust Two",
+  "T Mobile (EE)",
+  "Talk Talk",
+  "TBI Financial Services",
+  "Tesco Mobile",
+  "Teachers Pension Fund",
+  "TFS Loans",
+  "Thames Water",
+  "The Funding Corporation",
+  "The Sheriffs Office",
+  "Transave UK Credit Union",
+  "Travis Perkins",
+  "TM Advances",
+  "UK Credit Ltd",
+  "Updraft",
+  "Unify Credit Union Limited",
+  "United Utilities",
+  "Unity",
+  "Utility Point",
+  "Utilita Energy",
+  "V12 Personal Finance",
+  "Voyager Alliance Credit Union",
+  "Vehicle Credit Ltd",
+  "Virgin Credit Card",
+  "Virgin Money (Loan) WPM",
+  "Virgin Media",
+  "Vodafone",
+  "Quickly Finance",
+  "Wage Day Advance",
+  "Welsh Water",
+  "West Sussex and Surrey Credit Union",
+  "West 28th Street Ltd",
+  "WESTERN CIRCLE LTD",
+  "Wessex Water",
+  "Wesleyn / Wesleyan Bank",
+  "Weflex",
+  "Wythenshawe Community Housing Group",
+  "Wonga",
+  "Wilkin Chapman",
+  "Wiltshire and Swindon Credit Union",
+  "XS Direct",
+  "Yorkshire Water",
+  "Christ Church",
+  "Adur & Worthing District Council",
+  "Allerdale Borough Council",
+  "Amber Valley Borough Council",
+  "Arun District Council",
+  "Ashfield Borough / District Council",
+  "Ashfield Borough Council",
+  "Ashford Borough Council",
+  "Aylesbury Vale District Council",
+  "Babergh District Council",
+  "Barnet (Londong Borough of Barnet)",
+  "Barnsley Borough Council",
+  "Barrow-in-Furness Borough Council",
+  "Basildon Borough Council",
+  "Basingstoke & Deanne Borough Council",
+  "Bassetlaw District Council",
+  "Bath and North East Somerset",
+  "Bedford Borough Council",
+  "Billing Finance",
+  "Birmingham City Council",
+  "Blaby District Council",
+  "Blackburn with Darwen Borough Council",
+  "Blackpool Council",
+  "Blaenau Gwent",
+  "Bolsover District Council",
+  "Bolton Borough Council",
+  "Boston Borough Council",
+  "Bournemouth + Christ Chucrch  + Poole Council (BCP)",
+  "Bournemouth Borough Council",
+  "Bracknell Forest Borough Council",
+  "Bradford City Council / Metro. Bradford M D Coucil",
+  "Braintree District Council",
+  "Brentwood Borough Council",
+  "Brighton and Hove city Council",
+  "Bridgend Council",
+  "Bristol City Council",
+  "Broadland District Council",
+  "Bromley",
+  "Bromsgrove District Council",
+  "Broxtowe Borough Council",
+  "Buckinghamshire Council",
+  "Burnley Borough Council",
+  "Bury Borough Council",
+  "Caerphilly County Borough Council",
+  "Calderdale Borough Council",
+  "Cambridge City Council",
+  "Camden",
+  "Cannock Chase District Council",
+  "Canterbury City Council",
+  "Cardiff City Council",
+  "Carlisle City Council",
+  "Carmarthenshire Council",
+  "Castle Point District Council",
+  "Central Bedfordshire Council",
+  "Charnwood Borough Council",
+  "Chelmsford City Council",
+  "Cheltenham Borough Council",
+  "Cherwell District Council",
+  "Cheshire East council (same as cheshire west & chester Council)",
+  "Cheshire West and Chester Council",
+  "Chesterfield Borough Council",
+  "Chichester District Council",
+  "Chiltern District Council",
+  "Chorley Borough Council",
+  "City of York Council",
+  "Colchester Borough Council",
+  "Conwy County Borough Council",
+  "Copeland Borough Council",
+  "Corby Borough Council",
+  "Cornwall Council",
+  "Cotswold District Council",
+  "Coventry City Council",
+  "Craven District Council",
+  "Crawley Borough Council",
+  "Croydon (london borough of croydon)",
+  "Croydon / Murton & Sutton Credit Union",
+  "Cumberland council",
+  "Dacorum Borough Council",
+  "Darlington Borough Council",
+  "Dartford Borough Council",
+  "Daventry District Council",
+  "Denbighshire",
+  "Denbighshire County Council",
+  "Derby City Council",
+  "Derbyshire Dales District Council",
+  "Doncaster Borough Council",
+  "Dorset  Council Direct (Now cover east, northa, south and north dorset)",
+  "Dover District Council",
+  "Dudley Borough Council",
+  "Durham County Council",
+  "London borough of ealing",
+  "East Cambridgeshire District Council",
+  "East Devon District Council",
+  "East End Fair Finance",
+  "East Hampshire District Council",
+  "East Herfordshire District Council",
+  "East Lindsey District Council",
+  "East Riding  Yorkshire Council",
+  "East Staffordshire Borough Council",
+  "East Suffolk Council (COVERS Breckland / East Cambs / Fenland + West Suffolk) ) email address counciltaxadmin@angliarevenues.gov.uk",
+  "Eastbourne Borough Council",
+  "Eastleigh Borough Council",
+  "Eden District Council",
+  "Elmbridge Borough Council",
+  "Enfield 'London Borough of Enfield'",
+  "Epping Forest District Council",
+  "Epsom and Ewell Borough Council",
+  "Erewash Borough Council",
+  "Exeter City Council",
+  "Fareham Borough Council",
+  "Fenland District Council  (COVERS Breckland / East Cambs / Fenland + West Suffolk) ) email address counciltaxadmin@angliarevenues.gov.uk",
+  "Finio Loans",
+  "First Holiday Finance",
+  "Flintshire Council",
+  "Forest Health District Council",
+  "Forest of Dean District Council",
+  "Fylde Borough Council",
+  "Gateshead Borough Council",
+  "Gedling Borough Council",
+  "Gloucester City Council",
+  "Gosport Borough Council",
+  "Gravesham Borough Council",
+  "Great Yarmouth Borough Council",
+  "Greenwich",
+  "Guildford Borough Council",
+  "Gwynedd Council",
+  "London Borough of Hackney",
+  "Halton Borough Council",
+  "Hambleton District Council",
+  "Hammersmith and Fulham",
+  "Harborough District Council",
+  "London Borough of Haringey",
+  "Harlow District Council",
+  "Harpenden Council",
+  "Harrogate Borough Council",
+  "Harrow",
+  "Hart Council",
+  "Hartlepool Borough Council",
+  "Hastings Borough Council",
+  "Havant Borough Council",
+  "Havering",
+  "Hemel Hempstead",
+  "Herefordshire Council",
+  "Hertsmere Borough Council",
+  "High Peak Borough Council",
+  "Hilingdon Council (Parking Tickets)",
+  "hilli",
+  "Hillingdon Council (London Borough)",
+  "Hinckley and Bosworth Borough Council",
+  "Horsham District Council",
+  "Hounslow (london borough of hounslow)",
+  "Huddersfield (council tax)",
+  "Huddersfield Credit Union",
+  "Hull City Council",
+  "Huntingdonshire District Council",
+  "Hyndburn Borough Council",
+  "Ipswich Borough Council",
+  "Isle of Wight Council",
+  "Folkestone & Hythe District Council",
+  "Isle of Anglesey County Council",
+  "Islington",
+  "Kensington and Chelsea",
+  "Kettering District Council",
+  "Kings Lynn & West Norfolk Borough Council",
+  "Kingston University",
+  "Kingston Upon Thames",
+  "Kirklees Borough Council",
+  "Knowsley Borough Council",
+  "Lambeth",
+  "Lancaster City Council",
+  "Leeds City Council",
+  "Leicester City Council",
+  "Lewes District Council",
+  "Lichfield City Council",
+  "Lincoln City Council (ON SYSTEM AS CITY OF LINCOLN) / West Lindsey",
+  "Liverpool City Council",
+  "London Borough of Barking & Dagenham",
+  "London Borough of Bexley",
+  "London Borough of Brent",
+  "London Borough of Lewisham",
+  "London Borough of Newham",
+  "London Borough of Richmond Upon Thames",
+  "Luton Borough Council",
+  "Macclesfield County Council",
+  "Maidstone Borough Council",
+  "Maldon District Council",
+  "Malvern Hills District Council",
+  "Manchester City Council",
+  "Mansfield District Council",
+  "Medway",
+  "Melton Borough Council",
+  "Mendip District Council",
+  "Merthyr Tydfil County Borough",
+  "Merton ( London Borough of)",
+  "Metro Moneywise Credit Union",
+  "Mid Devon District Council",
+  "Mid Kent",
+  "Mid Suffolk District Council",
+  "Mid Sussex District Council",
+  "Middlesbrough Borough Council",
+  "Milton Keynes Council",
+  "Mole Valley District Council",
+  "Monmouthshire",
+  "Neath port talbot Council",
+  "New Forest District Council",
+  "Newark & Sherwood District Council",
+  "Newcastle City Council",
+  "Newcastle-under-Lyme Borough Council",
+  "Newport City Council",
+  "North Devon District Council",
+  "North East Derbyshire Council",
+  "North East Lincolnshire Council (Grimsby)",
+  "North Hertfordshire District Council",
+  "North Kesteven District Council",
+  "North Lincolnshire Council",
+  "North Norfolk District Council",
+  "North Northamptonshire (inc wellingborough)",
+  "North Somerset Council",
+  "North Tyneside Borough Council",
+  "North Warwickshire Borough Council",
+  "North West Leicestershire District Council",
+  "\" NEW NAME IS WEST NORTHAMPTONSHIRE",
+  "THIS COVERS DAVENTRY / NORTHAMPTONSHIRE BOROUGH / NORTHAMPTON BOROUGH / NORTHAMPSHIRE SOUTH / NORTHAMPTON SOUTH)\"",
+  "Northumberland County Council",
+  "Norwich City Council",
+  "Nottingham City Council",
+  "Nuneaton & Bedworth Borough Council",
+  "Oadby & Wigston Borough Council",
+  "Oldham Borough Council",
+  "Pembrokeshire County Council",
+  "Pendle Borough Council",
+  "Peterborough City Council",
+  "Plymouth City Council",
+  "Poole Borough Council",
+  "Portsmouth City Council",
+  "Powsy County Council",
+  "Preston City Council",
+  "Purbeck District Council",
+  "Reading Borough Council",
+  "London Borough of Redbridge",
+  "Redcar and Cleveland Borough Council",
+  "Redditch Borough Council",
+  "Reigate & Banstead Borough Council",
+  "Rhondda Cynon Taf County Borough Council",
+  "Ribble Valley Borough Council",
+  "Richmondshire District Council",
+  "Rochdale Borough Council",
+  "Rochford District Council",
+  "Rossendale Borough Council",
+  "Rother District Council",
+  "Rotherham Borough Council",
+  "Rugby Borough Council",
+  "Runnymede Borough Council",
+  "Rushcliffe Borough Council",
+  "Rushmoor Borough Council",
+  "Ryedale District Council",
+  "Salford City council",
+  "Sandwell Borough Council",
+  "\"Scarborough Borough Council was abolished and its functions were transferred to a new single authority for the non-metropolitan county of North Yorkshire.",
+  "North Yorkshire Council IS THE NEW COUNCIL!!",
+  "\"",
+  "Sedgemoor District Council",
+  "Sefton Borough Council",
+  "Sefton Credit Union",
+  "Selby District Council",
+  "rth",
+  "Sheffield City Council",
+  "Shepway District Council",
+  "Shropshire Council",
+  "Slough Borough Council",
+  "Solihull Borough Council",
+  "South Buckinghamshire Distinct Council",
+  "South Cambridgeshire District Council",
+  "South Derbyshire District Council",
+  "Southend on Sea Borough Council",
+  "South Gloucestershire Council",
+  "South Hams District Council",
+  "South Holland District Council",
+  "South Kesteven District Council",
+  "South Lakeland District Council",
+  "South Norfolk District Council",
+  "South Oxfordshire District Council",
+  "South Ribble Borough Council",
+  "South Somerset District Council",
+  "South Staffordshire District Council",
+  "South Tyneside Borough Council",
+  "Southampton City Council",
+  "Southwark (london borough)",
+  "Spelthorne Borough Castle",
+  "St Albans City Council",
+  "St Edmundsbury Borough Council",
+  "St Helens Borough Council",
+  "Stafford Borough Council + Cannock Council (work together)",
+  "Staffordshire Moorlands District Council",
+  "Stevenage Borough Council",
+  "Stockport Borough Council",
+  "Stockton on Tees",
+  "Stoke-on-Trent City Council",
+  "Stratford on Avon District Council",
+  "Stroud District Council",
+  "Suffolk Coastal District Council",
+  "Sunderland City Council",
+  "Surrey Heath Borough Council",
+  "Sutton Council (LONDON BOROUGH OF SUTTON)",
+  "Swale Borough Council",
+  "Swansea Council",
+  "Swindon Borough Council",
+  "Tameside Borough Council",
+  "Tamworth Borough",
+  "Tandridge District Council",
+  "Taunton Deane Borough Council",
+  "Teignbridge District Council",
+  "Telford and Wrekin Borough Council",
+  "Tendring District Council",
+  "Test Valley Borough Council",
+  "Tewkesbury Borough Council",
+  "Thanet District Council",
+  "Three Rivers District Council",
+  "The Vale of Glamorgan Council",
+  "Thurrock Council",
+  "Tonbridge & Malling Borough Council",
+  "Torbay Council",
+  "Torfaen County Borough",
+  "Torridge District Council",
+  "Tower Hamlets",
+  "Trafford Borough Council",
+  "Tunbridge Wells Borough Council (emails come from Mid KenT)",
+  "Uttlesford District Council",
+  "Vale of White Horse District Council",
+  "Wakefield City Council",
+  "Walsall Borough Council",
+  "Waltham Forest",
+  "Wandsworth",
+  "Warrington Borough Council",
+  "Warwick District Council",
+  "Watford Borough Council",
+  "Waveney District Council",
+  "Waverley Borough Council",
+  "Wealden District Council",
+  "Welwyn Hatfield Borough Council",
+  "West Berkshire Council",
+  "West Cheshire Credit Union",
+  "West Devon Borough Council",
+  "West Lancashire District Council",
+  "West Lindsay",
+  "WESTMORLAND & FURNESS COUNCIL",
+  "West Oxfordshire District Council",
+  "West Somerset District Council",
+  "West Suffolk",
+  "Westminster",
+  "Weymouth & Portland Borough Council",
+  "Wigan Borough Council",
+  "Wiltshire Council",
+  "Winchester City Council",
+  "Windsor and Maidenhead Borough Council",
+  "Wirral Borough Council",
+  "Woking Borough Council",
+  "Wokingham Borough Council",
+  "Wolverhampton City Council",
+  "Worcester City Council",
+  "Worthing Borough Council",
+  "Wrexham Council",
+  "Wychavon District Council",
+  "Wycombe District Council",
+  "Wyre Borough Council",
+  "Wyre Forest District Council",
 ];
+
+const DEBT_TERMS_NORM = DEBT_TERMS_EXTRA.map((t) => normalise(String(t))).filter(Boolean);
+
 
 function hasExtraDebtTerm(userText: string) {
   const raw = userText || "";
   const t = ` ${normalise(raw)} `;
-  for (const term of DEBT_TERMS_EXTRA) {
-    const nt = normalise(term);
+
+  for (const nt of DEBT_TERMS_NORM) {
     if (!nt) continue;
 
-    // word-ish boundary to reduce false hits on short terms
+    // word-ish boundary to reduce false hits on very short terms
     if (nt.length <= 3) {
-      const re = new RegExp(`\\b${nt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+      const safe = nt.replace(/[.*+?^${}()|[\]\]/g, "\$&");
+      const re = new RegExp(`\b${safe}\b`, "i");
       if (re.test(raw)) return true;
       continue;
     }
 
     if (t.includes(` ${nt} `) || t.includes(nt)) return true;
   }
+
   return false;
 }
 
 function hasSubstantiveDebtContent(userText: string) {
   const t = normalise(userText);
 
+  // high value regex
   const debtish =
-    /\b(debt|debts|loan|loans|credit|card|cards|overdraft|catalogue|catalog|klarna|ccj|ccjs|county court|bailiff|bailiffs|enforcement|parking|pcn|parking fine|parking fines|council tax|rent|mortgage|arrears|utility|energy|gas|electric|water|fine|fines|magistrates|attachment of earnings|charging order)\b/i.test(
+    /\b(debt|debts|loan|loans|credit|card|cards|overdraft|catalogue|catalog|klarna|ccj|ccjs|county court|bailiff|bailiffs|enforcement|parking|pcn|council tax|rent|mortgage|arrears|utility|energy|gas|electric|water|fine|fines|magistrates|attachment of earnings|charging order)\b/i.test(
       t
     );
 
@@ -484,7 +1313,7 @@ function extractName(userText: string): { ok: boolean; name?: string; reason?: s
     if (NAME_BLOCKLIST.has(first)) return { ok: false, reason: "block" };
 
     const debtish = hasSubstantiveDebtContent(t);
-    if (!debtish) {
+    if (!debtish && tokens.length <= 3) {
       const cand = titleCaseName(tokens.join(" "));
       const simple = normalise(cand);
       if (cand && !NAME_BLOCKLIST.has(simple)) return { ok: true, name: cand };
@@ -494,13 +1323,20 @@ function extractName(userText: string): { ok: boolean; name?: string; reason?: s
   return { ok: false, reason: "no_match" };
 }
 
-function extractFirstNumber(text: string): number | null {
-  const cleaned = (text || "").replace(/,/g, "");
-  const m1 = cleaned.match(/£\s*([0-9]+(?:\.[0-9]+)?)/);
-  if (m1?.[1]) return Number(m1[1]);
-  const m2 = cleaned.match(/\b([0-9]{1,7})(?:\.[0-9]+)?\b/);
-  if (m2?.[1]) return Number(m2[1]);
-  return null;
+function extractAmounts(text: string): { paying?: number; affordable?: number } {
+  const cleaned = text.replace(/,/g, "");
+  const nums = [...cleaned.matchAll(/£\s*([0-9]+(?:\.[0-9]+)?)/g)].map((m) => Number(m[1]));
+  const bare = [...cleaned.matchAll(/\b([0-9]{2,7})(?:\.[0-9]+)?\b/g)].map((m) => Number(m[1]));
+  const all = nums.length ? nums : bare;
+
+  if (all.length >= 2) return { paying: all[0], affordable: all[1] };
+  if (all.length === 1) {
+    const t = normalise(text);
+    if (t.includes("afford") || t.includes("could pay") || t.includes("can pay")) return { affordable: all[0] };
+    if (t.includes("paying") || t.includes("pay ") || t.includes("currently pay")) return { paying: all[0] };
+    return { paying: all[0] };
+  }
+  return {};
 }
 
 function bestFaqMatch(userText: string, faqs: FaqItem[]) {
@@ -579,7 +1415,7 @@ Current step prompt: ${scriptStepPrompt}
     body: JSON.stringify({
       model,
       messages,
-      temperature: 0.35,
+      temperature: 0.4,
     }),
   });
 
@@ -604,10 +1440,10 @@ function nextScriptPrompt(script: ScriptDef, state: ChatState) {
 }
 
 function safeAskNameVariant(tries: number) {
-  if (tries <= 0) return "Please can you tell me your first name?";
+  if (tries <= 0) return "Can you let me know who I’m speaking with? A first name is perfect.";
   if (tries === 1) return "Sorry — what first name would you like me to use?";
   if (tries === 2) return "No worries. Just pop a first name and we’ll carry on.";
-  return "That’s fine. I’ll just call you ‘there’ for now. What’s made you reach out about your debts today?";
+  return "That’s fine. I’ll just call you ‘there’ for now. What prompted you to reach out about your debts today?";
 }
 
 const FALLBACK_STEP0 = "Hello! My name’s Mark. What prompted you to seek help with your debts today?";
@@ -618,11 +1454,6 @@ function stripLeadingIntroFromPrompt(prompt: string) {
   if (lowered.startsWith("hello! my name’s mark.")) return p.replace(/^Hello!\s+My name’s Mark\.\s*/i, "");
   if (lowered.startsWith("hello! my name's mark.")) return p.replace(/^Hello!\s+My name'?s Mark\.\s*/i, "");
   return p;
-}
-
-function substituteName(prompt: string, state: ChatState) {
-  const name = state.name && state.name !== "there" ? state.name : "";
-  return (prompt || "").replace(/\{name\}/gi, name || "there");
 }
 
 function step0Variant(cleanPrompt: string) {
@@ -640,14 +1471,17 @@ function step0Variant(cleanPrompt: string) {
 
 function inferExpectFromPrompt(prompt: string) {
   const p = normalise(prompt);
-  if (p.includes("who i’m speaking with") || p.includes("who i'm speaking with") || p.includes("your name")) return "name";
-  if (p.includes("what prompted") || p.includes("reach out") || p.includes("get in touch")) return "concern";
-  if (p.includes("main concern") || p.includes("main issue") || p.includes("biggest issue")) return "issue";
-  if (p.includes("complete the fact find")) return "profile";
-  if (p.includes("roughly how much debt")) return "total_debt";
-  if (p.includes("roughly how much are you paying")) return "paying";
-  if (p.includes("how much do you feel you can afford")) return "affordable";
-  if (p.includes("add each outstanding debt")) return "debts_list";
+  if (p.includes("who i’m speaking with") || p.includes("what name") || p.includes("your name")) return "name";
+  if (
+    p.includes("what prompted") ||
+    p.includes("what’s led you") ||
+    p.includes("what has led") ||
+    p.includes("reach out") ||
+    p.includes("get in touch")
+  )
+    return "concern";
+  if (p.includes("main issue") || p.includes("main concern") || p.includes("biggest issue")) return "issue";
+  if (p.includes("how much") && (p.includes("pay") || p.includes("afford"))) return "amounts";
   return "free";
 }
 
@@ -656,7 +1490,7 @@ function buildAcknowledgement(userText: string, state: ChatState) {
   const name = state.name && state.name !== "there" ? state.name : null;
 
   if (hasSubstantiveDebtContent(userText)) {
-    const base = name ? `Thanks, ${name} — understood.` : "Thanks — understood.";
+    const base = name ? `Thanks, ${name} — got it.` : "Thanks — got it.";
     return courtesy ? `${courtesy} ${base}` : base;
   }
 
@@ -678,40 +1512,6 @@ function joinAckAndPrompt(ack: string, prompt: string) {
   if (na === np) return p;
 
   return `${a} ${p}`;
-}
-
-function parseUiDirectives(prompt: string): { clean: string; uiTrigger?: string; popup?: string; portalTab?: string; openPortal?: boolean } {
-  const raw = prompt || "";
-  let clean = raw;
-
-  const out: any = {};
-
-  const trig = raw.match(/\[TRIGGER:\s*([^\]]+)\]/i);
-  if (trig?.[1]) {
-    const t = trig[1].trim();
-    out.uiTrigger = t;
-    if (t === "OPEN_CLIENT_PORTAL") out.openPortal = true;
-  }
-
-  const pop = raw.match(/\[POPUP:\s*([^\]]+)\]/i);
-  if (pop?.[1]) out.popup = pop[1].trim();
-
-  const tab = raw.match(/\[PORTAL:\s*([^\]]+)\]/i);
-  if (tab?.[1]) out.portalTab = tab[1].trim();
-
-  clean = clean.replace(/\[TRIGGER:[^\]]+\]/gi, "").replace(/\[POPUP:[^\]]+\]/gi, "").replace(/\[PORTAL:[^\]]+\]/gi, "");
-  clean = clean.replace(/\s+/g, " ").trim();
-
-  return { clean, ...out };
-}
-
-function semanticSame(a: string, b: string) {
-  const na = normalise(a);
-  const nb = normalise(b);
-  if (!na || !nb) return false;
-  if (na === nb) return true;
-  if (na.includes(nb) || nb.includes(na)) return true;
-  return false;
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ApiResp>) {
@@ -744,49 +1544,33 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     name: null,
     concern: null,
     issue: null,
-    totalDebt: null,
     ...body.state,
   };
 
   if (normalise(userText) === "reset") {
     const first = script.steps?.[0]?.prompt || FALLBACK_STEP0;
-    const parsed = parseUiDirectives(first);
-    return res.status(200).json({
-      reply: parsed.clean || first,
-      uiTrigger: parsed.uiTrigger,
-      popup: parsed.popup,
-      portalTab: parsed.portalTab,
-      openPortal: parsed.openPortal,
-      state: {
-        step: 0,
-        askedNameTries: 0,
-        name: null,
-        concern: null,
-        issue: null,
-        totalDebt: null,
-        paying: null,
-        affordable: null,
-        lastPromptKey: undefined,
-        lastStepPrompted: undefined,
-      },
-    });
+    const s: ChatState = {
+      step: 0,
+      askedNameTries: 0,
+      name: null,
+      concern: null,
+      issue: null,
+      lastPromptKey: undefined,
+      lastStepPrompted: undefined,
+    };
+    return res.status(200).json({ reply: first, state: s });
   }
 
   const currentStepDef = nextScriptPrompt(script, state);
-  const currentPromptFull = substituteName(currentStepDef?.prompt || FALLBACK_STEP0, state);
-  const currentPromptClean0 = stripLeadingIntroFromPrompt(currentPromptFull) || currentPromptFull;
-  const currentParsed = parseUiDirectives(currentPromptClean0);
-  const currentPromptClean = currentParsed.clean || currentPromptClean0;
+  const currentPromptFull = currentStepDef?.prompt || FALLBACK_STEP0;
+  const currentPromptClean = stripLeadingIntroFromPrompt(currentPromptFull) || currentPromptFull;
 
   if (isAckOnly(userText)) {
     const follow = state.step === 0 ? step0Variant(currentPromptClean) : currentPromptClean;
+    const key = promptKey(state.step, follow);
     return res.status(200).json({
       reply: follow,
-      uiTrigger: currentParsed.uiTrigger,
-      popup: currentParsed.popup,
-      portalTab: currentParsed.portalTab,
-      openPortal: currentParsed.openPortal,
-      state: { ...state, lastPromptKey: promptKey(state.step, follow), lastStepPrompted: state.step },
+      state: { ...state, lastPromptKey: key, lastStepPrompted: state.step },
     });
   }
 
@@ -797,8 +1581,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     if (state.step === 0) follow = step0Variant(follow);
 
     const reply = st ? `${st}\n\n${follow}` : follow;
-    const key = promptKey(state.step, follow);
 
+    const key = promptKey(state.step, follow);
     if (state.lastPromptKey === key) {
       const alt =
         state.step === 0
@@ -806,43 +1590,31 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           : "When you’re ready, we can carry on from where we left off.";
       return res.status(200).json({
         reply: st ? `${st}\n\n${alt}` : alt,
-        uiTrigger: currentParsed.uiTrigger,
-        popup: currentParsed.popup,
-        portalTab: currentParsed.portalTab,
-        openPortal: currentParsed.openPortal,
         state: { ...state, lastPromptKey: promptKey(state.step, alt), lastStepPrompted: state.step },
       });
     }
 
     return res.status(200).json({
       reply,
-      uiTrigger: currentParsed.uiTrigger,
-      popup: currentParsed.popup,
-      portalTab: currentParsed.portalTab,
-      openPortal: currentParsed.openPortal,
       state: { ...state, lastPromptKey: key, lastStepPrompted: state.step },
     });
   }
 
   const faqAnswer = bestFaqMatch(userText, faqs);
   if (faqAnswer) {
-    const follow = state.step === 0 ? step0Variant(currentPromptClean) : currentPromptClean;
+    const follow = currentPromptClean;
+    const reply = `${faqAnswer}\n\n${follow}`;
+    const key = promptKey(state.step, follow);
     return res.status(200).json({
-      reply: `${faqAnswer}\n\n${follow}`,
-      uiTrigger: currentParsed.uiTrigger,
-      popup: currentParsed.popup,
-      portalTab: currentParsed.portalTab,
-      openPortal: currentParsed.openPortal,
-      state: { ...state, lastPromptKey: promptKey(state.step, follow), lastStepPrompted: state.step },
+      reply,
+      state: { ...state, lastPromptKey: key, lastStepPrompted: state.step },
     });
   }
 
   const stepDef = nextScriptPrompt(script, state);
-  const rawPrompt = substituteName(stepDef?.prompt || currentPromptFull, state);
-  const parsed = parseUiDirectives(stripLeadingIntroFromPrompt(rawPrompt) || rawPrompt);
-  const prompt = parsed.clean || (stripLeadingIntroFromPrompt(rawPrompt) || rawPrompt);
+  const prompt = stepDef?.prompt || currentPromptFull;
 
-  const expects = normalise(stepDef?.expects || inferExpectFromPrompt(prompt) || "free");
+  const expects = (stepDef?.expects || inferExpectFromPrompt(prompt) || "free").toLowerCase();
 
   if (expects === "name") {
     const tries = state.askedNameTries || 0;
@@ -852,30 +1624,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       const name = nameParse.name;
       const isSameAsMark = normalise(name) === "mark";
 
-      const greet = isSameAsMark
-        ? "Nice to meet you, Mark — nice to meet a fellow Mark."
-        : `Nice to meet you, ${name}.`;
+      const greet = isSameAsMark ? `Nice to meet you, Mark — nice to meet a fellow Mark.` : `Nice to meet you, ${name}.`;
 
       const nextState: ChatState = {
         ...state,
         name,
         askedNameTries: 0,
-        step: Math.min(state.step + 1, Math.max(script.steps.length - 1, 0)),
+        step: state.step + 1,
       };
 
       const nextStepDef = nextScriptPrompt(script, nextState);
-      const nextRaw = substituteName(nextStepDef?.prompt || "What prompted you to seek help with your debts today?", nextState);
-      const nextParsed = parseUiDirectives(stripLeadingIntroFromPrompt(nextRaw) || nextRaw);
-
-      let nextPrompt = nextParsed.clean || nextRaw;
-      if (nextState.step === 0) nextPrompt = step0Variant(nextPrompt);
+      const nextPromptFull = nextStepDef?.prompt || "What’s led you to reach out for help with your debts today?";
+      const nextPromptClean = stripLeadingIntroFromPrompt(nextPromptFull) || nextPromptFull;
+      const nextPrompt = nextState.step === 0 ? step0Variant(nextPromptClean) : nextPromptClean;
 
       return res.status(200).json({
         reply: `${greet} ${nextPrompt}`,
-        uiTrigger: nextParsed.uiTrigger,
-        popup: nextParsed.popup,
-        portalTab: nextParsed.portalTab,
-        openPortal: nextParsed.openPortal,
         state: { ...nextState, lastPromptKey: promptKey(nextState.step, nextPrompt), lastStepPrompted: nextState.step },
         displayName: name,
       });
@@ -888,19 +1652,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         ...state,
         name: "there",
         askedNameTries: nextTries,
-        step: Math.min(state.step + 1, Math.max(script.steps.length - 1, 0)),
+        step: state.step + 1,
       };
       const nextStepDef = nextScriptPrompt(script, nextState);
-      const nextRaw = substituteName(nextStepDef?.prompt || "What prompted you to seek help with your debts today?", nextState);
-      const nextParsed = parseUiDirectives(stripLeadingIntroFromPrompt(nextRaw) || nextRaw);
-      const nextPrompt = nextParsed.clean || nextRaw;
-
+      const nextPrompt = nextStepDef?.prompt || "What’s led you to reach out for help with your debts today?";
       return res.status(200).json({
-        reply: `No problem. ${nextPrompt}`,
-        uiTrigger: nextParsed.uiTrigger,
-        popup: nextParsed.popup,
-        portalTab: nextParsed.portalTab,
-        openPortal: nextParsed.openPortal,
+        reply: `No problem. ${stripLeadingIntroFromPrompt(nextPrompt) || nextPrompt}`,
         state: { ...nextState, lastPromptKey: promptKey(nextState.step, nextPrompt), lastStepPrompted: nextState.step },
       });
     }
@@ -915,13 +1672,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   if (expects === "concern") {
     const t = userText.trim();
     if (t.length < 3) {
-      const follow = step0Variant(currentPromptClean);
+      const follow = step0Variant(stripLeadingIntroFromPrompt(prompt) || prompt);
       return res.status(200).json({
         reply: follow,
-        uiTrigger: parsed.uiTrigger,
-        popup: parsed.popup,
-        portalTab: parsed.portalTab,
-        openPortal: parsed.openPortal,
         state: { ...state, lastPromptKey: promptKey(state.step, follow), lastStepPrompted: state.step },
       });
     }
@@ -929,21 +1682,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const nextState: ChatState = {
       ...state,
       concern: t,
-      step: Math.min(state.step + 1, Math.max(script.steps.length - 1, 0)),
+      step: state.step + 1,
     };
 
     const nextStepDef = nextScriptPrompt(script, nextState);
-    const nextRaw = substituteName(nextStepDef?.prompt || "Please can you tell me your first name?", nextState);
-    const nextParsed = parseUiDirectives(stripLeadingIntroFromPrompt(nextRaw) || nextRaw);
-    const nextPrompt = nextParsed.clean || nextRaw;
+    const nextPrompt = nextStepDef?.prompt || "What would you say is the main issue with the debts at the moment?";
 
     const ack = buildAcknowledgement(userText, state);
     return res.status(200).json({
-      reply: joinAckAndPrompt(ack, nextPrompt),
-      uiTrigger: nextParsed.uiTrigger,
-      popup: nextParsed.popup,
-      portalTab: nextParsed.portalTab,
-      openPortal: nextParsed.openPortal,
+      reply: joinAckAndPrompt(ack, stripLeadingIntroFromPrompt(nextPrompt) || nextPrompt),
       state: { ...nextState, lastPromptKey: promptKey(nextState.step, nextPrompt), lastStepPrompted: nextState.step },
     });
   }
@@ -952,212 +1699,81 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const t = userText.trim();
     if (t.length < 2) {
       return res.status(200).json({
-        reply: prompt,
-        uiTrigger: parsed.uiTrigger,
-        popup: parsed.popup,
-        portalTab: parsed.portalTab,
-        openPortal: parsed.openPortal,
+        reply: stripLeadingIntroFromPrompt(prompt) || prompt,
         state: { ...state, lastPromptKey: promptKey(state.step, prompt), lastStepPrompted: state.step },
       });
     }
 
-    const already = state.concern || "";
-    const isRepeat = already ? semanticSame(already, t) : false;
-
     const nextState: ChatState = {
       ...state,
       issue: t,
-      step: Math.min(state.step + 1, Math.max(script.steps.length - 1, 0)),
+      step: state.step + 1,
     };
 
     const nextStepDef = nextScriptPrompt(script, nextState);
-    const nextRaw = substituteName(nextStepDef?.prompt || "Before we look at solutions, I just need to make you aware...", nextState);
-    const nextParsed = parseUiDirectives(stripLeadingIntroFromPrompt(nextRaw) || nextRaw);
-    const nextPrompt = nextParsed.clean || nextRaw;
-
-    let ack = buildAcknowledgement(userText, state);
-    if (isRepeat) ack = "Thanks — understood.";
-
-    return res.status(200).json({
-      reply: joinAckAndPrompt(ack, nextPrompt),
-      uiTrigger: nextParsed.uiTrigger,
-      popup: nextParsed.popup,
-      portalTab: nextParsed.portalTab,
-      openPortal: nextParsed.openPortal,
-      state: { ...nextState, lastPromptKey: promptKey(nextState.step, nextPrompt), lastStepPrompted: nextState.step },
-    });
-  }
-
-  if (expects === "profile") {
-    const nextState: ChatState = {
-      ...state,
-      step: Math.min(state.step + 1, Math.max(script.steps.length - 1, 0)),
-    };
-
-    const nextStepDef = nextScriptPrompt(script, nextState);
-    const nextRaw = substituteName(nextStepDef?.prompt || "Thanks — roughly how much debt do you have outstanding?", nextState);
-    const nextParsed = parseUiDirectives(stripLeadingIntroFromPrompt(nextRaw) || nextRaw);
-    const nextPrompt = nextParsed.clean || nextRaw;
+    const nextPrompt = nextStepDef?.prompt || "Roughly what do you pay towards your debts each month?";
 
     const ack = buildAcknowledgement(userText, state);
     return res.status(200).json({
-      reply: joinAckAndPrompt(ack, nextPrompt),
-      uiTrigger: nextParsed.uiTrigger,
-      popup: nextParsed.popup,
-      portalTab: nextParsed.portalTab,
-      openPortal: nextParsed.openPortal,
+      reply: joinAckAndPrompt(ack, stripLeadingIntroFromPrompt(nextPrompt) || nextPrompt),
       state: { ...nextState, lastPromptKey: promptKey(nextState.step, nextPrompt), lastStepPrompted: nextState.step },
     });
   }
 
-  if (expects === "total_debt") {
-    const n = extractFirstNumber(userText);
+  if (expects === "amounts") {
+    const { paying, affordable } = extractAmounts(userText);
+
     const nextState: ChatState = {
       ...state,
-      totalDebt: typeof n === "number" && !Number.isNaN(n) ? n : state.totalDebt ?? null,
+      paying: typeof paying === "number" ? paying : state.paying ?? null,
+      affordable: typeof affordable === "number" ? affordable : state.affordable ?? null,
     };
 
-    if (typeof nextState.totalDebt !== "number") {
-      const ask = "Roughly how much debt do you have outstanding?";
+    const haveBoth = typeof nextState.paying === "number" && typeof nextState.affordable === "number";
+
+    if (!haveBoth) {
+      const ask =
+        "Thanks. Roughly what do you pay towards all debts each month, and what would feel affordable? For example: “I pay £600 and could afford £200.”";
       return res.status(200).json({
         reply: ask,
         state: { ...nextState, lastPromptKey: promptKey(state.step, ask), lastStepPrompted: state.step },
       });
     }
 
-    nextState.step = Math.min(state.step + 1, Math.max(script.steps.length - 1, 0));
+    nextState.step = state.step + 1;
     const nextStepDef = nextScriptPrompt(script, nextState);
-    const nextRaw = substituteName(nextStepDef?.prompt || "Roughly how much are you paying per month to your creditors?", nextState);
-    const nextParsed = parseUiDirectives(stripLeadingIntroFromPrompt(nextRaw) || nextRaw);
-    const nextPrompt = nextParsed.clean || nextRaw;
+    const nextPrompt = nextStepDef?.prompt || "Is there anything urgent like bailiff action or missed priority bills?";
 
     const ack = buildAcknowledgement(userText, state);
     return res.status(200).json({
-      reply: joinAckAndPrompt(ack, nextPrompt),
-      uiTrigger: nextParsed.uiTrigger,
-      popup: nextParsed.popup,
-      portalTab: nextParsed.portalTab,
-      openPortal: nextParsed.openPortal,
+      reply: joinAckAndPrompt(ack, stripLeadingIntroFromPrompt(nextPrompt) || nextPrompt),
       state: { ...nextState, lastPromptKey: promptKey(nextState.step, nextPrompt), lastStepPrompted: nextState.step },
     });
   }
 
-  if (expects === "paying") {
-    const n = extractFirstNumber(userText);
-    const nextState: ChatState = {
-      ...state,
-      paying: typeof n === "number" && !Number.isNaN(n) ? n : state.paying ?? null,
-    };
-
-    if (typeof nextState.paying !== "number") {
-      const ask = "Roughly how much are you paying per month to your creditors?";
-      return res.status(200).json({
-        reply: ask,
-        state: { ...nextState, lastPromptKey: promptKey(state.step, ask), lastStepPrompted: state.step },
-      });
-    }
-
-    nextState.step = Math.min(state.step + 1, Math.max(script.steps.length - 1, 0));
-    const nextStepDef = nextScriptPrompt(script, nextState);
-    const nextRaw = substituteName(nextStepDef?.prompt || "If we could consolidate everything into one payment, how much could you afford monthly?", nextState);
-    const nextParsed = parseUiDirectives(stripLeadingIntroFromPrompt(nextRaw) || nextRaw);
-    const nextPrompt = nextParsed.clean || nextRaw;
-
-    const ack = buildAcknowledgement(userText, state);
-    return res.status(200).json({
-      reply: joinAckAndPrompt(ack, nextPrompt),
-      uiTrigger: nextParsed.uiTrigger,
-      popup: nextParsed.popup,
-      portalTab: nextParsed.portalTab,
-      openPortal: nextParsed.openPortal,
-      state: { ...nextState, lastPromptKey: promptKey(nextState.step, nextPrompt), lastStepPrompted: nextState.step },
-    });
-  }
-
-  if (expects === "affordable") {
-    const n = extractFirstNumber(userText);
-    const nextState: ChatState = {
-      ...state,
-      affordable: typeof n === "number" && !Number.isNaN(n) ? n : state.affordable ?? null,
-    };
-
-    if (typeof nextState.affordable !== "number") {
-      const ask = "If we could consolidate everything into one payment, how much do you feel you can afford monthly?";
-      return res.status(200).json({
-        reply: ask,
-        state: { ...nextState, lastPromptKey: promptKey(state.step, ask), lastStepPrompted: state.step },
-      });
-    }
-
-    nextState.step = Math.min(state.step + 1, Math.max(script.steps.length - 1, 0));
-    const nextStepDef = nextScriptPrompt(script, nextState);
-    const nextRaw = substituteName(nextStepDef?.prompt || "The next step is your personal client portal.", nextState);
-    const nextParsed = parseUiDirectives(stripLeadingIntroFromPrompt(nextRaw) || nextRaw);
-    const nextPrompt = nextParsed.clean || nextRaw;
-
-    const ack = buildAcknowledgement(userText, state);
-    return res.status(200).json({
-      reply: joinAckAndPrompt(ack, nextPrompt),
-      uiTrigger: nextParsed.uiTrigger,
-      popup: nextParsed.popup,
-      portalTab: nextParsed.portalTab,
-      openPortal: nextParsed.openPortal,
-      state: { ...nextState, lastPromptKey: promptKey(nextState.step, nextPrompt), lastStepPrompted: nextState.step },
-    });
-  }
-
-  if (expects === "debts_list") {
-    const nextState: ChatState = {
-      ...state,
-      step: Math.min(state.step + 1, Math.max(script.steps.length - 1, 0)),
-    };
-    const nextStepDef = nextScriptPrompt(script, nextState);
-    const nextRaw = substituteName(nextStepDef?.prompt || "Thank you for letting us know about all of your outstanding debts.", nextState);
-    const nextParsed = parseUiDirectives(stripLeadingIntroFromPrompt(nextRaw) || nextRaw);
-    const nextPrompt = nextParsed.clean || nextRaw;
-
-    const ack = buildAcknowledgement(userText, state);
-    return res.status(200).json({
-      reply: joinAckAndPrompt(ack, nextPrompt),
-      uiTrigger: nextParsed.uiTrigger,
-      popup: nextParsed.popup,
-      portalTab: nextParsed.portalTab,
-      openPortal: nextParsed.openPortal,
-      state: { ...nextState, lastPromptKey: promptKey(nextState.step, nextPrompt), lastStepPrompted: nextState.step },
-    });
-  }
-
+  // Advance on "free" scripted prompts to prevent repeating "main issue" style questions
   if (expects === "free" && script.steps?.length) {
     const meaningful = userText.trim().length >= 2;
     if (meaningful) {
-      const nextState: ChatState = {
-        ...state,
-        step: Math.min(state.step + 1, Math.max(script.steps.length - 1, 0)),
-      };
+      const nextState: ChatState = { ...state, step: Math.min(state.step + 1, Math.max(script.steps.length - 1, 0)) };
       const nextStepDef = nextScriptPrompt(script, nextState);
-      const nextRaw = substituteName(nextStepDef?.prompt || prompt, nextState);
-      const nextParsed = parseUiDirectives(stripLeadingIntroFromPrompt(nextRaw) || nextRaw);
-      const nextPrompt = nextParsed.clean || nextRaw;
+      const nextPrompt = nextStepDef?.prompt || prompt;
 
       const ack = buildAcknowledgement(userText, state);
       return res.status(200).json({
-        reply: joinAckAndPrompt(ack, nextPrompt),
-        uiTrigger: nextParsed.uiTrigger,
-        popup: nextParsed.popup,
-        portalTab: nextParsed.portalTab,
-        openPortal: nextParsed.openPortal,
+        reply: joinAckAndPrompt(ack, stripLeadingIntroFromPrompt(nextPrompt) || nextPrompt),
         state: { ...nextState, lastPromptKey: promptKey(nextState.step, nextPrompt), lastStepPrompted: nextState.step },
       });
     }
   }
 
-  const scriptPromptForAI = prompt || currentPromptClean;
+  const scriptPrompt = stripLeadingIntroFromPrompt(prompt) || prompt;
   const openAiReply = await callOpenAI({
     userText,
     history,
     language,
     state,
-    scriptStepPrompt: scriptPromptForAI,
+    scriptStepPrompt: scriptPrompt,
   });
 
   if (openAiReply) {
