@@ -1282,42 +1282,92 @@ function hasSubstantiveDebtContent(userText: string) {
 }
 
 function extractName(userText: string): { ok: boolean; name?: string; reason?: string } {
-  const raw = userText.trim();
+  const raw = (userText || "").trim();
 
   if (!raw) return { ok: false, reason: "empty" };
   if (containsProfanity(raw)) return { ok: false, reason: "profanity" };
 
+  // Keep original casing for nicer output, but normalise for checks
   const t = stripPunctuation(raw);
 
-  const m1 = t.match(/\bmy name is\s+(.+)$/i);
-  if (m1?.[1]) {
-    const cand = titleCaseName(m1[1]);
+  // Common lead-in phrases where the name can be anywhere in the sentence.
+  // Captures up to 3 tokens so "Mark Hughes" or "Mary Jane Smith" works.
+  const leadIn = /\b(?:my name is|name is|this is|i am|i'?m|im|it's|its|it is|call me)\s+([A-Za-z][A-Za-z'\-]{1,})(?:\s+([A-Za-z][A-Za-z'\-]{1,}))?(?:\s+([A-Za-z][A-Za-z'\-]{1,}))?/i;
+  const m = t.match(leadIn);
+
+  const TAIL_FILLERS = new Set(
+    ["here", "speaking", "mate", "pal", "bro", "bruv", "thanks", "thank", "you"].map((x) => x.toLowerCase())
+  );
+
+  if (m) {
+    const parts = [m[1], m[2], m[3]]
+      .filter(Boolean)
+      .map((x) => String(x).trim())
+      .filter(Boolean)
+      .filter((x) => !TAIL_FILLERS.has(normalise(x)));
+
+    const cand = titleCaseName(parts.join(" "));
     const simple = normalise(cand);
+
     if (!cand) return { ok: false, reason: "empty" };
+    if (containsProfanity(cand)) return { ok: false, reason: "profanity" };
     if (NAME_BLOCKLIST.has(simple)) return { ok: false, reason: "block" };
+
+    // Don't treat debt-related phrases as names
+    if (hasSubstantiveDebtContent(cand)) return { ok: false, reason: "debtish" };
+
     return { ok: true, name: cand };
   }
 
-  const m2 = t.match(/\bi am\s+(.+)$/i) || t.match(/\bi'?m\s+(.+)$/i) || t.match(/\bim\s+(.+)$/i);
-  if (m2?.[1]) {
-    const cand = titleCaseName(m2[1]);
-    const simple = normalise(cand);
-    if (!cand) return { ok: false, reason: "empty" };
-    if (NAME_BLOCKLIST.has(simple)) return { ok: false, reason: "block" };
-    return { ok: true, name: cand };
-  }
-
-  const tokens = t.split(" ").filter(Boolean);
-  if (tokens.length >= 1 && tokens.length <= 3) {
-    const first = normalise(tokens[0]);
-    if (NAME_BLOCKLIST.has(first)) return { ok: false, reason: "block" };
-
-    const debtish = hasSubstantiveDebtContent(t);
-    if (!debtish && tokens.length <= 3) {
-      const cand = titleCaseName(tokens.join(" "));
+  // If they typed something like "Its Mark" / "It's Mark" / "Im Mark"
+  const toks = t.split(" ").filter(Boolean);
+  if (toks.length >= 2) {
+    const first = normalise(toks[0]);
+    const leadWords = new Set(["its", "it's", "it’s", "im", "i'm", "i’m", "iam", "i"]);
+    if (leadWords.has(first)) {
+      const parts = toks.slice(1, 4).filter((x) => !TAIL_FILLERS.has(normalise(x)));
+      const cand = titleCaseName(parts.join(" "));
       const simple = normalise(cand);
-      if (cand && !NAME_BLOCKLIST.has(simple)) return { ok: true, name: cand };
+
+      if (cand && !NAME_BLOCKLIST.has(simple) && !hasSubstantiveDebtContent(cand) && !containsProfanity(cand)) {
+        return { ok: true, name: cand };
+      }
     }
+  }
+
+  // If the message is short (1-3 words), treat it as a name only if it doesn't look like a debt message.
+  if (toks.length >= 1 && toks.length <= 3) {
+    const debtish = hasSubstantiveDebtContent(t);
+    if (!debtish) {
+      // Drop leading fillers like "its" that sometimes get pasted in
+      const cleanedParts = toks
+        .filter((x, idx) => !(idx === 0 && ["its", "it's", "it’s"].includes(normalise(x))))
+        .filter((x) => !TAIL_FILLERS.has(normalise(x)));
+
+      const cand = titleCaseName(cleanedParts.join(" "));
+      const simple = normalise(cand);
+
+      if (cand && !NAME_BLOCKLIST.has(simple) && !containsProfanity(cand)) return { ok: true, name: cand };
+    }
+  }
+
+  // Last resort (when we are *currently asking for a name*): scan for a plausible single name token in the sentence.
+  // This avoids needing a huge name database.
+  const words = t.split(" ").filter(Boolean);
+  for (const w of words) {
+    const nw = normalise(w);
+    if (!nw) continue;
+    if (NAME_BLOCKLIST.has(nw)) continue;
+    if (TAIL_FILLERS.has(nw)) continue;
+    if (nw.length < 2) continue;
+    if (containsProfanity(w)) continue;
+
+    // Skip obvious debt-ish tokens
+    if (hasSubstantiveDebtContent(w)) continue;
+
+    const cand = titleCaseName(w);
+    const simple = normalise(cand);
+    if (cand && !NAME_BLOCKLIST.has(simple)) return { ok: true, name: cand };
   }
 
   return { ok: false, reason: "no_match" };
