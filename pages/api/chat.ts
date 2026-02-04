@@ -1549,19 +1549,39 @@ function buildAcknowledgement(userText: string, state: ChatState) {
   return name ? `Thanks, ${name}.` : "Thanks.";
 }
 
-function joinAckAndPrompt(ack: string, prompt: string) {
-  const a = (ack || "").trim();
-  const p = (prompt || "").trim();
-  if (!a) return p;
-  if (!p) return a;
+function stripThanksPrefix(text: string) {
+  let t = (text || "").trim();
+  // Remove leading "Thanks" / "Thank you" / "Cheers" to avoid double-thanking when the script prompt starts similarly.
+  t = t.replace(/^(thanks|thank you|cheers)(\s*(—|-|,|\.|!))?\s*/i, "");
+  // Also remove the common "got it" directly after thanks
+  t = t.replace(/^(got it|understood)(\s*(—|-|,|\.|!))?\s*/i, "");
+  return t.trim();
+}
 
-  const na = normalise(a);
+function promptStartsWithThanks(prompt: string) {
+  const p = normalise((prompt || "").trim());
+  return p.startsWith("thanks") || p.startsWith("thank you") || p.startsWith("cheers");
+}
+
+function joinAckAndPrompt(ack: string, prompt: string) {
+  const aRaw = (ack || "").trim();
+  const p = (prompt || "").trim();
+  if (!aRaw) return p;
+  if (!p) return aRaw;
+
+  const na = normalise(aRaw);
   const np = normalise(p);
+
+  // If the scripted prompt already starts with thanks/thank you, strip that from the ack to avoid "Thanks... Thank you..."
+  if (promptStartsWithThanks(p) && (na.startsWith("thanks") || na.startsWith("thank you") || na.startsWith("cheers"))) {
+    const stripped = stripThanksPrefix(aRaw);
+    return stripped ? `${stripped} ${p}` : p;
+  }
 
   if (na.startsWith("thanks") && np.startsWith("thanks")) return p;
   if (na === np) return p;
 
-  return `${a} ${p}`;
+  return `${aRaw} ${p}`;
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ApiResp>) {
@@ -1720,6 +1740,40 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   }
 
   if (expects === "concern") {
+
+    // If the user provides their name early (e.g., "my name is Ali") while we're asking what prompted them,
+    // capture it and keep them on the same step (so we still get the reason they reached out).
+    const earlyName = extractName(userText);
+    if (earlyName.ok && earlyName.name && !hasSubstantiveDebtContent(userText)) {
+      const name = earlyName.name;
+      const isSameAsMark = normalise(name) === "mark";
+      const greet = isSameAsMark
+        ? "Nice to meet you, Mark — nice to meet a fellow Mark."
+        : `Nice to meet you, ${name}.`;
+
+      const nextState: ChatState = {
+        ...state,
+        name,
+        askedNameTries: 0,
+        // stay on the same step (concern)
+        step: state.step,
+      };
+
+      // Re-ask the concern question (without the "My name's Mark" intro)
+      const follow = step0Variant(currentPromptClean);
+      const key = promptKey(nextState.step, follow);
+
+      return res.status(200).json({
+        reply: `${greet} ${follow}`,
+        uiTrigger: currentParsed.uiTrigger,
+        popup: currentParsed.popup,
+        portalTab: currentParsed.portalTab,
+        openPortal: currentParsed.openPortal,
+        state: { ...nextState, lastPromptKey: key, lastStepPrompted: nextState.step },
+        displayName: name,
+      });
+    }
+
     const t = userText.trim();
     if (t.length < 3) {
       const follow = step0Variant(stripLeadingIntroFromPrompt(prompt) || prompt);
