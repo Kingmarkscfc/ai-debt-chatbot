@@ -1511,6 +1511,55 @@ function stripLeadingIntroFromPrompt(prompt: string) {
   return p;
 }
 
+
+type UiParseResult = {
+  clean: string;
+  uiTrigger?: string;
+  popup?: string;
+  portalTab?: string;
+  openPortal?: boolean;
+};
+
+/**
+ * Optional UI directives can be embedded inside prompts like:
+ *   [UI: uiTrigger=incomeExpense; popup=welcome; portalTab=documents; openPortal=true]
+ * They are stripped from the prompt before sending to the user, and returned as fields for the UI.
+ */
+function parseUiDirectives(prompt: string): UiParseResult {
+  const raw = String(prompt ?? "");
+  const uiBlocks = raw.match(/\[UI:[^\]]*\]/gi) || [];
+  if (!uiBlocks.length) return { clean: raw };
+
+  let uiTrigger: string | undefined;
+  let popup: string | undefined;
+  let portalTab: string | undefined;
+  let openPortal: boolean | undefined;
+
+  for (const block of uiBlocks) {
+    const inner = block.replace(/^\[UI:\s*/i, "").replace(/\]$/i, "").trim();
+    const parts = inner.split(/[;,]/).map((s) => s.trim()).filter(Boolean);
+
+    for (const part of parts) {
+      const [kRaw, ...vParts] = part.split("=");
+      const key = (kRaw || "").trim();
+      const val = vParts.join("=").trim();
+
+      if (!key) continue;
+
+      if (/^uitrigger$/i.test(key) || /^trigger$/i.test(key)) uiTrigger = val || uiTrigger;
+      else if (/^popup$/i.test(key)) popup = val || popup;
+      else if (/^portaltab$/i.test(key) || /^tab$/i.test(key)) portalTab = val || portalTab;
+      else if (/^openportal$/i.test(key)) {
+        if (/^(true|1|yes)$/i.test(val)) openPortal = true;
+        else if (/^(false|0|no)$/i.test(val)) openPortal = false;
+      }
+    }
+  }
+
+  const clean = raw.replace(/\s*\[UI:[^\]]*\]\s*/gi, " ").replace(/\s{2,}/g, " ").trim();
+  return { clean, uiTrigger, popup, portalTab, openPortal };
+}
+
 function step0Variant(cleanPrompt: string) {
   const canon = "what prompted you to seek help with your debts today?";
   if (normalise(cleanPrompt) === canon) {
@@ -1638,7 +1687,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
   const currentStepDef = nextScriptPrompt(script, state);
   const currentPromptFull = currentStepDef?.prompt || FALLBACK_STEP0;
-  const currentPromptClean = stripLeadingIntroFromPrompt(currentPromptFull) || currentPromptFull;
+
+  // Parse any optional UI directives embedded in the prompt (e.g. [UI:...])
+  const currentParsed = parseUiDirectives(currentPromptFull);
+  const currentPromptClean = stripLeadingIntroFromPrompt(currentParsed.clean) || currentParsed.clean;
 
   if (isAckOnly(userText)) {
     const follow = state.step === 0 ? step0Variant(currentPromptClean) : currentPromptClean;
