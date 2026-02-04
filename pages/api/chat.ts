@@ -49,7 +49,12 @@ type ApiReqBody = {
 type ApiResp = {
   reply: string;
   state: ChatState;
-  openPortal?: boolean;
+
+  // UI hints for the frontend (safe: ignored if not implemented)
+  uiTrigger?: string; // e.g. "OPEN_CLIENT_PORTAL" / "OPEN_FACT_FIND_POPUP"
+  popup?: string; // e.g. "FACT_FIND_CLIENT_INFORMATION" / "DEBT_SLIDER" / "AFFORDABLE_SLIDER"
+  portalTab?: string; // e.g. "TAB_2_OUTSTANDING_DEBTS"
+  openPortal?: boolean; // legacy flag used by some UIs
   displayName?: string;
 };
 
