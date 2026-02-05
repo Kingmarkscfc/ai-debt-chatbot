@@ -1743,7 +1743,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     let nameCaptured: string | null = null;
 
     if (!nextState.name || nextState.name === "there") {
-      const n = extractName(userText, { allowLooseScan: false });
+      const n = extractName(userText;
       if (n.ok && n.name && !hasSubstantiveDebtContent(userText)) {
         nextState = { ...nextState, name: n.name, askedNameTries: 0 };
         nameCaptured = n.name;
