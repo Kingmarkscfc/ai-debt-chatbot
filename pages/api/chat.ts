@@ -1743,7 +1743,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     let nameCaptured: string | null = null;
 
     if (!nextState.name || nextState.name === "there") {
-      const n = extractName(userText;
+      const n = extractName(userText);
       if (n.ok && n.name && !hasSubstantiveDebtContent(userText)) {
         nextState = { ...nextState, name: n.name, askedNameTries: 0 };
         nameCaptured = n.name;
@@ -1869,7 +1869,7 @@ ${alt}` : alt,
 
     // If the user provides their name early (e.g., "my name is Ali") while we're asking what prompted them,
     // capture it and keep them on the same step (so we still get the reason they reached out).
-    const earlyName = extractName(userText, { allowLooseScan: false });
+    const earlyName = extractName(userText)
     if (earlyName.ok && earlyName.name && !hasSubstantiveDebtContent(userText)) {
       const name = earlyName.name;
       const isSameAsMark = normalise(name) === "mark";
