@@ -1297,7 +1297,7 @@ function extractName(userText: string): { ok: boolean; name?: string; reason?: s
 
   // Common lead-in phrases where the name can be anywhere in the sentence.
   // Captures up to 3 tokens so "Mark Hughes" or "Mary Jane Smith" works.
-  const leadIn = /\b(?:my name is|name is|this is|i am|i'?m|im|it's|its|it is|call me)\s+([A-Za-z][A-Za-z'\-]{1,})(?:\s+([A-Za-z][A-Za-z'\-]{1,}))?(?:\s+([A-Za-z][A-Za-z'\-]{1,}))?/i;
+  const leadIn = /\b(?:my name is|my names|my name\'s|name is|this is|i am|i am called|i\'?m|im|i\'?m called|im called|it\'?s|its|it is|call me)\s+([A-Za-z][A-Za-z\'\-]{1,})(?:\s+([A-Za-z][A-Za-z\'\-]{1,}))?(?:\s+([A-Za-z][A-Za-z\'\-]{1,}))?/i;
   const m = t.match(leadIn);
 
   const TAIL_FILLERS = new Set(
@@ -1326,6 +1326,23 @@ function extractName(userText: string): { ok: boolean; name?: string; reason?: s
 
   // If they typed something like "Its Mark" / "It's Mark" / "Im Mark"
   const toks = t.split(" ").filter(Boolean);
+
+  // If the user starts with a greeting + a name (likely the advisor's name),
+  // and then gives their own name, don't accidentally capture the greeted name.
+  const GREET_WORDS = new Set(["hi", "hello", "hey", "hiya", "yo"].map((x) => x.toLowerCase()));
+  const hasSelfIntro = /\b(my name is|my names|my name\'s|name is|this is|i am|i\'?m|im|call me)\b/i.test(normalise(t));
+  let ignoreFirstNameToken: string | null = null;
+  if (toks.length >= 2 && GREET_WORDS.has(normalise(toks[0])) && hasSelfIntro) {
+    ignoreFirstNameToken = toks[1];
+  }
+  if (toks.length >= 3 && normalise(toks[0]) === "good" && (normalise(toks[1]) === "morning" || normalise(toks[1]) === "afternoon" || normalise(toks[1]) === "evening") && hasSelfIntro) {
+    ignoreFirstNameToken = toks[2];
+  }
+
+  // Pure greeting like "Hi Mark" should not be treated as a name.
+  if ((GREET_WORDS.has(normalise(toks[0])) || normalise(toks[0]) === "good") && toks.length <= 3 && !hasSelfIntro) {
+    return { ok: false, reason: "greeting" };
+  }
   if (toks.length >= 2) {
     const first = normalise(toks[0]);
     const leadWords = new Set(["its", "it's", "it’s", "im", "i'm", "i’m", "iam", "i"]);
@@ -1360,6 +1377,7 @@ function extractName(userText: string): { ok: boolean; name?: string; reason?: s
   // This avoids needing a huge name database.
   const words = t.split(" ").filter(Boolean);
   for (const w of words) {
+    if (ignoreFirstNameToken && normalise(w) === normalise(ignoreFirstNameToken)) continue;
     const nw = normalise(w);
     if (!nw) continue;
     if (NAME_BLOCKLIST.has(nw)) continue;
@@ -1377,7 +1395,6 @@ function extractName(userText: string): { ok: boolean; name?: string; reason?: s
 
   return { ok: false, reason: "no_match" };
 }
-
 function extractAmounts(text: string): { paying?: number; affordable?: number } {
   const cleaned = text.replace(/,/g, "");
   const nums = [...cleaned.matchAll(/£\s*([0-9]+(?:\.[0-9]+)?)/g)].map((m) => Number(m[1]));
