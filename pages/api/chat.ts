@@ -154,6 +154,14 @@ const NAME_BLOCKLIST = new Set(
     "what",
     "why",
     "reset",
+    "are",
+    "your",
+    "today",
+    "doing",
+    "was",
+    "were",
+    "been",
+    "being",
   ].map((x) => x.toLowerCase())
 );
 
@@ -1295,6 +1303,8 @@ function extractName(userText: string): { ok: boolean; name?: string; reason?: s
   if (!raw) return { ok: false, reason: "empty" };
   if (containsProfanity(raw)) return { ok: false, reason: "profanity" };
 
+  const allowLooseScan = opts?.allowLooseScan !== false;
+
   // Keep original casing for nicer output, but normalise for checks
   const t = stripPunctuation(raw);
 
@@ -1378,22 +1388,28 @@ function extractName(userText: string): { ok: boolean; name?: string; reason?: s
 
   // Last resort (when we are *currently asking for a name*): scan for a plausible single name token in the sentence.
   // This avoids needing a huge name database.
-  const words = t.split(" ").filter(Boolean);
-  for (const w of words) {
-    if (ignoreFirstNameToken && normalise(w) === normalise(ignoreFirstNameToken)) continue;
-    const nw = normalise(w);
-    if (!nw) continue;
-    if (NAME_BLOCKLIST.has(nw)) continue;
-    if (TAIL_FILLERS.has(nw)) continue;
-    if (nw.length < 2) continue;
-    if (containsProfanity(w)) continue;
+  // Last resort (when we are *currently asking for a name*): scan for a plausible single name token in the sentence.
+  // This avoids needing a huge name database.
+  if (allowLooseScan) {
+    const words = t.split(" ").filter(Boolean);
+    for (const w of words) {
+      if (ignoreFirstNameToken && normalise(w) === normalise(ignoreFirstNameToken)) continue;
+      const nw = normalise(w);
+      if (!nw) continue;
+      if (NAME_BLOCKLIST.has(nw)) continue;
+      if (TAIL_FILLERS.has(nw)) continue;
+      if (nw.length < 2) continue;
+      if (containsProfanity(w)) continue;
 
-    // Skip obvious debt-ish tokens
-    if (hasSubstantiveDebtContent(w)) continue;
+      // Skip obvious debt-ish tokens
+      if (hasSubstantiveDebtContent(w)) continue;
 
-    const cand = titleCaseName(w);
-    const simple = normalise(cand);
-    if (cand && !NAME_BLOCKLIST.has(simple)) return { ok: true, name: cand };
+      const cand = titleCaseName(w);
+      const simple = normalise(cand);
+      if (cand && !NAME_BLOCKLIST.has(simple)) return { ok: true, name: cand };
+    }
+
+  
   }
 
   return { ok: false, reason: "no_match" };
@@ -1743,7 +1759,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     let nameCaptured: string | null = null;
 
     if (!nextState.name || nextState.name === "there") {
-      const n = extractName(userText);
+      const n = extractName(userText, { allowLooseScan: false });
       if (n.ok && n.name && !hasSubstantiveDebtContent(userText)) {
         nextState = { ...nextState, name: n.name, askedNameTries: 0 };
         nameCaptured = n.name;
@@ -1869,7 +1885,7 @@ ${alt}` : alt,
 
     // If the user provides their name early (e.g., "my name is Ali") while we're asking what prompted them,
     // capture it and keep them on the same step (so we still get the reason they reached out).
-    const earlyName = extractName(userText)
+    const earlyName = extractName(userText, { allowLooseScan: false });
     if (earlyName.ok && earlyName.name && !hasSubstantiveDebtContent(userText)) {
       const name = earlyName.name;
       const isSameAsMark = normalise(name) === "mark";
