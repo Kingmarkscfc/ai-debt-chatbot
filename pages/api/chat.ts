@@ -1702,28 +1702,58 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   }
 
   if (looksLikeGreetingOrSmallTalk(userText) && !hasSubstantiveDebtContent(userText)) {
+    // If the user includes their name inside small talk (e.g. "Hi Mark, my name is Ali..."),
+    // capture it without derailing the current step.
+    let nextState: ChatState = { ...state };
+    let nameCaptured: string | null = null;
+
+    if (!nextState.name || nextState.name === "there") {
+      const n = extractName(userText);
+      if (n.ok && n.name && !hasSubstantiveDebtContent(userText)) {
+        nextState = { ...nextState, name: n.name, askedNameTries: 0 };
+        nameCaptured = n.name;
+      }
+    }
+
     const st = smallTalkReply(userText);
 
     let follow = currentPromptClean;
-    if (state.step === 0) follow = step0Variant(follow);
+    if (nextState.step === 0) follow = step0Variant(follow);
 
-    const reply = st ? `${st}\n\n${follow}` : follow;
+    const nameIntro = nameCaptured
+      ? normalise(nameCaptured) === "mark"
+        ? "Nice to meet you, Mark — nice to meet a fellow Mark."
+        : `Nice to meet you, ${nameCaptured}.`
+      : "";
 
-    const key = promptKey(state.step, follow);
-    if (state.lastPromptKey === key) {
+    const head = [nameIntro, st].filter(Boolean).join(" ").trim();
+    const reply = head ? `${head}
+
+${follow}` : st ? `${st}
+
+${follow}` : follow;
+
+    const key = promptKey(nextState.step, follow);
+    if (nextState.lastPromptKey === key) {
       const alt =
-        state.step === 0
+        nextState.step === 0
           ? "When you’re ready, tell me what’s brought you here about your debts today."
           : "When you’re ready, we can carry on from where we left off.";
       return res.status(200).json({
-        reply: st ? `${st}\n\n${alt}` : alt,
-        state: { ...state, lastPromptKey: promptKey(state.step, alt), lastStepPrompted: state.step },
+        reply: head ? `${head}
+
+${alt}` : st ? `${st}
+
+${alt}` : alt,
+        state: { ...nextState, lastPromptKey: promptKey(nextState.step, alt), lastStepPrompted: nextState.step },
+        ...(nameCaptured ? { displayName: nameCaptured } : {}),
       });
     }
 
     return res.status(200).json({
       reply,
-      state: { ...state, lastPromptKey: key, lastStepPrompted: state.step },
+      state: { ...nextState, lastPromptKey: key, lastStepPrompted: nextState.step },
+      ...(nameCaptured ? { displayName: nameCaptured } : {}),
     });
   }
 
