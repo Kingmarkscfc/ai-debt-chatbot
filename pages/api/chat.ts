@@ -150,6 +150,9 @@ const NAME_BLOCKLIST = new Set(
     "just",
     "like",
     "basically",
+    "how",
+    "what",
+    "why",
     "reset",
   ].map((x) => x.toLowerCase())
 );
@@ -1545,7 +1548,8 @@ type UiParseResult = {
 function parseUiDirectives(prompt: string): UiParseResult {
   const raw = String(prompt ?? "");
   const uiBlocks = raw.match(/\[UI:[^\]]*\]/gi) || [];
-  if (!uiBlocks.length) return { clean: raw };
+  const triggerBlocks = raw.match(/\[TRIGGER:[^\]]*\]/gi) || [];
+  if (!uiBlocks.length && !triggerBlocks.length) return { clean: raw };
 
   let uiTrigger: string | undefined;
   let popup: string | undefined;
@@ -1573,7 +1577,17 @@ function parseUiDirectives(prompt: string): UiParseResult {
     }
   }
 
-  const clean = raw.replace(/\s*\[UI:[^\]]*\]\s*/gi, " ").replace(/\s{2,}/g, " ").trim();
+  // Support legacy trigger markers like: [TRIGGER: OPEN_FACT_FIND_POPUP]
+  for (const block of triggerBlocks) {
+    const inner = block.replace(/^\[TRIGGER:\s*/i, "").replace(/\]$/i, "").trim();
+    if (inner) uiTrigger = uiTrigger || inner;
+  }
+
+  const clean = raw
+    .replace(/\s*\[UI:[^\]]*\]\s*/gi, " ")
+    .replace(/\s*\[TRIGGER:[^\]]*\]\s*/gi, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
   return { clean, uiTrigger, popup, portalTab, openPortal };
 }
 
@@ -1714,6 +1728,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const key = promptKey(state.step, follow);
     return res.status(200).json({
       reply: follow,
+      uiTrigger: currentParsed.uiTrigger,
+      popup: currentParsed.popup,
+      portalTab: currentParsed.portalTab,
+      openPortal: currentParsed.openPortal,
       state: { ...state, lastPromptKey: key, lastStepPrompted: state.step },
     });
   }
@@ -1725,7 +1743,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     let nameCaptured: string | null = null;
 
     if (!nextState.name || nextState.name === "there") {
-      const n = extractName(userText);
+      const n = extractName(userText, { allowLooseScan: false });
       if (n.ok && n.name && !hasSubstantiveDebtContent(userText)) {
         nextState = { ...nextState, name: n.name, askedNameTries: 0 };
         nameCaptured = n.name;
@@ -1781,6 +1799,10 @@ ${alt}` : alt,
     const key = promptKey(state.step, follow);
     return res.status(200).json({
       reply,
+      uiTrigger: currentParsed.uiTrigger,
+      popup: currentParsed.popup,
+      portalTab: currentParsed.portalTab,
+      openPortal: currentParsed.openPortal,
       state: { ...state, lastPromptKey: key, lastStepPrompted: state.step },
     });
   }
@@ -1847,7 +1869,7 @@ ${alt}` : alt,
 
     // If the user provides their name early (e.g., "my name is Ali") while we're asking what prompted them,
     // capture it and keep them on the same step (so we still get the reason they reached out).
-    const earlyName = extractName(userText);
+    const earlyName = extractName(userText, { allowLooseScan: false });
     if (earlyName.ok && earlyName.name && !hasSubstantiveDebtContent(userText)) {
       const name = earlyName.name;
       const isSameAsMark = normalise(name) === "mark";
@@ -2008,6 +2030,10 @@ ${alt}` : alt,
 
   return res.status(200).json({
     reply: joinAckAndPrompt(ack, follow),
+      uiTrigger: currentParsed.uiTrigger,
+      popup: currentParsed.popup,
+      portalTab: currentParsed.portalTab,
+      openPortal: currentParsed.openPortal,
     state: { ...state, lastPromptKey: key, lastStepPrompted: state.step },
   });
 }
