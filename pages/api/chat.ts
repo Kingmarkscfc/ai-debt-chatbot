@@ -2117,4 +2117,3 @@ ${alt}` : alt,
     state: { ...state, lastPromptKey: key, lastStepPrompted: state.step },
   });
 }
-}
