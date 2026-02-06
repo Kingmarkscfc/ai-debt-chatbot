@@ -358,6 +358,69 @@ function smallTalkReply(userText: string) {
   return null;
 }
 
+function looksLikeOffTopicQuestion(userText: string) {
+  const t = normalise(userText);
+  if (!t) return false;
+
+  // obvious "what are you doing" / "who are you" style interruptions
+  if (
+    t === "what are you doing" ||
+    t.startsWith("what are you doing") ||
+    t === "what are you" ||
+    t.startsWith("what are you ") ||
+    t === "who are you" ||
+    t.startsWith("who are you") ||
+    t === "what can you do" ||
+    t.startsWith("what can you do") ||
+    t === "are you real" ||
+    t.startsWith("are you real") ||
+    t.includes("are you a bot") ||
+    t.includes("are you human") ||
+    t.includes("what is this") ||
+    t.startsWith("what is this")
+  ) return true;
+
+  // general question marks (but don't steal actual debt questions)
+  if (t.includes("?")) return true;
+
+  return false;
+}
+
+function offTopicReply(userText: string, state: ChatState) {
+  const t = normalise(userText);
+  const greeting = getLocalTimeGreeting();
+  const courtesy = detectCourtesy(userText);
+  const name = state.name && state.name !== "there" ? state.name : null;
+
+  // Keep these sharp and decisive; no follow-up questions here.
+  let base: string | null = null;
+
+  if (t.includes("what are you doing") || t === "what are you doing") {
+    base = name
+      ? `I’m here to help you work out the best way forward with your debts, ${name}.`
+      : "I’m here to help you work out the best way forward with your debts.";
+  } else if (t.includes("who are you") || t.includes("what are you")) {
+    base = "I’m your debt-advice assistant. I’ll ask a few quick questions so we can work out the best options for you.";
+  } else if (t.includes("what can you do") || t.includes("help")) {
+    base = "I can explain your options, help you organise the situation, and guide you through the next steps based on what you tell me.";
+  } else if (t.includes("are you real") || t.includes("are you a bot") || t.includes("are you human")) {
+    base = "I’m an online assistant, but I’m here to help in a clear, practical way and keep things simple.";
+  } else if (t.includes("what is this")) {
+    base = "This is a quick debt help chat. I’ll ask a couple of questions and then explain the options available.";
+  } else if (t.includes("?")) {
+    base = "I’m here to help with your debts. If you tell me what’s going on, I’ll guide you through the next steps.";
+  } else {
+    return null;
+  }
+
+  // Add a friendly greeting tone if they opened with one
+  const opener = looksLikeGreetingOrSmallTalk(userText) ? `${greeting}! ` : "";
+  const composed = `${opener}${base}`.trim();
+
+  return courtesy ? `${composed} ${courtesy}` : composed;
+}
+
+
 /** Extra debt / finance terms (from your "likely debt terms" list) */
 const DEBT_TERMS_EXTRA = [
   "Accounts",
@@ -1753,7 +1816,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 
-  if (looksLikeGreetingOrSmallTalk(userText) && !hasSubstantiveDebtContent(userText)) {
+  if ((looksLikeGreetingOrSmallTalk(userText) || looksLikeOffTopicQuestion(userText)) && !hasSubstantiveDebtContent(userText)) {
     // If the user includes their name inside small talk (e.g. "Hi Mark, my name is Ali..."),
     // capture it without derailing the current step.
     let nextState: ChatState = { ...state };
@@ -1767,7 +1830,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       }
     }
 
-    const st = smallTalkReply(userText);
+    const st = smallTalkReply(userText) || offTopicReply(userText, state);
 
     let follow = currentPromptClean;
     if (nextState.step === 0) follow = step0Variant(follow);
@@ -2053,4 +2116,5 @@ ${alt}` : alt,
       openPortal: currentParsed.openPortal,
     state: { ...state, lastPromptKey: key, lastStepPrompted: state.step },
   });
+}
 }
