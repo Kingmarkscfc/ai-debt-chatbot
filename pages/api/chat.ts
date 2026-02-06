@@ -154,6 +154,7 @@ const NAME_BLOCKLIST = new Set(
     "what",
     "why",
     "reset",
+    "you",
     "are",
     "your",
     "today",
@@ -1297,7 +1298,7 @@ function hasSubstantiveDebtContent(userText: string) {
   return debtish || hasExtraDebtTerm(userText);
 }
 
-function extractName(userText: string): { ok: boolean; name?: string; reason?: string } {
+function extractName(userText: string, opts?: { allowLooseScan?: boolean }): { ok: boolean; name?: string; reason?: string } {
   const raw = (userText || "").trim();
 
   if (!raw) return { ok: false, reason: "empty" };
