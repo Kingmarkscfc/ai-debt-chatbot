@@ -5,7 +5,25 @@ import avatarPhoto from "../assets/advisor-avatar-human.png";
 /* =============== Types & helpers =============== */
 type Sender = "user" | "bot";
 type Attachment = { filename: string; url: string; mimeType?: string; size?: number };
-type Message = { sender: Sender; text: string; attachment?: Attachment; at?: string };
+type Message = { id: string; sender: Sender; text: string; attachment?: Attachment; at?: string; kind?: 'popup'; popupKind?: string; hidden?: boolean };
+
+function makeId() {
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function parseInlineTrigger(reply: string): { clean: string; popupKind?: string } {
+  const raw = String(reply ?? "");
+  const m = raw.match(/\[TRIGGER:\s*([A-Z0-9_]+)\s*\]/i);
+  if (!m) return { clean: raw };
+  const trig = (m[1] || "").toUpperCase();
+  const clean = raw.replace(/\s*\[TRIGGER:[^\]]*\]\s*/gi, " ").replace(/\s{2,}/g, " ").trim();
+  // Map triggers to popup kinds (expand as needed)
+  if (trig === "OPEN_FACT_FIND_POPUP") return { clean, popupKind: "FACT_FIND" };
+  if (trig === "OPEN_INCOME_EXPENSE_POPUP") return { clean, popupKind: "INCOME_EXPENSE" };
+  if (trig === "OPEN_ADDRESS_POPUP") return { clean, popupKind: "ADDRESS" };
+  if (trig === "OPEN_DOCUMENTS_POPUP") return { clean, popupKind: "DOCUMENTS" };
+  return { clean, popupKind: trig };
+}
 
 type AddressEntry = { line1: string; line2: string; city: string; postcode: string; yearsAt: number };
 
@@ -92,6 +110,8 @@ export default function Home() {
 
   // Address popup
   const [showAddress, setShowAddress] = useState(false);
+  const [pinned, setPinned] = useState<{ id: string; text: string } | null>(null);
+
   const [postcode, setPostcode] = useState("");
   const [postcodeLoading, setPostcodeLoading] = useState(false);
   const [postcodeError, setPostcodeError] = useState<string | null>(null);
@@ -229,6 +249,21 @@ export default function Home() {
       color: isDark ? "#e5e7eb" : "#111827",
     },
     small: { fontSize: 12, opacity: 0.8 },
+    pinnedBar: {
+      padding: "10px 12px",
+      marginBottom: 10,
+      borderRadius: 14,
+      border: `1px solid ${isDark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.08)"}`,
+      background: isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.03)",
+    },
+    pinnedLabel: { fontSize: 12, opacity: 0.8, marginBottom: 6 },
+    pinnedText: { fontSize: 14, lineHeight: 1.35 },
+    inlinePopupCard: {
+      borderRadius: 16,
+      border: `1px solid ${isDark ? "rgba(255,255,255,0.14)" : "rgba(0,0,0,0.10)"}`,
+      padding: 12,
+      background: isDark ? "rgba(0,0,0,0.15)" : "rgba(255,255,255,0.75)",
+    },
     modalOverlay: {
       position: "fixed",
       inset: 0,
@@ -286,7 +321,7 @@ export default function Home() {
     const savedTheme = typeof window === "undefined" ? null : localStorage.getItem("da_theme");
     if (savedTheme === "dark" || savedTheme === "light") setTheme(savedTheme as any);
 
-    setMessages([{ sender: "bot", text: "Hello! My name’s Mark. What prompted you to seek help with your debts today?", at: nowTime() }]);
+    setMessages([{ id: makeId(), sender: "bot", text: "Hello! My name’s Mark. What prompted you to seek help with your debts today?", at: nowTime() }]);
     setChatState({ step: 0, askedNameTries: 0, name: null });
   }, []);
 
@@ -339,6 +374,7 @@ export default function Home() {
         setMessages((prev) => [
           ...prev,
           {
+            id: makeId(),
             sender: "bot",
             text: `Got it — uploaded ${prettyFilename(j.filename)}.`,
             attachment: { filename: j.filename, url: j.url, mimeType: j.mimeType, size: j.size },
@@ -347,10 +383,10 @@ export default function Home() {
         ]);
         setUploadBump((x) => x + 1);
       } else {
-        setMessages((prev) => [...prev, { sender: "bot", text: "Sorry — upload failed.", at: nowTime() }]);
+        setMessages((prev) => [...prev, { id: makeId(), sender: "bot", text: "Sorry — upload failed.", at: nowTime() }]);
       }
     } catch {
-      setMessages((prev) => [...prev, { sender: "bot", text: "Sorry — upload failed (network).", at: nowTime() }]);
+      setMessages((prev) => [...prev, { id: makeId(), sender: "bot", text: "Sorry — upload failed (network).", at: nowTime() }]);
     }
   };
 
@@ -358,7 +394,7 @@ export default function Home() {
     const text = input.trim();
     if (!text) return;
     setInput("");
-    const userMsg: Message = { sender: "user", text, at: nowTime() };
+    const userMsg: Message = { id: makeId(), sender: "user", text, at: nowTime() };
     const nextHist = [...messages, userMsg];
     setMessages(nextHist);
 
@@ -387,10 +423,26 @@ export default function Home() {
       if (ui.includes("OPEN_CLIENT_PORTAL")) {
         setShowAuth(true);
       }
-      setMessages((prev) => [...prev, { sender: "bot", text: reply, at: nowTime() }]);
+      const botId = makeId();
+      const willOpenPopup =
+        ui.includes("OPEN_FACT_FIND_POPUP") ||
+        ui.includes("OPEN_INCOME_EXPENSE_POPUP") ||
+        ui.includes("OPEN_ADDRESS_POPUP") ||
+        ui.includes("FACT_FIND") ||
+        ui.includes("INCOME") ||
+        ui.includes("ADDRESS");
+
+      if (willOpenPopup) {
+        setPinned({ id: botId, text: reply });
+      } else if (pinned) {
+        // If we were previously pinned but the conversation moves on, unpin.
+        setPinned(null);
+      }
+
+      setMessages((prev) => [...prev, { id: botId, sender: "bot", text: reply, at: nowTime() }]);
       if (data?.openPortal) setShowAuth(true);
     } catch {
-      setMessages((prev) => [...prev, { sender: "bot", text: "⚠️ I couldn’t reach the server just now.", at: nowTime() }]);
+      setMessages((prev) => [...prev, { id: makeId(), sender: "bot", text: "⚠️ I couldn’t reach the server just now.", at: nowTime() }]);
     }
   };
 
@@ -510,6 +562,7 @@ export default function Home() {
       if (!j?.ok) setIeError(j?.error || "Couldn’t save.");
       else {
         setShowIe(false);
+                      setPinned(null);
         setNotice("Income & expenditure saved.");
       }
     } catch {
@@ -538,6 +591,7 @@ export default function Home() {
       if (!j?.ok) setNotice(j?.error || "Couldn’t save address.");
       else {
         setShowAddress(false);
+                      setPinned(null);
         setNotice("Address saved.");
       }
     } catch {
@@ -594,9 +648,17 @@ export default function Home() {
           </div>
         </div>
 
+
+        {pinned ? (
+          <div style={styles.pinnedBar}>
+            <div style={styles.pinnedLabel}>Just to keep this visible while you fill the form:</div>
+            <div style={styles.pinnedText}>{pinned.text}</div>
+          </div>
+        ) : null}
+
         <div style={styles.chat}>
-          {messages.map((m, idx) => (
-            <div key={idx} style={styles.row}>
+          {messages.filter((m) => !(pinned && m.id === pinned.id)).map((m) => (
+            <div key={m.id} style={styles.row}>
               {m.sender === "bot" ? (
                 <>
                   <Image src={avatarPhoto} alt="Advisor" width={28} height={28} style={{ borderRadius: 999, marginTop: 2 }} />
@@ -621,6 +683,40 @@ export default function Home() {
               )}
             </div>
           ))}
+
+          {(showIe || showAddress) ? (
+            <div style={styles.row}>
+              <div style={styles.avatarBot}>🧾</div>
+              <div style={{ ...styles.bubbleBot, width: "100%", maxWidth: 620 }}>
+                <div style={styles.inlinePopupCard}>
+                  {/* popup rendered inline in chat */}
+
+                  {/* popup rendered inline in chat */}
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+                {showAddress ? (
+                  <AddressForm
+                    values={addressValues}
+                    setValues={setAddressValues}
+                    onClose={() => {
+                      setShowAddress(false);
+                      setPinned(null);
+                      setPinned(null);
+                    }}
+                    onSaved={() => {
+                      setShowAddress(false);
+                      setPinned(null);
+                      setPinned(null);
+                    }}
+                  />
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
           <div ref={bottomRef} />
         </div>
 
