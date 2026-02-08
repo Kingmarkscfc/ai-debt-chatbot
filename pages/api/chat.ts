@@ -1367,20 +1367,68 @@ function extractName(userText: string, opts?: { allowLooseScan?: boolean }): { o
   if (!raw) return { ok: false, reason: "empty" };
   if (containsProfanity(raw)) return { ok: false, reason: "profanity" };
 
-  const allowLooseScan = opts?.allowLooseScan !== false;
+  // IMPORTANT:
+  // - We only "guess" a name when we are explicitly expecting one (allowLooseScan === true),
+  //   and even then we only accept very short, name-like replies (e.g. "Bob", "Bob Smith").
+  // - We never scan inside longer sentences for random tokens (prevents "Are", "Have Been Struggling", etc).
+  const allowLooseScan = opts?.allowLooseScan === true;
 
   // Keep original casing for nicer output, but normalise for checks
   const t = stripPunctuation(raw);
 
-  // Common lead-in phrases where the name can be anywhere in the sentence.
+  // Explicit name declarations where the name can appear anywhere after the phrase.
   // Captures up to 3 tokens so "Mark Hughes" or "Mary Jane Smith" works.
-  const leadIn = /\b(?:my name is|my names|my name\'s|name is|this is|i am|i am called|i\'?m|im|i\'?m called|im called|it\'?s|its|it is|call me)\s+([A-Za-z][A-Za-z\'\-]{1,})(?:\s+([A-Za-z][A-Za-z\'\-]{1,}))?(?:\s+([A-Za-z][A-Za-z\'\-]{1,}))?/i;
+  const leadIn =
+    /\b(?:my name is|name is|this is|i am|i'?m|im|it's|its|it is|call me)\s+([A-Za-z][A-Za-z'\-]{1,})(?:\s+([A-Za-z][A-Za-z'\-]{1,}))?(?:\s+([A-Za-z][A-Za-z'\-]{1,}))?/i;
+
   const m = t.match(leadIn);
 
   const TAIL_FILLERS = new Set(
     ["here", "speaking", "mate", "pal", "bro", "bruv", "thanks", "thank", "you"].map((x) => x.toLowerCase())
   );
 
+  const COMMON_NOT_NAMES = new Set(
+    [
+      "are",
+      "am",
+      "is",
+      "was",
+      "were",
+      "be",
+      "been",
+      "being",
+      "have",
+      "has",
+      "had",
+      "do",
+      "does",
+      "did",
+      "doing",
+      "struggling",
+      "help",
+      "debt",
+      "debts",
+      "today",
+      "now",
+    ].map((x) => x.toLowerCase())
+  );
+
+  const validateCandidate = (candidate: string): { ok: boolean; name?: string; reason?: string } => {
+    const cand = titleCaseName(candidate);
+    const simple = normalise(cand);
+
+    if (!cand) return { ok: false, reason: "empty" };
+    if (containsProfanity(cand)) return { ok: false, reason: "profanity" };
+    if (NAME_BLOCKLIST.has(simple)) return { ok: false, reason: "block" };
+    if (COMMON_NOT_NAMES.has(simple)) return { ok: false, reason: "common_not_name" };
+
+    // Don't treat debt-related phrases as names
+    if (hasSubstantiveDebtContent(cand)) return { ok: false, reason: "debtish" };
+
+    return { ok: true, name: cand };
+  };
+
+  // 1) Explicit "my name is ..." etc
   if (m) {
     const parts = [m[1], m[2], m[3]]
       .filter(Boolean)
@@ -1388,96 +1436,36 @@ function extractName(userText: string, opts?: { allowLooseScan?: boolean }): { o
       .filter(Boolean)
       .filter((x) => !TAIL_FILLERS.has(normalise(x)));
 
-    const cand = titleCaseName(parts.join(" "));
-    const simple = normalise(cand);
-
-    if (!cand) return { ok: false, reason: "empty" };
-    if (containsProfanity(cand)) return { ok: false, reason: "profanity" };
-    if (NAME_BLOCKLIST.has(simple)) return { ok: false, reason: "block" };
-
-    // Don't treat debt-related phrases as names
-    if (hasSubstantiveDebtContent(cand)) return { ok: false, reason: "debtish" };
-
-    return { ok: true, name: cand };
+    return validateCandidate(parts.join(" "));
   }
 
-  // If they typed something like "Its Mark" / "It's Mark" / "Im Mark"
-  const toks = t.split(" ").filter(Boolean);
-
-  // If the user starts with a greeting + a name (likely the advisor's name),
-  // and then gives their own name, don't accidentally capture the greeted name.
-  const GREET_WORDS = new Set(["hi", "hello", "hey", "hiya", "yo"].map((x) => x.toLowerCase()));
-  const hasSelfIntro = /\b(my name is|my names|my name\'s|name is|this is|i am|i\'?m|im|call me)\b/i.test(normalise(t));
-  let ignoreFirstNameToken: string | null = null;
-  if (toks.length >= 2 && GREET_WORDS.has(normalise(toks[0])) && hasSelfIntro) {
-    ignoreFirstNameToken = toks[1];
-  }
-  if (toks.length >= 3 && normalise(toks[0]) === "good" && (normalise(toks[1]) === "morning" || normalise(toks[1]) === "afternoon" || normalise(toks[1]) === "evening") && hasSelfIntro) {
-    ignoreFirstNameToken = toks[2];
-  }
-
-  // Pure greeting like "Hi Mark" should not be treated as a name.
-  if ((GREET_WORDS.has(normalise(toks[0])) || normalise(toks[0]) === "good") && toks.length <= 3 && !hasSelfIntro) {
-    return { ok: false, reason: "greeting" };
-  }
-  if (toks.length >= 2) {
-    const first = normalise(toks[0]);
-    const leadWords = new Set(["its", "it's", "it’s", "im", "i'm", "i’m", "iam", "i"]);
-    if (leadWords.has(first)) {
-      const parts = toks.slice(1, 4).filter((x) => !TAIL_FILLERS.has(normalise(x)));
-      const cand = titleCaseName(parts.join(" "));
-      const simple = normalise(cand);
-
-      if (cand && !NAME_BLOCKLIST.has(simple) && !hasSubstantiveDebtContent(cand) && !containsProfanity(cand)) {
-        return { ok: true, name: cand };
-      }
-    }
-  }
-
-  // If the message is short (1-3 words), treat it as a name only if it doesn't look like a debt message.
-  if (toks.length >= 1 && toks.length <= 3) {
-    const debtish = hasSubstantiveDebtContent(t);
-    if (!debtish) {
-      // Drop leading fillers like "its" that sometimes get pasted in
-      const cleanedParts = toks
-        .filter((x, idx) => !(idx === 0 && ["its", "it's", "it’s"].includes(normalise(x))))
-        .filter((x) => !TAIL_FILLERS.has(normalise(x)));
-
-      const cand = titleCaseName(cleanedParts.join(" "));
-      const simple = normalise(cand);
-
-      if (cand && !NAME_BLOCKLIST.has(simple) && !containsProfanity(cand)) return { ok: true, name: cand };
-    }
-  }
-
-  // Last resort (when we are *currently asking for a name*): scan for a plausible single name token in the sentence.
-  // This avoids needing a huge name database.
-  // Last resort (when we are *currently asking for a name*): scan for a plausible single name token in the sentence.
-  // This avoids needing a huge name database.
+  // 2) If we are currently ASKING for a name, accept a short name-only reply:
+  //    "Bob" / "Bob Smith" / "Mary Jane" (up to 3 tokens).
   if (allowLooseScan) {
-    const words = t.split(" ").filter(Boolean);
-    for (const w of words) {
-      if (ignoreFirstNameToken && normalise(w) === normalise(ignoreFirstNameToken)) continue;
-      const nw = normalise(w);
-      if (!nw) continue;
-      if (NAME_BLOCKLIST.has(nw)) continue;
-      if (TAIL_FILLERS.has(nw)) continue;
-      if (nw.length < 2) continue;
-      if (containsProfanity(w)) continue;
+    const toks = t.split(" ").filter(Boolean);
 
-      // Skip obvious debt-ish tokens
-      if (hasSubstantiveDebtContent(w)) continue;
+    // Reject longer inputs outright (prevents capturing sentences like "I have been struggling")
+    if (toks.length >= 1 && toks.length <= 3) {
+      // Must be alpha-ish tokens (name-like), and must NOT be obvious verbs/stopwords.
+      const allNameLike = toks.every((w) => {
+        const nw = normalise(w);
+        if (!nw) return false;
+        if (TAIL_FILLERS.has(nw)) return false;
+        if (NAME_BLOCKLIST.has(nw)) return false;
+        if (COMMON_NOT_NAMES.has(nw)) return false;
+        if (nw.length < 2) return false;
+        if (nw.endsWith("ing")) return false; // blocks "struggling", "doing", etc
+        if (!/^[a-zA-Z][a-zA-Z'\-]*$/.test(w)) return false;
+        return true;
+      });
 
-      const cand = titleCaseName(w);
-      const simple = normalise(cand);
-      if (cand && !NAME_BLOCKLIST.has(simple)) return { ok: true, name: cand };
+      if (allNameLike) return validateCandidate(toks.join(" "));
     }
-
-  
   }
 
   return { ok: false, reason: "no_match" };
 }
+
 function extractAmounts(text: string): { paying?: number; affordable?: number } {
   const cleaned = text.replace(/,/g, "");
   const nums = [...cleaned.matchAll(/£\s*([0-9]+(?:\.[0-9]+)?)/g)].map((m) => Number(m[1]));
@@ -1894,7 +1882,7 @@ ${alt}` : alt,
 
   if (expects === "name") {
     const tries = state.askedNameTries || 0;
-    const nameParse = extractName(userText);
+    const nameParse = extractName(userText, { allowLooseScan: true });
 
     if (nameParse.ok && nameParse.name) {
       const name = nameParse.name;
