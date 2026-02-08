@@ -364,9 +364,29 @@ export default function Home() {
 
     try {
       const data = await sendToApi(text, nextHist);
-      const reply = (data?.reply as string) || "Thanks — let’s continue.";
+      const rawReply = (data?.reply as string) || "Thanks — let’s continue.";
+      const reply = rawReply.replace(/\s*\[(?:TRIGGER|UI):[^\]]*\]\s*/gi, " ").replace(/\s{2,}/g, " ").trim();
       if (data?.state) setChatState(data.state);
       if (data?.displayName) setDisplayName(data.displayName);
+      // Handle optional UI directives returned by the API (safe: ignored if UI not implemented)
+      const uiTrig = String((data as any)?.uiTrigger || "");
+      const uiPop = String((data as any)?.popup || "");
+      const ui = `${uiTrig} ${uiPop}`.toUpperCase();
+
+      // Open Fact-Find / Client Info popup
+      if (ui.includes("OPEN_FACT_FIND_POPUP") || ui.includes("FACT_FIND") || ui.includes("CLIENT_INFORMATION") || ui.includes("ADDRESS")) {
+        setShowAddress(true);
+      }
+
+      // Open Income & Expenditure popup
+      if (ui.includes("OPEN_INCOME_EXPENSE_POPUP") || ui.includes("INCOME_EXPENSE") || ui.includes("INCOME") || ui.includes("EXPENDITURE")) {
+        setShowIe(true);
+      }
+
+      // Open portal/auth (existing behaviour keeps working)
+      if (ui.includes("OPEN_CLIENT_PORTAL")) {
+        setShowAuth(true);
+      }
       setMessages((prev) => [...prev, { sender: "bot", text: reply, at: nowTime() }]);
       if (data?.openPortal) setShowAuth(true);
     } catch {

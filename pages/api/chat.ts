@@ -1659,6 +1659,14 @@ function parseUiDirectives(prompt: string): UiParseResult {
   return { clean, uiTrigger, popup, portalTab, openPortal };
 }
 
+/** Convenience: parse UI directives and strip any intro, returning clean text + UI fields. */
+function cleanPromptAndUi(prompt: string) {
+  const parsed = parseUiDirectives(prompt);
+  const clean = stripLeadingIntroFromPrompt(parsed.clean) || parsed.clean;
+  return { clean, ui: parsed };
+}
+
+
 function step0Variant(cleanPrompt: string) {
   const canon = "what prompted you to seek help with your debts today?";
   if (normalise(cleanPrompt) === canon) {
@@ -1899,11 +1907,15 @@ ${alt}` : alt,
 
       const nextStepDef = nextScriptPrompt(script, nextState);
       const nextPromptFull = nextStepDef?.prompt || "What’s led you to reach out for help with your debts today?";
-      const nextPromptClean = stripLeadingIntroFromPrompt(nextPromptFull) || nextPromptFull;
-      const nextPrompt = nextState.step === 0 ? step0Variant(nextPromptClean) : nextPromptClean;
+      const nextP0 = cleanPromptAndUi(nextPromptFull);
+      const nextPrompt = nextState.step === 0 ? step0Variant(nextP0.clean) : nextP0.clean;
 
       return res.status(200).json({
         reply: `${greet} ${nextPrompt}`,
+        uiTrigger: nextP0.ui.uiTrigger,
+        popup: nextP0.ui.popup,
+        portalTab: nextP0.ui.portalTab,
+        openPortal: nextP0.ui.openPortal,
         state: { ...nextState, lastPromptKey: promptKey(nextState.step, nextPrompt), lastStepPrompted: nextState.step },
         displayName: name,
       });
@@ -1919,10 +1931,15 @@ ${alt}` : alt,
         step: state.step + 1,
       };
       const nextStepDef = nextScriptPrompt(script, nextState);
-      const nextPrompt = nextStepDef?.prompt || "What’s led you to reach out for help with your debts today?";
+      const nextPromptFull = nextStepDef?.prompt || "What’s led you to reach out for help with your debts today?";
+      const nextP = cleanPromptAndUi(nextPromptFull);
       return res.status(200).json({
-        reply: `No problem. ${stripLeadingIntroFromPrompt(nextPrompt) || nextPrompt}`,
-        state: { ...nextState, lastPromptKey: promptKey(nextState.step, nextPrompt), lastStepPrompted: nextState.step },
+        reply: `No problem. ${nextP.clean}`,
+        uiTrigger: nextP.ui.uiTrigger,
+        popup: nextP.ui.popup,
+        portalTab: nextP.ui.portalTab,
+        openPortal: nextP.ui.openPortal,
+        state: { ...nextState, lastPromptKey: promptKey(nextState.step, nextP.clean), lastStepPrompted: nextState.step },
       });
     }
 
@@ -1984,12 +2001,17 @@ ${alt}` : alt,
     };
 
     const nextStepDef = nextScriptPrompt(script, nextState);
-    const nextPrompt = nextStepDef?.prompt || "What would you say is the main issue with the debts at the moment?";
+    const nextPromptFull = nextStepDef?.prompt || "What would you say is the main issue with the debts at the moment?";
+    const nextP = cleanPromptAndUi(nextPromptFull);
 
     const ack = buildAcknowledgement(userText, state);
     return res.status(200).json({
-      reply: joinAckAndPrompt(ack, stripLeadingIntroFromPrompt(nextPrompt) || nextPrompt),
-      state: { ...nextState, lastPromptKey: promptKey(nextState.step, nextPrompt), lastStepPrompted: nextState.step },
+      reply: joinAckAndPrompt(ack, nextP.clean),
+      uiTrigger: nextP.ui.uiTrigger,
+      popup: nextP.ui.popup,
+      portalTab: nextP.ui.portalTab,
+      openPortal: nextP.ui.openPortal,
+      state: { ...nextState, lastPromptKey: promptKey(nextState.step, nextP.clean), lastStepPrompted: nextState.step },
     });
   }
 
@@ -2009,12 +2031,17 @@ ${alt}` : alt,
     };
 
     const nextStepDef = nextScriptPrompt(script, nextState);
-    const nextPrompt = nextStepDef?.prompt || "Roughly what do you pay towards your debts each month?";
+    const nextPromptFull = nextStepDef?.prompt || "Roughly what do you pay towards your debts each month?";
+    const nextP = cleanPromptAndUi(nextPromptFull);
 
     const ack = buildAcknowledgement(userText, state);
     return res.status(200).json({
-      reply: joinAckAndPrompt(ack, stripLeadingIntroFromPrompt(nextPrompt) || nextPrompt),
-      state: { ...nextState, lastPromptKey: promptKey(nextState.step, nextPrompt), lastStepPrompted: nextState.step },
+      reply: joinAckAndPrompt(ack, nextP.clean),
+      uiTrigger: nextP.ui.uiTrigger,
+      popup: nextP.ui.popup,
+      portalTab: nextP.ui.portalTab,
+      openPortal: nextP.ui.openPortal,
+      state: { ...nextState, lastPromptKey: promptKey(nextState.step, nextP.clean), lastStepPrompted: nextState.step },
     });
   }
 
@@ -2040,12 +2067,17 @@ ${alt}` : alt,
 
     nextState.step = state.step + 1;
     const nextStepDef = nextScriptPrompt(script, nextState);
-    const nextPrompt = nextStepDef?.prompt || "Is there anything urgent like bailiff action or missed priority bills?";
+    const nextPromptFull = nextStepDef?.prompt || "Is there anything urgent like bailiff action or missed priority bills?";
+    const nextP = cleanPromptAndUi(nextPromptFull);
 
     const ack = buildAcknowledgement(userText, state);
     return res.status(200).json({
-      reply: joinAckAndPrompt(ack, stripLeadingIntroFromPrompt(nextPrompt) || nextPrompt),
-      state: { ...nextState, lastPromptKey: promptKey(nextState.step, nextPrompt), lastStepPrompted: nextState.step },
+      reply: joinAckAndPrompt(ack, nextP.clean),
+      uiTrigger: nextP.ui.uiTrigger,
+      popup: nextP.ui.popup,
+      portalTab: nextP.ui.portalTab,
+      openPortal: nextP.ui.openPortal,
+      state: { ...nextState, lastPromptKey: promptKey(nextState.step, nextP.clean), lastStepPrompted: nextState.step },
     });
   }
 
@@ -2055,12 +2087,17 @@ ${alt}` : alt,
     if (meaningful) {
       const nextState: ChatState = { ...state, step: Math.min(state.step + 1, Math.max(script.steps.length - 1, 0)) };
       const nextStepDef = nextScriptPrompt(script, nextState);
-      const nextPrompt = nextStepDef?.prompt || prompt;
+      const nextPromptFull = nextStepDef?.prompt || prompt;
+      const nextP = cleanPromptAndUi(nextPromptFull);
 
       const ack = buildAcknowledgement(userText, state);
       return res.status(200).json({
-        reply: joinAckAndPrompt(ack, stripLeadingIntroFromPrompt(nextPrompt) || nextPrompt),
-        state: { ...nextState, lastPromptKey: promptKey(nextState.step, nextPrompt), lastStepPrompted: nextState.step },
+        reply: joinAckAndPrompt(ack, nextP.clean),
+        uiTrigger: nextP.ui.uiTrigger,
+        popup: nextP.ui.popup,
+        portalTab: nextP.ui.portalTab,
+        openPortal: nextP.ui.openPortal,
+        state: { ...nextState, lastPromptKey: promptKey(nextState.step, nextP.clean), lastStepPrompted: nextState.step },
       });
     }
   }
