@@ -264,6 +264,76 @@ export default function Home() {
       padding: 12,
       background: isDark ? "rgba(0,0,0,0.15)" : "rgba(255,255,255,0.75)",
     },
+    inlinePopupTitle: {
+      fontSize: 14,
+      fontWeight: 700,
+      marginBottom: 6,
+    },
+    inlinePopupText: {
+      fontSize: 13,
+      opacity: 0.9,
+      lineHeight: 1.4,
+    },
+    inlinePopupLabel: {
+      fontSize: 12,
+      fontWeight: 600,
+      marginTop: 8,
+      marginBottom: 6,
+      opacity: 0.9,
+    },
+    inlinePopupInput: {
+      flex: "1 1 220px",
+      minWidth: 220,
+      padding: "10px 12px",
+      borderRadius: 12,
+      border: "1px solid rgba(255,255,255,0.12)",
+      background: "rgba(0,0,0,0.25)",
+      color: "#fff",
+      outline: "none",
+    },
+    inlinePopupBtn: {
+      padding: "10px 12px",
+      borderRadius: 12,
+      border: "1px solid rgba(255,255,255,0.12)",
+      background: "rgba(255,255,255,0.08)",
+      color: "#fff",
+      cursor: "pointer",
+      whiteSpace: "nowrap",
+    },
+    inlinePopupBtnPrimary: {
+      padding: "10px 12px",
+      borderRadius: 12,
+      border: "1px solid rgba(255,255,255,0.12)",
+      background: "rgba(255,255,255,0.18)",
+      color: "#fff",
+      cursor: "pointer",
+      whiteSpace: "nowrap",
+      fontWeight: 700,
+    },
+    inlinePopupList: {
+      display: "flex",
+      flexDirection: "column",
+      gap: 6,
+      maxHeight: 240,
+      overflowY: "auto",
+      marginTop: 6,
+    },
+    inlinePopupListItem: {
+      textAlign: "left",
+      padding: "10px 12px",
+      borderRadius: 12,
+      border: "1px solid rgba(255,255,255,0.10)",
+      background: "rgba(0,0,0,0.18)",
+      color: "#fff",
+      cursor: "pointer",
+    },
+    inlinePopupSelected: {
+      padding: "10px 12px",
+      borderRadius: 12,
+      border: "1px solid rgba(255,255,255,0.12)",
+      background: "rgba(0,0,0,0.18)",
+      fontSize: 13,
+    },
     modalOverlay: {
       position: "fixed",
       inset: 0,
@@ -686,96 +756,74 @@ export default function Home() {
           ))}
 
           {(showIe || showAddress) ? (
-            <div style={styles.row}>
-              <div style={styles.avatarBot}>🧾</div>
-              <div style={{ ...styles.bubbleBot, width: "100%", maxWidth: 620 }}>
-                <div style={styles.inlinePopupCard}>
-                  {showAddress ? (
-                  <div style={{ padding: 12 }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                      <div style={{ fontWeight: 700 }}>Address</div>
-                      <button
-                        type="button"
-                        onClick={() => setShowAddress(false)}
-                        style={{ ...styles.pillButton, padding: "6px 10px" }}
-                      >
-                        Close
-                      </button>
-                    </div>
+            <div style={{ marginTop: 12 }}>
+              <div style={styles.inlinePopupCard}>
+                {showAddress ? (
+                  <div style={{ marginBottom: showIe ? 16 : 0 }}>
+                    <div style={styles.inlinePopupTitle}>Address details</div>
+                    <div style={styles.inlinePopupText}>Enter your postcode and pick your address. This will be saved to your file.</div>
 
-                    <div style={{ fontSize: 13, opacity: 0.9, marginBottom: 10 }}>
-                      Enter your postcode and select your address.
-                    </div>
-
-                    <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                    <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
                       <input
-                        value={postcode}
-                        onChange={(e) => setPostcode(e.target.value)}
+                        style={styles.inlinePopupInput as any}
+                        value={postcodeQuery}
+                        onChange={(e) => setPostcodeQuery(e.target.value)}
                         placeholder="Postcode (e.g. M1 1AA)"
-                        style={{ ...styles.input, flex: 1 }}
                       />
                       <button
                         type="button"
-                        onClick={() => lookupPostcode()}
-                        style={styles.primaryBtn}
-                        disabled={postcodeLoading}
+                        style={styles.inlinePopupBtn as any}
+                        onClick={() => lookupPostcode() }
+                        disabled={loadingPostcode || !postcodeQuery.trim()}
                       >
-                        {postcodeLoading ? "Searching…" : "Search"}
+                        {loadingPostcode ? "Searching..." : "Search"}
                       </button>
                     </div>
 
-                    {postcodeError ? (
-                      <div style={{ color: "#ff8080", fontSize: 13, marginBottom: 10 }}>{postcodeError}</div>
-                    ) : null}
-
-                  {/* popup rendered inline in chat */}
-                </div>
-              </div>
-            </div>
-          ) : null}
-
-                
-
-                    {postcodeResults?.length ? (
-                      <div style={{ maxHeight: 180, overflowY: "auto", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10 }}>
-                        {postcodeResults.map((a: any, i: number) => {
-                          const line = a?.line || a?.text || a?.address || a?.label || String(a);
-                          const isSel = (selectedAddress?.line || selectedAddress?.text || selectedAddress?.address) === line;
-                          return (
+                    {postcodeResults.length ? (
+                      <div style={{ marginTop: 10 }}>
+                        <div style={styles.inlinePopupLabel}>Select your address:</div>
+                        <div style={styles.inlinePopupList}>
+                          {postcodeResults.slice(0, 8).map((a, idx) => (
                             <button
-                              key={i}
+                              key={idx}
                               type="button"
-                              onClick={() => setSelectedAddress({ line })}
-                              style={{
-                                width: "100%",
-                                textAlign: "left",
-                                padding: "10px 12px",
-                                background: isSel ? "rgba(255,255,255,0.10)" : "transparent",
-                                color: "#fff",
-                                border: "none",
-                                borderBottom: i === postcodeResults.length - 1 ? "none" : "1px solid rgba(255,255,255,0.08)",
-                                cursor: "pointer",
-                              }}
+                              style={styles.inlinePopupListItem as any}
+                              onClick={() => setSelectedAddress(a)}
                             >
-                              {line}
+                              {a}
                             </button>
-                          );
-                        })}
+                          ))}
+                        </div>
                       </div>
                     ) : null}
 
-                    {selectedAddress?.line ? (
-                      <div style={{ marginTop: 12, fontSize: 13, opacity: 0.95 }}>
-                        <div style={{ fontWeight: 700, marginBottom: 6 }}>Selected</div>
-                        <div>{selectedAddress.line}</div>
+                    {selectedAddress ? (
+                      <div style={{ marginTop: 10 }}>
+                        <div style={styles.inlinePopupLabel}>Selected:</div>
+                        <div style={styles.inlinePopupSelected}>{selectedAddress}</div>
+                        <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <button
+                            type="button"
+                            style={styles.inlinePopupBtnPrimary as any}
+                            onClick={() => { saveAddressHistory(); setShowAddress(false); }}
+                          >
+                            Save to your file
+                          </button>
+                          <button
+                            type="button"
+                            style={styles.inlinePopupBtn as any}
+                            onClick={() => { setSelectedAddress(""); setPostcodeResults([]); }}
+                          >
+                            Clear
+                          </button>
+                        </div>
                       </div>
                     ) : null}
-
-                    <div style={{ marginTop: 12, fontSize: 12, opacity: 0.85 }}>
-                      When you’re ready, continue the chat and we’ll move to the next step.
-                    </div>
                   </div>
                 ) : null}
+
+                {/* Income & Expenditure can still use the existing UI below (or legacy modal if enabled) */}
               </div>
             </div>
           ) : null}
