@@ -428,9 +428,9 @@ export default function Home() {
         ui.includes("OPEN_FACT_FIND_POPUP") ||
         ui.includes("OPEN_INCOME_EXPENSE_POPUP") ||
         ui.includes("OPEN_ADDRESS_POPUP") ||
-        ui.includes("FACT_FIND") ||
-        ui.includes("INCOME") ||
-        ui.includes("ADDRESS");
+        uiPop.includes("FACT_FIND") ||
+        uiPop.includes("INCOME") ||
+        uiPop.includes("ADDRESS");
 
       if (willOpenPopup) {
         setPinned({ id: botId, text: reply });
@@ -600,6 +600,7 @@ export default function Home() {
   };
 
   return (
+    <>
     <div style={styles.frame}>
       <div style={styles.card}>
         <div style={styles.header}>
@@ -1112,5 +1113,6 @@ export default function Home() {
         </div>
       ) : null}
     </div>
+    </>
   );
 }
