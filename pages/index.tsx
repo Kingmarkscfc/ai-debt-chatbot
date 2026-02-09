@@ -690,7 +690,43 @@ export default function Home() {
               <div style={styles.avatarBot}>🧾</div>
               <div style={{ ...styles.bubbleBot, width: "100%", maxWidth: 620 }}>
                 <div style={styles.inlinePopupCard}>
-                  {/* popup rendered inline in chat */}
+                  {showAddress ? (
+                  <div style={{ padding: 12 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                      <div style={{ fontWeight: 700 }}>Address</div>
+                      <button
+                        type="button"
+                        onClick={() => setShowAddress(false)}
+                        style={{ ...styles.pillButton, padding: "6px 10px" }}
+                      >
+                        Close
+                      </button>
+                    </div>
+
+                    <div style={{ fontSize: 13, opacity: 0.9, marginBottom: 10 }}>
+                      Enter your postcode and select your address.
+                    </div>
+
+                    <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                      <input
+                        value={postcode}
+                        onChange={(e) => setPostcode(e.target.value)}
+                        placeholder="Postcode (e.g. M1 1AA)"
+                        style={{ ...styles.input, flex: 1 }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => lookupPostcode()}
+                        style={styles.primaryBtn}
+                        disabled={postcodeLoading}
+                      >
+                        {postcodeLoading ? "Searching…" : "Search"}
+                      </button>
+                    </div>
+
+                    {postcodeError ? (
+                      <div style={{ color: "#ff8080", fontSize: 13, marginBottom: 10 }}>{postcodeError}</div>
+                    ) : null}
 
                   {/* popup rendered inline in chat */}
                 </div>
@@ -698,21 +734,47 @@ export default function Home() {
             </div>
           ) : null}
 
-                {showAddress ? (
-                  <AddressForm
-                    values={addressValues}
-                    setValues={setAddressValues}
-                    onClose={() => {
-                      setShowAddress(false);
-                      setPinned(null);
-                      setPinned(null);
-                    }}
-                    onSaved={() => {
-                      setShowAddress(false);
-                      setPinned(null);
-                      setPinned(null);
-                    }}
-                  />
+                
+
+                    {postcodeResults?.length ? (
+                      <div style={{ maxHeight: 180, overflowY: "auto", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10 }}>
+                        {postcodeResults.map((a: any, i: number) => {
+                          const line = a?.line || a?.text || a?.address || a?.label || String(a);
+                          const isSel = (selectedAddress?.line || selectedAddress?.text || selectedAddress?.address) === line;
+                          return (
+                            <button
+                              key={i}
+                              type="button"
+                              onClick={() => setSelectedAddress({ line })}
+                              style={{
+                                width: "100%",
+                                textAlign: "left",
+                                padding: "10px 12px",
+                                background: isSel ? "rgba(255,255,255,0.10)" : "transparent",
+                                color: "#fff",
+                                border: "none",
+                                borderBottom: i === postcodeResults.length - 1 ? "none" : "1px solid rgba(255,255,255,0.08)",
+                                cursor: "pointer",
+                              }}
+                            >
+                              {line}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+
+                    {selectedAddress?.line ? (
+                      <div style={{ marginTop: 12, fontSize: 13, opacity: 0.95 }}>
+                        <div style={{ fontWeight: 700, marginBottom: 6 }}>Selected</div>
+                        <div>{selectedAddress.line}</div>
+                      </div>
+                    ) : null}
+
+                    <div style={{ marginTop: 12, fontSize: 12, opacity: 0.85 }}>
+                      When you’re ready, continue the chat and we’ll move to the next step.
+                    </div>
+                  </div>
                 ) : null}
               </div>
             </div>
@@ -994,55 +1056,8 @@ export default function Home() {
         </div>
       ) : null}
 
-      {/* ======= Address popup ======= */}
-      {showAddress ? (
-        <div style={styles.modalOverlay} onClick={() => setShowAddress(false)}>
-          <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
-            <div style={styles.modalHeader}>
-              <div style={{ fontWeight: 800 }}>Address History</div>
-              <button style={styles.btn} onClick={() => setShowAddress(false)}>
-                Close
-              </button>
-            </div>
+      {
 
-            <div style={styles.modalBody}>
-              <div style={styles.field}>
-                <div style={styles.label}>Postcode</div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <input
-                    style={styles.text}
-                    value={postcode}
-                    onChange={(e) => setPostcode(e.target.value)}
-                    placeholder="e.g. M1 1AA"
-                  />
-                  <button style={styles.btn} onClick={lookupPostcode} disabled={postcodeLoading}>
-                    {postcodeLoading ? "Searching..." : "Lookup"}
-                  </button>
-                </div>
-                {postcodeError ? <div style={{ marginTop: 8, fontSize: 12, color: "#ef4444" }}>{postcodeError}</div> : null}
-              </div>
-
-              {postcodeResults?.length ? (
-                <div style={{ marginTop: 10 }}>
-                  <div style={{ fontWeight: 800, marginBottom: 8 }}>Select your address</div>
-                  <select
-                    style={styles.text}
-                    value={selectedAddress ? selectedAddress.id : ""}
-                    onChange={(e) => {
-                      const id = e.target.value;
-                      const found = postcodeResults.find((x: any) => String(x.id) === String(id));
-                      setSelectedAddress(found || null);
-                    }}
-                  >
-                    <option value="">Select...</option>
-                    {postcodeResults.map((a: any) => (
-                      <option key={a.id} value={a.id}>
-                        {a.text || a.label || a.address}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ) : null}
 
               <div style={styles.divider} />
 
