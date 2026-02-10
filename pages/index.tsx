@@ -766,17 +766,17 @@ export default function Home() {
                     <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
                       <input
                         style={styles.inlinePopupInput as any}
-                        value={postcodeQuery}
-                        onChange={(e) => setPostcodeQuery(e.target.value)}
+                        value={postcode}
+                        onChange={(e) => setPostcode(e.target.value)}
                         placeholder="Postcode (e.g. M1 1AA)"
                       />
                       <button
                         type="button"
                         style={styles.inlinePopupBtn as any}
                         onClick={() => lookupPostcode() }
-                        disabled={loadingPostcode || !postcodeQuery.trim()}
+                        disabled={postcodeLoading || !postcode.trim()}
                       >
-                        {loadingPostcode ? "Searching..." : "Search"}
+                        {postcodeLoading ? "Searching..." : "Search"}
                       </button>
                     </div>
 
@@ -1097,78 +1097,6 @@ export default function Home() {
               <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
                 <button style={styles.btn} onClick={saveIncomeExpense} disabled={ieSaving}>
                   {ieSaving ? "Saving..." : "Save"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {
-
-
-              <div style={styles.divider} />
-
-              <div style={{ fontWeight: 800, marginBottom: 8 }}>Previous Addresses</div>
-              {addressHistory.map((a, idx) => (
-                <div
-                  key={idx}
-                  style={{
-                    border: isDark ? "1px solid #1f2937" : "1px solid #e5e7eb",
-                    borderRadius: 12,
-                    padding: 12,
-                    marginBottom: 10,
-                  }}
-                >
-                  <div style={styles.row2}>
-                    <input
-                      style={styles.text}
-                      value={a.line1}
-                      onChange={(e) => setAddressHistory((prev) => prev.map((r, i) => (i === idx ? { ...r, line1: e.target.value } : r)))}
-                      placeholder="Line 1"
-                    />
-                    <input
-                      style={styles.text}
-                      value={a.line2}
-                      onChange={(e) => setAddressHistory((prev) => prev.map((r, i) => (i === idx ? { ...r, line2: e.target.value } : r)))}
-                      placeholder="Line 2"
-                    />
-                  </div>
-                  <div style={{ ...styles.row2, marginTop: 8 }}>
-                    <input
-                      style={styles.text}
-                      value={a.city}
-                      onChange={(e) => setAddressHistory((prev) => prev.map((r, i) => (i === idx ? { ...r, city: e.target.value } : r)))}
-                      placeholder="Town/City"
-                    />
-                    <input
-                      style={styles.text}
-                      value={a.postcode}
-                      onChange={(e) => setAddressHistory((prev) => prev.map((r, i) => (i === idx ? { ...r, postcode: e.target.value } : r)))}
-                      placeholder="Postcode"
-                    />
-                  </div>
-                  <div style={{ marginTop: 8 }}>
-                    <input
-                      style={styles.text}
-                      type="number"
-                      value={a.yearsAt}
-                      onChange={(e) => setAddressHistory((prev) => prev.map((r, i) => (i === idx ? { ...r, yearsAt: Number(e.target.value || 0) } : r)))}
-                      placeholder="Years at address"
-                    />
-                  </div>
-                </div>
-              ))}
-              <button
-                style={styles.btn}
-                onClick={() => setAddressHistory((prev) => [...prev, { line1: "", line2: "", city: "", postcode: "", yearsAt: 0 }])}
-              >
-                + Add previous address
-              </button>
-
-              <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-                <button style={styles.btn} onClick={saveAddressHistory}>
-                  Save
                 </button>
               </div>
             </div>
