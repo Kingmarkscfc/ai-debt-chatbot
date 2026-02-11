@@ -1,3 +1,7 @@
+# FROM YOUR PROJECT ROOT
+mkdir -p utils
+
+cat > utils/full_script_logic.json <<'JSON'
 {
   "steps": [
     {
@@ -80,4 +84,4 @@
     }
   ]
 }
-
+JSON

@@ -7,3 +7,8 @@ NUL
 .env.local
 *.bak
 *.bak2
+
+# backups
+*.bak
+*.bak2
+*.bak3

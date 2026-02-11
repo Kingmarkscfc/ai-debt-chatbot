@@ -479,16 +479,12 @@ export default function Home() {
       if (data?.displayName) setDisplayName(data.displayName);
       // Handle optional UI directives returned by the API (safe: ignored if UI not implemented)
             const uiTrig = (data.uiTrigger || "").toString();
-      const uiPop = (data.popup || "").toString();
-
-      const wantsFactFind =
-        uiTrig.includes("OPEN_FACT_FIND_POPUP") || uiTrig.includes("OPEN_FACT_FIND") || uiPop.includes("FACT_FIND");
-      const wantsIncome =
+      const uiPop = (data.popup || "").toString();      const wantsIncome =
         uiTrig.includes("OPEN_INCOME_EXPENSE_POPUP") || uiTrig.includes("OPEN_INCOME_EXPENSE") || uiPop.includes("INCOME");
       const wantsAddress =
         uiTrig.includes("OPEN_ADDRESS_POPUP") || uiTrig.includes("OPEN_ADDRESS") || uiPop.includes("ADDRESS");
 
-      const willOpenPopup = wantsFactFind || wantsIncome || wantsAddress;
+      const willOpenPopup = wantsIncome || wantsAddress;
       const ui = uiTrig;
 
 // Open portal/auth (existing behaviour keeps working)
@@ -508,8 +504,7 @@ if (willOpenPopup) {
       if (willOpenPopup) {
         // Defer opening UI until after the bot message has rendered, so the sentence appears first.
         setTimeout(() => {
-          if (wantsFactFind) setShowFactFind(true);
-          if (wantsIncome) setShowIe(true);
+if (wantsIncome) setShowIe(true);
           if (wantsAddress) setShowAddress(true);
           setPinToTopId(botId);
         }, 0);
