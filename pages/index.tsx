@@ -68,7 +68,9 @@ function pickUkMaleVoice(voices: SpeechSynthesisVoice[]) {
 /* =============== Component =============== */
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
-  // ✅ Persist server-side controller state so script steps advance correctly
+    const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const [pinToTopId, setPinToTopId] = useState<string | null>(null);
+// ✅ Persist server-side controller state so script steps advance correctly
   const [chatState, setChatState] = useState<any>({ step: 0, askedNameTries: 0, name: null });
 
   const [input, setInput] = useState("");
@@ -292,14 +294,15 @@ export default function Home() {
       outline: "none",
     },
     inlinePopupBtn: {
-      padding: "10px 12px",
-      borderRadius: 12,
-      border: "1px solid rgba(255,255,255,0.12)",
-      background: "rgba(255,255,255,0.08)",
-      color: "#fff",
-      cursor: "pointer",
-      whiteSpace: "nowrap",
-    },
+    padding: "10px 14px",
+    borderRadius: 12,
+    border: "1px solid rgba(17, 24, 39, 0.35)",
+    background: "rgba(17, 24, 39, 0.92)",
+    color: "#fff",
+    fontWeight: 800,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  },
     inlinePopupBtnPrimary: {
       padding: "10px 12px",
       borderRadius: 12,
@@ -475,34 +478,25 @@ export default function Home() {
       if (data?.state) setChatState(data.state);
       if (data?.displayName) setDisplayName(data.displayName);
       // Handle optional UI directives returned by the API (safe: ignored if UI not implemented)
-      const uiTrig = String((data as any)?.uiTrigger || "");
-      const uiPop = String((data as any)?.popup || "");
-      const ui = `${uiTrig} ${uiPop}`.toUpperCase();
+            const uiTrig = (data.uiTrigger || "").toString();
+      const uiPop = (data.popup || "").toString();
 
-      // Open Fact-Find / Client Info popup
-      if (ui.includes("OPEN_FACT_FIND_POPUP") || ui.includes("FACT_FIND") || ui.includes("CLIENT_INFORMATION") || ui.includes("ADDRESS")) {
-        setShowAddress(true);
-      }
+      const wantsFactFind =
+        uiTrig.includes("OPEN_FACT_FIND_POPUP") || uiTrig.includes("OPEN_FACT_FIND") || uiPop.includes("FACT_FIND");
+      const wantsIncome =
+        uiTrig.includes("OPEN_INCOME_EXPENSE_POPUP") || uiTrig.includes("OPEN_INCOME_EXPENSE") || uiPop.includes("INCOME");
+      const wantsAddress =
+        uiTrig.includes("OPEN_ADDRESS_POPUP") || uiTrig.includes("OPEN_ADDRESS") || uiPop.includes("ADDRESS");
 
-      // Open Income & Expenditure popup
-      if (ui.includes("OPEN_INCOME_EXPENSE_POPUP") || ui.includes("INCOME_EXPENSE") || ui.includes("INCOME") || ui.includes("EXPENDITURE")) {
-        setShowIe(true);
-      }
+      const willOpenPopup = wantsFactFind || wantsIncome || wantsAddress;
+      const ui = uiTrig;
 
-      // Open portal/auth (existing behaviour keeps working)
+// Open portal/auth (existing behaviour keeps working)
       if (ui.includes("OPEN_CLIENT_PORTAL")) {
         setShowAuth(true);
       }
       const botId = makeId();
-      const willOpenPopup =
-        ui.includes("OPEN_FACT_FIND_POPUP") ||
-        ui.includes("OPEN_INCOME_EXPENSE_POPUP") ||
-        ui.includes("OPEN_ADDRESS_POPUP") ||
-        uiPop.includes("FACT_FIND") ||
-        uiPop.includes("INCOME") ||
-        uiPop.includes("ADDRESS");
-
-      if (willOpenPopup) {
+if (willOpenPopup) {
         setPinned({ id: botId, text: reply });
       } else if (pinned) {
         // If we were previously pinned but the conversation moves on, unpin.
@@ -510,6 +504,17 @@ export default function Home() {
       }
 
       setMessages((prev) => [...prev, { id: botId, sender: "bot", text: reply, at: nowTime() }]);
+
+      if (willOpenPopup) {
+        // Defer opening UI until after the bot message has rendered, so the sentence appears first.
+        setTimeout(() => {
+          if (wantsFactFind) setShowFactFind(true);
+          if (wantsIncome) setShowIe(true);
+          if (wantsAddress) setShowAddress(true);
+          setPinToTopId(botId);
+        }, 0);
+      }
+
       if (data?.openPortal) setShowAuth(true);
     } catch {
       setMessages((prev) => [...prev, { id: makeId(), sender: "bot", text: "⚠️ I couldn’t reach the server just now.", at: nowTime() }]);
@@ -729,7 +734,7 @@ export default function Home() {
 
         <div style={styles.chat}>
           {messages.filter((m) => !(pinned && m.id === pinned.id)).map((m) => (
-            <div key={m.id} style={styles.row}>
+            <div key={m.id} style={styles.row} ref={(el) => { messageRefs.current[m.id] = el; }}>
               {m.sender === "bot" ? (
                 <>
                   <Image src={avatarPhoto} alt="Advisor" width={28} height={28} style={{ borderRadius: 999, marginTop: 2 }} />
