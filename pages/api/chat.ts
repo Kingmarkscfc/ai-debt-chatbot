@@ -61,7 +61,24 @@ type ApiResp = {
 function readJsonSafe<T>(p: string, fallback: T): T {
   try {
     const raw = fs.readFileSync(p, "utf8");
-    return JSON.parse(raw) as T;
+    try {
+      return JSON.parse(raw) as T;
+    } catch {
+      // Some project files may accidentally include wrapper text (e.g. bash heredocs).
+      // Try to recover by extracting the first JSON object/array we can find.
+      const trimmed = raw.trim();
+      const firstObj = trimmed.indexOf("{");
+      const lastObj = trimmed.lastIndexOf("}");
+      if (firstObj !== -1 && lastObj !== -1 && lastObj > firstObj) {
+        return JSON.parse(trimmed.slice(firstObj, lastObj + 1)) as T;
+      }
+      const firstArr = trimmed.indexOf("[");
+      const lastArr = trimmed.lastIndexOf("]");
+      if (firstArr !== -1 && lastArr !== -1 && lastArr > firstArr) {
+        return JSON.parse(trimmed.slice(firstArr, lastArr + 1)) as T;
+      }
+      throw new Error("Unparseable JSON");
+    }
   } catch {
     return fallback;
   }
@@ -1795,7 +1812,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
   // If the frontend sends an out-of-date step (e.g. stuck at 0), try to resync using the latest assistant message.
   // This prevents loops where the UI shows "main issue" but the backend still thinks we're on step 0 ("concern").
-  const historyText = history.filter(Boolean).slice(-8).join("\n");
+  const historyText = history.filter(Boolean).slice(-8).join("
+
+");
   const lastAssistant = historyText || "";
   const lastA = normalise(lastAssistant);
 
