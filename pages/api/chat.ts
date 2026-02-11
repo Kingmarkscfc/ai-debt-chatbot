@@ -1812,9 +1812,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
   // If the frontend sends an out-of-date step (e.g. stuck at 0), try to resync using the latest assistant message.
   // This prevents loops where the UI shows "main issue" but the backend still thinks we're on step 0 ("concern").
-  const historyText = history.filter(Boolean).slice(-8).join("
-
-");
+  const historyText = history.filter(Boolean).slice(-8).join("\n");
   const lastAssistant = historyText || "";
   const lastA = normalise(lastAssistant);
 
