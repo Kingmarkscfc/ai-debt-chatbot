@@ -114,6 +114,21 @@ export default function Home() {
   const [showAddress, setShowAddress] = useState(false);
   const [pinned, setPinned] = useState<{ id: string; text: string } | null>(null);
 
+
+
+  // Fact Find popup (client information)
+  const [showFactFind, setShowFactFind] = useState(false);
+  const [ffFullName, setFfFullName] = useState("");
+  const [ffPhone, setFfPhone] = useState("");
+  const [ffEmail, setFfEmail] = useState("");
+  const [ffDob, setFfDob] = useState("");
+  const [ffTimeYears, setFfTimeYears] = useState<number>(0);
+  const [ffTimeMonths, setFfTimeMonths] = useState<number>(0);
+  const [ffResidential, setFfResidential] = useState("");
+  const [clientRef, setClientRef] = useState<string | null>(null);
+  const [ffSubmitting, setFfSubmitting] = useState(false);
+  const [ffError, setFfError] = useState<string | null>(null);
+
   const [postcode, setPostcode] = useState("");
   const [postcodeLoading, setPostcodeLoading] = useState(false);
   const [postcodeError, setPostcodeError] = useState<string | null>(null);
@@ -479,12 +494,20 @@ export default function Home() {
       if (data?.displayName) setDisplayName(data.displayName);
       // Handle optional UI directives returned by the API (safe: ignored if UI not implemented)
             const uiTrig = (data.uiTrigger || "").toString();
-      const uiPop = (data.popup || "").toString();      const wantsIncome =
+      const uiPop = (data.popup || "").toString();
+
+      const wantsFactFind =
+        uiTrig.includes("OPEN_FACT_FIND_POPUP") || uiTrig.includes("OPEN_FACT_FIND") || uiPop.includes("FACT_FIND");
+      const wantsIncome =
         uiTrig.includes("OPEN_INCOME_EXPENSE_POPUP") || uiTrig.includes("OPEN_INCOME_EXPENSE") || uiPop.includes("INCOME");
       const wantsAddress =
         uiTrig.includes("OPEN_ADDRESS_POPUP") || uiTrig.includes("OPEN_ADDRESS") || uiPop.includes("ADDRESS");
 
-      const willOpenPopup = wantsIncome || wantsAddress;
+      
+
+      const wantsFactFind =
+        uiTrig.includes("OPEN_FACT_FIND_POPUP") || uiTrig.includes("OPEN_FACT_FIND") || uiPop.includes("FACT_FIND") || uiPop.includes("FACT");
+const willOpenPopup = wantsFactFind || wantsIncome || wantsAddress;
       const ui = uiTrig;
 
 // Open portal/auth (existing behaviour keeps working)
@@ -504,7 +527,9 @@ if (willOpenPopup) {
       if (willOpenPopup) {
         // Defer opening UI until after the bot message has rendered, so the sentence appears first.
         setTimeout(() => {
-if (wantsIncome) setShowIe(true);
+          if (wantsFactFind) setShowFactFind(true);
+          if (wantsFactFind) setShowFactFind(true);
+           if (wantsIncome) setShowIe(true);
           if (wantsAddress) setShowAddress(true);
           setPinToTopId(botId);
         }, 0);
@@ -669,6 +694,73 @@ if (wantsIncome) setShowIe(true);
     }
   };
 
+  const generateClientRef = () => {
+    const d = new Date();
+    const y = String(d.getFullYear()).slice(2);
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    const rnd = Math.random().toString(16).slice(2, 6).toUpperCase();
+    return `DA-${y}${m}${day}-${rnd}`;
+  };
+
+  const submitFactFind = async () => {
+    try {
+      setFfError(null);
+      const hasAddress = !!String(selectedAddress || "").trim();
+      const ok =
+        ffFullName.trim() &&
+        ffPhone.trim() &&
+        ffEmail.trim() &&
+        ffDob.trim() &&
+        hasAddress &&
+        (ffTimeYears > 0 || ffTimeMonths > 0) &&
+        ffResidential.trim();
+
+      if (!ok) {
+        setFfError("Please complete all fields before submitting.");
+        return;
+      }
+
+      setFfSubmitting(true);
+
+      const ref = clientRef || generateClientRef();
+      const payload = {
+        clientRef: ref,
+        fullName: ffFullName.trim(),
+        contactNumber: ffPhone.trim(),
+        email: ffEmail.trim(),
+        dob: ffDob.trim(),
+        address: String(selectedAddress || "").trim(),
+        timeAtAddress: { years: ffTimeYears, months: ffTimeMonths },
+        residentialStatus: ffResidential.trim(),
+        capturedAt: new Date().toISOString(),
+      };
+
+      setPortalEmail(payload.email);
+      setClientRef(ref);
+
+      const marker = "__PROFILE_SUBMIT__ ";
+      const hiddenUser: Message = { id: makeId(), sender: "user", text: marker + JSON.stringify(payload), at: nowTime(), hidden: true };
+      const hist = [...messages, hiddenUser];
+
+      const data = await sendToApi(hiddenUser.text, hist);
+      if (data?.state) setChatState(data.state);
+      if (data?.displayName) setDisplayName(data.displayName);
+
+      const replyRaw = (data?.reply as string) || "Thanks — I’ve saved those details. Let’s continue.";
+      setMessages((prev) => [...prev, { id: makeId(), sender: "bot", text: replyRaw, at: nowTime() }]);
+
+      setShowFactFind(false);
+      setPinned(null);
+      setNotice(`Saved. Your reference is ${ref}.`);
+    } catch {
+      setFfError("Sorry — I couldn’t submit that just now.");
+    } finally {
+      setFfSubmitting(false);
+    }
+  };
+
+
   return (
     <>
     <div style={styles.frame}>
@@ -682,7 +774,7 @@ if (wantsIncome) setShowIe(true);
                 <span style={styles.onlineDot}>● Online</span>
               </div>
               <div style={{ fontSize: 12, opacity: 0.8 }}>
-                {displayName ? `Chatting with ${displayName}` : "Private session"} • {sessionId.slice(0, 8)}
+                {clientRef && ffFullName.trim() ? `${ffFullName.trim()} • Ref ${clientRef}` : (displayName ? `Chatting with ${displayName}` : "Private session")} • {sessionId.slice(0, 8)}
               </div>
             </div>
           </div>
@@ -728,7 +820,7 @@ if (wantsIncome) setShowIe(true);
         ) : null}
 
         <div style={styles.chat}>
-          {messages.filter((m) => !(pinned && m.id === pinned.id)).map((m) => (
+          {messages.filter((m) => !m.hidden && !(pinned && m.id === pinned.id)).map((m) => (
             <div key={m.id} style={styles.row} ref={(el) => { messageRefs.current[m.id] = el; }}>
               {m.sender === "bot" ? (
                 <>
@@ -755,9 +847,126 @@ if (wantsIncome) setShowIe(true);
             </div>
           ))}
 
-          {(showIe || showAddress) ? (
+          {(showFactFind || showIe || showAddress) ? (
             <div style={{ marginTop: 12 }}>
               <div style={styles.inlinePopupCard}>
+                
+                {showFactFind ? (
+                  <div style={{ marginBottom: (showAddress || showIe) ? 16 : 0 }}>
+                    <div style={styles.inlinePopupTitle}>Fact Find — your details</div>
+                    <div style={styles.inlinePopupText}>
+                      Please complete these details so we can create your client reference and link your case to the client portal.
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }}>
+                      <div>
+                        <div style={styles.inlinePopupLabel}>Full name</div>
+                        <input style={styles.inlinePopupInput as any} value={ffFullName} onChange={(e) => setFfFullName(e.target.value)} placeholder="Full name" />
+                      </div>
+                      <div>
+                        <div style={styles.inlinePopupLabel}>Contact number</div>
+                        <input style={styles.inlinePopupInput as any} value={ffPhone} onChange={(e) => setFfPhone(e.target.value)} placeholder="Mobile / phone" />
+                      </div>
+                      <div>
+                        <div style={styles.inlinePopupLabel}>Email address</div>
+                        <input style={styles.inlinePopupInput as any} value={ffEmail} onChange={(e) => setFfEmail(e.target.value)} placeholder="Email" />
+                      </div>
+                      <div>
+                        <div style={styles.inlinePopupLabel}>Date of birth</div>
+                        <input style={styles.inlinePopupInput as any} value={ffDob} onChange={(e) => setFfDob(e.target.value)} placeholder="DD/MM/YYYY" />
+                      </div>
+                    </div>
+
+                    <div style={{ marginTop: 14 }}>
+                      <div style={styles.inlinePopupLabel}>Address</div>
+                      <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                        <input
+                          style={styles.inlinePopupInput as any}
+                          value={postcode}
+                          onChange={(e) => setPostcode(e.target.value)}
+                          placeholder="Postcode (e.g. M1 1AA)"
+                        />
+                        <button
+                          type="button"
+                          style={styles.inlinePopupBtn as any}
+                          onClick={() => lookupPostcode()}
+                          disabled={postcodeLoading || !postcode.trim()}
+                        >
+                          {postcodeLoading ? "Searching..." : "Search postcode"}
+                        </button>
+                      </div>
+
+                      {postcodeResults.length ? (
+                        <div style={{ marginTop: 10 }}>
+                          <div style={styles.inlinePopupLabel}>Select your address:</div>
+                          <div style={styles.inlinePopupList}>
+                            {postcodeResults.slice(0, 8).map((a, idx) => (
+                              <button
+                                key={idx}
+                                type="button"
+                                style={styles.inlinePopupListItem as any}
+                                onClick={() => setSelectedAddress(a)}
+                              >
+                                {a}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {selectedAddress ? (
+                        <div style={{ marginTop: 10 }}>
+                          <div style={styles.inlinePopupLabel}>Selected:</div>
+                          <div style={styles.inlinePopupSelected}>{selectedAddress}</div>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginTop: 14 }}>
+                      <div>
+                        <div style={styles.inlinePopupLabel}>Time at address (years)</div>
+                        <input
+                          style={styles.inlinePopupInput as any}
+                          value={String(ffTimeYears)}
+                          onChange={(e) => setFfTimeYears(Math.max(0, parseInt(e.target.value || "0", 10) || 0))}
+                          placeholder="Years"
+                        />
+                      </div>
+                      <div>
+                        <div style={styles.inlinePopupLabel}>Time at address (months)</div>
+                        <input
+                          style={styles.inlinePopupInput as any}
+                          value={String(ffTimeMonths)}
+                          onChange={(e) => setFfTimeMonths(Math.max(0, parseInt(e.target.value || "0", 10) || 0))}
+                          placeholder="Months"
+                        />
+                      </div>
+                      <div>
+                        <div style={styles.inlinePopupLabel}>Residential status</div>
+                        <select style={styles.inlinePopupInput as any} value={ffResidential} onChange={(e) => setFfResidential(e.target.value)}>
+                          <option value="">Select…</option>
+                          <option>Private Tenant</option>
+                          <option>Council Tenant</option>
+                          <option>Homeowner</option>
+                          <option>Housing Association</option>
+                          <option>Living with Family</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {ffError ? <div style={{ marginTop: 10, color: isDark ? "#fca5a5" : "#b91c1c", fontSize: 12 }}>{ffError}</div> : null}
+
+                    <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button type="button" style={styles.inlinePopupBtnPrimary as any} disabled={ffSubmitting} onClick={submitFactFind}>
+                        {ffSubmitting ? "Submitting..." : "Submit & create reference"}
+                      </button>
+                      <button type="button" style={styles.inlinePopupBtn as any} onClick={() => { setShowFactFind(false); setPinned(null); }}>
+                        Close
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
                 {showAddress ? (
                   <div style={{ marginBottom: showIe ? 16 : 0 }}>
                     <div style={styles.inlinePopupTitle}>Address details</div>
