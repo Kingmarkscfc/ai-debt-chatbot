@@ -1792,6 +1792,46 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     return res.status(200).json({ reply: first, state: s });
   }
 
+
+  // If the frontend sends an out-of-date step (e.g. stuck at 0), try to resync using the latest assistant message.
+  // This prevents loops where the UI shows "main issue" but the backend still thinks we're on step 0 ("concern").
+  const historyText = history.filter(Boolean).slice(-8).join("
+
+");
+  const lastAssistant = historyText || "";
+  const lastA = normalise(lastAssistant);
+
+  function bestStepFromHistory(s: ScriptDef, last: string) {
+    if (!s?.steps?.length) return null;
+    const hay = normalise(last || "");
+    if (!hay) return null;
+
+    let best: number | null = null;
+    for (let i = 0; i < s.steps.length; i++) {
+      const stepPrompt = s.steps[i]?.prompt || "";
+      if (!stepPrompt) continue;
+      const cleaned = stripLeadingIntroFromPrompt(parseUiDirectives(stepPrompt).clean);
+      const needle = normalise(cleaned).slice(0, 45);
+      if (needle && hay.includes(needle)) best = i;
+    }
+
+    // Fallback heuristics based on the last assistant question wording
+    if (best === null) {
+      const exp = (inferExpectFromPrompt(last) || "free").toLowerCase();
+      if (exp === "issue") best = Math.max(best ?? 0, 1);
+      if (exp === "amounts") best = Math.max(best ?? 0, 2);
+    }
+
+    return best;
+  }
+
+  const inferredStep = bestStepFromHistory(script, lastAssistant);
+  if (typeof inferredStep === "number" && inferredStep >= 0) {
+    // Only move forward (never backwards)
+    if (state.step < inferredStep) state.step = inferredStep;
+  }
+
+
   const currentStepDef = nextScriptPrompt(script, state);
   const currentPromptFull = currentStepDef?.prompt || FALLBACK_STEP0;
 
