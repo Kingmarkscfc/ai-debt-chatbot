@@ -1886,7 +1886,10 @@ ${alt}` : alt,
   const stepDef = nextScriptPrompt(script, state);
   const prompt = stepDef?.prompt || currentPromptFull;
 
-  const expects = (stepDef?.expects || inferExpectFromPrompt(prompt) || "free").toLowerCase();
+  const stepExpects = (stepDef?.expects || "").toLowerCase();
+  const inferredExpects = (inferExpectFromPrompt(prompt) || "free").toLowerCase();
+  // Prefer what the *prompt actually asks* for, even if the script metadata is out of sync, to avoid loops.
+  const expects = inferredExpects !== "free" && inferredExpects !== stepExpects ? inferredExpects : stepExpects || inferredExpects || "free";
 
   if (expects === "name") {
     const tries = state.askedNameTries || 0;
