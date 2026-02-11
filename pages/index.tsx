@@ -738,8 +738,6 @@ if (willOpenPopup) {
     }
   };
 
-
-
   return (
     <>
     <div style={styles.frame}>
@@ -790,16 +788,8 @@ if (willOpenPopup) {
           </div>
         </div>
 
-
-        {pinned ? (
-          <div style={styles.pinnedBar}>
-            <div style={styles.pinnedLabel}>Just to keep this visible while you fill the form:</div>
-            <div style={styles.pinnedText}>{pinned.text}</div>
-          </div>
-        ) : null}
-
         <div style={styles.chat}>
-          {messages.filter((m) => !(pinned && m.id === pinned.id)).map((m) => (
+          {messages.map((m) => (
             <div key={m.id} style={styles.row} ref={(el) => { messageRefs.current[m.id] = el; }}>
               {m.sender === "bot" ? (
                 <>
