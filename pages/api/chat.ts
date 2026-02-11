@@ -31,6 +31,7 @@ type ChatState = {
   affordable?: number | null;
   urgent?: string | null;
 
+  profile?: any;
   // loop guards
   askedNameTries?: number;
   lastPromptKey?: string; // dedupe key of last bot prompt
@@ -1634,7 +1635,8 @@ function parseUiDirectives(prompt: string): UiParseResult {
   const raw = String(prompt ?? "");
   const uiBlocks = raw.match(/\[UI:[^\]]*\]/gi) || [];
   const triggerBlocks = raw.match(/\[TRIGGER:[^\]]*\]/gi) || [];
-  if (!uiBlocks.length && !triggerBlocks.length) return { clean: raw };
+  const popupBlocks = raw.match(/\[POPUP:[^\]]*\]/gi) || [];
+  if (!uiBlocks.length && !triggerBlocks.length && !popupBlocks.length) return { clean: raw };
 
   let uiTrigger: string | undefined;
   let popup: string | undefined;
@@ -1662,6 +1664,13 @@ function parseUiDirectives(prompt: string): UiParseResult {
     }
   }
 
+
+  // Support popup markers like: [POPUP: FACT_FIND_CLIENT_INFORMATION]
+  for (const block of popupBlocks) {
+    const inner = block.replace(/^\[POPUP:\s*/i, "").replace(/\]$/i, "").trim();
+    if (inner) popup = popup || inner;
+  }
+
   // Support legacy trigger markers like: [TRIGGER: OPEN_FACT_FIND_POPUP]
   for (const block of triggerBlocks) {
     const inner = block.replace(/^\[TRIGGER:\s*/i, "").replace(/\]$/i, "").trim();
@@ -1671,6 +1680,7 @@ function parseUiDirectives(prompt: string): UiParseResult {
   const clean = raw
     .replace(/\s*\[UI:[^\]]*\]\s*/gi, " ")
     .replace(/\s*\[TRIGGER:[^\]]*\]\s*/gi, " ")
+    .replace(/\s*\[POPUP:[^\]]*\]\s*/gi, " ")
     .replace(/\s{2,}/g, " ")
     .trim();
   return { clean, uiTrigger, popup, portalTab, openPortal };
@@ -1812,7 +1822,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
   // If the frontend sends an out-of-date step (e.g. stuck at 0), try to resync using the latest assistant message.
   // This prevents loops where the UI shows "main issue" but the backend still thinks we're on step 0 ("concern").
-  const historyText = history.filter(Boolean).slice(-8).join("\n");
+  const historyText = history.filter(Boolean).slice(-8).join(" ");
   const lastAssistant = historyText || "";
   const lastA = normalise(lastAssistant);
 
@@ -1945,6 +1955,35 @@ ${alt}` : alt,
   const inferredExpects = (inferExpectFromPrompt(prompt) || "free").toLowerCase();
   // Prefer what the *prompt actually asks* for, even if the script metadata is out of sync, to avoid loops.
   const expects = inferredExpects !== "free" && inferredExpects !== stepExpects ? inferredExpects : stepExpects || inferredExpects || "free";
+  if (expects === "profile") {
+    const marker = "__PROFILE_SUBMIT__";
+    if (userText.startsWith(marker)) {
+      const raw = userText.slice(marker.length).trim();
+      const obj = readJsonSafe<any>(raw, null);
+      const nextState: ChatState = { ...state, profile: obj || state.profile };
+      nextState.step = Math.min(state.step + 1, (script.steps?.length || 9999) - 1);
+      const next = nextScriptPrompt(script, nextState);
+      const parsedNext = parseUiDirectives(next?.prompt || FALLBACK_STEP0);
+      const cleanNext = stripLeadingIntroFromPrompt(parsedNext.clean) || parsedNext.clean;
+      return res.status(200).json({
+        reply: cleanNext,
+        uiTrigger: parsedNext.uiTrigger,
+        popup: parsedNext.popup,
+        portalTab: parsedNext.portalTab,
+        openPortal: parsedNext.openPortal,
+        state: { ...nextState, lastPromptKey: promptKey(nextState.step, cleanNext), lastStepPrompted: nextState.step },
+      });
+    }
+    // Re-issue current prompt and instruct UI to open the Fact Find popup.
+    return res.status(200).json({
+      reply: currentPromptClean,
+      uiTrigger: currentParsed.uiTrigger || "OPEN_FACT_FIND_POPUP",
+      popup: currentParsed.popup || "FACT_FIND_CLIENT_INFORMATION",
+      portalTab: currentParsed.portalTab,
+      openPortal: currentParsed.openPortal,
+      state: { ...state, lastPromptKey: promptKey(state.step, currentPromptClean), lastStepPrompted: state.step },
+    });
+  }
 
   if (expects === "name") {
     const tries = state.askedNameTries || 0;
