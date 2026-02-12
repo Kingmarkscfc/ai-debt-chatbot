@@ -17,9 +17,18 @@ export default async function handler(req: any, res: any) {
       return res.status(400).json({ ok:false, error:"Invalid UK postcode." });
     }
 
-    const key = process.env.GETADDRESS_API_KEY;
+    const key = (
+      process.env.GETADDRESS_API_KEY ||
+      process.env.GETADDRESSIO_API_KEY ||
+      process.env.GETADDRESS_IO_API_KEY ||
+      process.env.GETADDRESS_APIKEY
+    );
     if (!key) {
-      return res.status(200).json({ ok:false, error:"Address lookup not configured." });
+      return res.status(200).json({
+        ok: false,
+        error:
+          "Address lookup not configured. Set GETADDRESS_API_KEY (getAddress.io) in .env.local and in Vercel environment variables.",
+      });
     }
 
     // getAddress.io – https://getaddress.io
