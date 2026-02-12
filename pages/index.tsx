@@ -391,8 +391,8 @@ const canSubmitFactFind = useMemo(() => {
     inlinePopupBtnPrimary: {
       padding: "10px 12px",
       borderRadius: 12,
-      border: "1px solid rgba(255,255,255,0.12)",
-      background: "rgba(255,255,255,0.18)",
+      border: "1px solid #111827",
+      background: "#111827",
       color: "#fff",
       cursor: "pointer",
       whiteSpace: "nowrap",
@@ -730,13 +730,24 @@ if (willOpenPopup) {
     setSelectedAddress(null);
     try {
       const r = await fetch("/api/portal/lookup-postcode", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ postcode: pc }),
-      });
-      const j = await r.json();
-      if (!j?.ok) setPostcodeError(j?.error || "No results.");
-      else setPostcodeResults(j?.addresses || []);
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ postcode: pc }),
+});
+
+let j: any = null;
+try { j = await r.json(); } catch { j = null; }
+
+if (!r.ok) {
+  const msg = j?.error || `Lookup failed (${r.status}).`;
+  setPostcodeError(msg);
+  setPostcodeResults([]);
+} else if (!j?.ok) {
+  setPostcodeError(j?.error || "No results.");
+  setPostcodeResults([]);
+} else {
+  setPostcodeResults(j?.addresses || []);
+}
     } catch {
       setPostcodeError("Network error.");
     } finally {
@@ -999,7 +1010,13 @@ if (willOpenPopup) {
                       </button>
                     </div>
 
-                    {postcodeResults.length ? (
+                    {postcodeError ? (
+  <div style={{ marginTop: 8, fontSize: 13, color: isDark ? "#fecaca" : "#b91c1c" }}>
+    {postcodeError}
+  </div>
+) : null}
+
+{postcodeResults.length ? (
                       <div style={{ marginTop: 10 }}>
                         <div style={styles.inlinePopupLabel}>Select your address:</div>
                         <select
