@@ -490,18 +490,43 @@ export default function Home() {
       if (data?.state) setChatState(data.state);
       if (data?.displayName) setDisplayName(data.displayName);
       // Handle optional UI directives returned by the API (safe: ignored if UI not implemented)
-            const uiTrig = (data.uiTrigger || "").toString();
-      const uiPop = (data.popup || "").toString();
+      // NOTE: backend variants may return uiTrigger (string), uiTriggers (string[]), popup (string), or triggers (string|string[])
+      const uiTrigRaw = (data?.uiTrigger ?? data?.ui ?? "").toString();
+      const uiTrigsArr: string[] = Array.isArray((data as any)?.uiTriggers)
+        ? ((data as any).uiTriggers as any[]).map((x) => String(x))
+        : Array.isArray((data as any)?.triggers)
+          ? ((data as any).triggers as any[]).map((x) => String(x))
+          : [];
+
+      const uiPop = (data?.popup ?? "").toString();
+
+      // Fallback: if the compliance sentence is present, we should open the Fact Find popup even if triggers weren't returned.
+      const looksLikeStep5 =
+        typeof reply === "string" &&
+        reply.toLowerCase().includes("moneyhelper.org.uk") &&
+        reply.toLowerCase().includes("please complete a few details");
+
+      const uiAll = [uiTrigRaw, ...uiTrigsArr, uiPop].filter(Boolean).join(" | ");
 
       const wantsFactFindPopup =
-        uiTrig.includes("OPEN_FACT_FIND_POPUP") || uiTrig.includes("OPEN_FACT_FIND") || uiPop.includes("FACT_FIND");
+        looksLikeStep5 ||
+        uiAll.includes("OPEN_FACT_FIND_POPUP") ||
+        uiAll.includes("OPEN_FACT_FIND") ||
+        uiAll.toUpperCase().includes("FACT_FIND");
+
       const wantsIncome =
-        uiTrig.includes("OPEN_INCOME_EXPENSE_POPUP") || uiTrig.includes("OPEN_INCOME_EXPENSE") || uiPop.includes("INCOME");
+        uiAll.includes("OPEN_INCOME_EXPENSE_POPUP") ||
+        uiAll.includes("OPEN_INCOME_EXPENSE") ||
+        uiAll.toUpperCase().includes("INCOME");
+
       const wantsAddress =
-        uiTrig.includes("OPEN_ADDRESS_POPUP") || uiTrig.includes("OPEN_ADDRESS") || uiPop.includes("ADDRESS");
+        uiAll.includes("OPEN_ADDRESS_POPUP") ||
+        uiAll.includes("OPEN_ADDRESS") ||
+        uiAll.toUpperCase().includes("ADDRESS");
 
       const willOpenPopup = wantsFactFindPopup || wantsIncome || wantsAddress;
-      const ui = uiTrig;
+      const ui = uiAll;
+
 
 // Open portal/auth (existing behaviour keeps working)
       if (ui.includes("OPEN_CLIENT_PORTAL")) {
