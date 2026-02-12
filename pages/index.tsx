@@ -411,8 +411,15 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    // When an inline popup opens, we "push up" the triggering bot message to the top of the viewport.
+    // In that moment we *must not* auto-scroll to the bottom (or it cancels the push-up effect).
+    if (pinToTopId) {
+      messageRefs.current[pinToTopId]?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    if (showFactFind || showIe || showAddress) return;
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, pinToTopId, showFactFind, showIe, showAddress]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
