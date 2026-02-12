@@ -3,8 +3,14 @@
 
 export default async function handler(req: any, res: any) {
   try {
-    const { postcode } = req.query || {};
-    const pc = String(postcode || "").trim().toUpperCase();
+    if (req.method && !["GET","POST"].includes(String(req.method).toUpperCase())) {
+      return res.status(405).json({ ok:false, error:"Method not allowed." });
+    }
+
+    const q = req.query || {};
+    const b = (req.body && typeof req.body === "object") ? req.body : {};
+    const raw = (q.postcode ?? q.pc ?? q.q ?? b.postcode ?? b.pc ?? b.q ?? "").toString();
+    const pc = raw.trim().toUpperCase();
 
     const ukRe = /^[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$/i;
     if (!pc || !ukRe.test(pc)) {
