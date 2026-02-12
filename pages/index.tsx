@@ -122,6 +122,26 @@ export default function Home() {
   const [ffSaving, setFfSaving] = useState(false);
   const [ffError, setFfError] = useState<string | null>(null);
 
+  const ffFullNameRef = useRef<HTMLInputElement | null>(null);
+  const ffPhoneRef = useRef<HTMLInputElement | null>(null);
+  const ffEmailRef = useRef<HTMLInputElement | null>(null);
+  const ffDobRef = useRef<HTMLInputElement | null>(null);
+  const ffPostcodeRef = useRef<HTMLInputElement | null>(null);
+
+  const canSubmitFactFind = useMemo(() => {
+    return Boolean(
+      ffFullName.trim() &&
+        ffPhone.trim() &&
+        ffEmail.trim() &&
+        ffDob.trim() &&
+        postcode.trim() &&
+        selectedAddress &&
+        ffAddrYears.trim() &&
+        ffAddrMonths.trim() &&
+        ffResStatus.trim()
+    );
+  }, [ffFullName, ffPhone, ffEmail, ffDob, postcode, selectedAddress, ffAddrYears, ffAddrMonths, ffResStatus]);
+
 // Address popup
   const [showAddress, setShowAddress] = useState(false);
   const [pinned, setPinned] = useState<{ id: string; text: string } | null>(null);
@@ -302,6 +322,58 @@ export default function Home() {
       borderRadius: 12,
       border: "1px solid rgba(255,255,255,0.12)",
       background: "rgba(0,0,0,0.25)",
+      color: "#fff",
+      outline: "none",
+    },
+
+    inlinePopupRow: {
+      display: "flex",
+      alignItems: "center",
+      gap: 10,
+      flexWrap: "wrap",
+    },
+    inlinePopupFieldLabel: {
+      minWidth: 140,
+      fontSize: 13,
+      fontWeight: 700,
+      opacity: 0.9,
+    },
+    inlinePopupInputFlex: {
+      flex: "1 1 260px",
+      minWidth: 240,
+      padding: "10px 12px",
+      borderRadius: 12,
+      border: "1px solid rgba(255,255,255,0.12)",
+      background: "rgba(0,0,0,0.28)",
+      color: "#fff",
+      outline: "none",
+    },
+    inlinePopupInputSmall: {
+      flex: "1 1 120px",
+      minWidth: 120,
+      padding: "10px 12px",
+      borderRadius: 12,
+      border: "1px solid rgba(255,255,255,0.12)",
+      background: "rgba(0,0,0,0.28)",
+      color: "#fff",
+      outline: "none",
+    },
+    inlinePopupSelect: {
+      width: "100%",
+      padding: "10px 12px",
+      borderRadius: 12,
+      border: "1px solid rgba(255,255,255,0.12)",
+      background: "rgba(0,0,0,0.28)",
+      color: "#fff",
+      outline: "none",
+    },
+    inlinePopupSelectFlex: {
+      flex: "1 1 260px",
+      minWidth: 240,
+      padding: "10px 12px",
+      borderRadius: 12,
+      border: "1px solid rgba(255,255,255,0.12)",
+      background: "rgba(0,0,0,0.28)",
       color: "#fff",
       outline: "none",
     },
@@ -861,39 +933,60 @@ if (willOpenPopup) {
                       Please complete the details below. This will be saved to your file and used to create your client reference.
                     </div>
 
-                    <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-                      <input
-                        style={styles.inlinePopupInput as any}
-                        value={ffFullName}
-                        onChange={(e) => setFfFullName(e.target.value)}
-                        placeholder="Full name"
-                      />
-                      <input
-                        style={styles.inlinePopupInput as any}
-                        value={ffPhone}
-                        onChange={(e) => setFfPhone(e.target.value)}
-                        placeholder="Contact number"
-                      />
-                      <input
-                        style={styles.inlinePopupInput as any}
-                        value={ffEmail}
-                        onChange={(e) => setFfEmail(e.target.value)}
-                        placeholder="Email address"
-                      />
-                      <input
-                        style={styles.inlinePopupInput as any}
-                        value={ffDob}
-                        onChange={(e) => setFfDob(e.target.value)}
-                        placeholder="Date of birth (DD/MM/YYYY)"
-                      />
+                    <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
+                      <div style={styles.inlinePopupRow} onClick={() => ffFullNameRef.current?.focus()}>
+                        <div style={styles.inlinePopupFieldLabel}>Full name:</div>
+                        <input
+                          ref={ffFullNameRef}
+                          style={styles.inlinePopupInputFlex as any}
+                          value={ffFullName}
+                          onChange={(e) => setFfFullName(e.target.value)}
+                          placeholder=""
+                        />
+                      </div>
+
+                      <div style={styles.inlinePopupRow} onClick={() => ffPhoneRef.current?.focus()}>
+                        <div style={styles.inlinePopupFieldLabel}>Contact number:</div>
+                        <input
+                          ref={ffPhoneRef}
+                          style={styles.inlinePopupInputFlex as any}
+                          value={ffPhone}
+                          onChange={(e) => setFfPhone(e.target.value)}
+                          placeholder=""
+                        />
+                      </div>
+
+                      <div style={styles.inlinePopupRow} onClick={() => ffEmailRef.current?.focus()}>
+                        <div style={styles.inlinePopupFieldLabel}>Email address:</div>
+                        <input
+                          ref={ffEmailRef}
+                          style={styles.inlinePopupInputFlex as any}
+                          value={ffEmail}
+                          onChange={(e) => setFfEmail(e.target.value)}
+                          placeholder=""
+                        />
+                      </div>
+
+                      <div style={styles.inlinePopupRow} onClick={() => ffDobRef.current?.focus()}>
+                        <div style={styles.inlinePopupFieldLabel}>Date of birth:</div>
+                        <input
+                          ref={ffDobRef}
+                          style={styles.inlinePopupInputFlex as any}
+                          value={ffDob}
+                          onChange={(e) => setFfDob(e.target.value)}
+                          placeholder="DD/MM/YYYY"
+                        />
+                      </div>
                     </div>
 
-                    <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                    <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap", alignItems: "center" }}>
+                      <div style={styles.inlinePopupFieldLabel}>Address postcode:</div>
                       <input
-                        style={styles.inlinePopupInput as any}
+                        ref={ffPostcodeRef}
+                        style={styles.inlinePopupInputFlex as any}
                         value={postcode}
                         onChange={(e) => setPostcode(e.target.value)}
-                        placeholder="Postcode (e.g. M1 1AA)"
+                        placeholder="e.g. M1 1AA"
                       />
                       <button
                         type="button"
@@ -908,18 +1001,18 @@ if (willOpenPopup) {
                     {postcodeResults.length ? (
                       <div style={{ marginTop: 10 }}>
                         <div style={styles.inlinePopupLabel}>Select your address:</div>
-                        <div style={styles.inlinePopupList}>
-                          {postcodeResults.slice(0, 8).map((a, idx) => (
-                            <button
-                              key={idx}
-                              type="button"
-                              style={styles.inlinePopupListItem as any}
-                              onClick={() => setSelectedAddress(a)}
-                            >
+                        <select
+                          style={styles.inlinePopupSelect as any}
+                          value={selectedAddress || ""}
+                          onChange={(e) => setSelectedAddress(e.target.value)}
+                        >
+                          <option value="">Select an address...</option>
+                          {postcodeResults.slice(0, 50).map((a, idx) => (
+                            <option key={idx} value={a}>
                               {a}
-                            </button>
+                            </option>
                           ))}
-                        </div>
+                        </select>
                       </div>
                     ) : null}
 
@@ -930,38 +1023,54 @@ if (willOpenPopup) {
                       </div>
                     ) : null}
 
-                    <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-                      <input
-                        style={styles.inlinePopupInput as any}
-                        value={ffAddrYears}
-                        onChange={(e) => setFfAddrYears(e.target.value)}
-                        placeholder="Years at address"
-                      />
-                      <input
-                        style={styles.inlinePopupInput as any}
-                        value={ffAddrMonths}
-                        onChange={(e) => setFfAddrMonths(e.target.value)}
-                        placeholder="Months"
-                      />
-                      <select
-                        style={styles.inlinePopupInput as any}
-                        value={ffResStatus}
-                        onChange={(e) => setFfResStatus(e.target.value)}
-                      >
-                        <option value="">Residential status</option>
-                        <option value="Private Tenant">Private Tenant</option>
-                        <option value="Council Tenant">Council Tenant</option>
-                        <option value="Homeowner">Homeowner</option>
-                        <option value="Housing Association">Housing Association</option>
-                        <option value="Living with Family">Living with Family</option>
-                      </select>
+                    <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
+                      <div style={styles.inlinePopupRow}>
+                        <div style={styles.inlinePopupFieldLabel}>Time at address:</div>
+                        <div style={{ display: "flex", gap: 8, flex: 1, flexWrap: "wrap" }}>
+                          <input
+                            style={styles.inlinePopupInputSmall as any}
+                            value={ffAddrYears}
+                            onChange={(e) => setFfAddrYears(e.target.value)}
+                            placeholder="Years"
+                          />
+                          <input
+                            style={styles.inlinePopupInputSmall as any}
+                            value={ffAddrMonths}
+                            onChange={(e) => setFfAddrMonths(e.target.value)}
+                            placeholder="Months"
+                          />
+                        </div>
+                      </div>
+
+                      <div style={styles.inlinePopupRow}>
+                        <div style={styles.inlinePopupFieldLabel}>Residential status:</div>
+                        <select
+                          style={styles.inlinePopupSelectFlex as any}
+                          value={ffResStatus}
+                          onChange={(e) => setFfResStatus(e.target.value)}
+                        >
+                          <option value="">Select…</option>
+                          <option value="Private Tenant">Private Tenant</option>
+                          <option value="Council Tenant">Council Tenant</option>
+                          <option value="Homeowner">Homeowner</option>
+                          <option value="Housing Association">Housing Association</option>
+                          <option value="Living with Family">Living with Family</option>
+                        </select>
+                      </div>
                     </div>
 
                     {ffError ? <div style={{ marginTop: 10, color: "#b91c1c", fontWeight: 700 }}>{ffError}</div> : null}
 
                     <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      <button type="button" style={styles.inlinePopupBtnPrimary as any} onClick={submitFactFind} disabled={ffSaving}>
-                        {ffSaving ? "Saving..." : "Submit & continue"}
+                      <button
+                        type="button"
+                        style={styles.inlinePopupBtnPrimary as any}
+                        onClick={submitFactFind}
+                        disabled={ffSaving || !canSubmitFactFind}
+                        aria-disabled={ffSaving || !canSubmitFactFind}
+                        title={!canSubmitFactFind ? "Complete all fields to continue" : ""}
+                      >
+                        {ffSaving ? "Saving..." : canSubmitFactFind ? "Submit & continue" : "🔒 Submit & continue"}
                       </button>
                       <button
                         type="button"
