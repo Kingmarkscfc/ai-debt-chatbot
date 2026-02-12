@@ -128,7 +128,14 @@ export default function Home() {
   const ffDobRef = useRef<HTMLInputElement | null>(null);
   const ffPostcodeRef = useRef<HTMLInputElement | null>(null);
 
-  const canSubmitFactFind = useMemo(() => {
+  
+  const [postcode, setPostcode] = useState("");
+  const [postcodeLoading, setPostcodeLoading] = useState(false);
+  const [postcodeError, setPostcodeError] = useState<string | null>(null);
+  const [postcodeResults, setPostcodeResults] = useState<any[]>([]);
+  const [selectedAddress, setSelectedAddress] = useState<any | null>(null);
+
+const canSubmitFactFind = useMemo(() => {
     return Boolean(
       ffFullName.trim() &&
         ffPhone.trim() &&
@@ -145,12 +152,6 @@ export default function Home() {
 // Address popup
   const [showAddress, setShowAddress] = useState(false);
   const [pinned, setPinned] = useState<{ id: string; text: string } | null>(null);
-
-  const [postcode, setPostcode] = useState("");
-  const [postcodeLoading, setPostcodeLoading] = useState(false);
-  const [postcodeError, setPostcodeError] = useState<string | null>(null);
-  const [postcodeResults, setPostcodeResults] = useState<any[]>([]);
-  const [selectedAddress, setSelectedAddress] = useState<any | null>(null);
 
   const [addressHistory, setAddressHistory] = useState<AddressEntry[]>([
     { line1: "", line2: "", city: "", postcode: "", yearsAt: 0 },
