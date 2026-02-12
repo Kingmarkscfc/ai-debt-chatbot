@@ -511,7 +511,10 @@ export default function Home() {
       const looksLikeStep5 =
         typeof reply === "string" &&
         reply.toLowerCase().includes("moneyhelper.org.uk") &&
-        reply.toLowerCase().includes("please complete a few details");
+        (reply.toLowerCase().includes("please complete a few details") ||
+          reply.toLowerCase().includes("to continue") ||
+          reply.toLowerCase().includes("complete a few details") ||
+          reply.toLowerCase().includes("complete a few details so we can help")); 
 
       const uiAll = [uiTrigRaw, ...uiTrigsArr, uiPop].filter(Boolean).join(" | ");
 
@@ -848,7 +851,7 @@ if (willOpenPopup) {
             </div>
           ))}
 
-          {(showIe || showAddress) ? (
+          {(showFactFind || showIe || showAddress) ? (
             <div style={{ marginTop: 12 }}>
               <div style={styles.inlinePopupCard}>
                 {showFactFind ? (
