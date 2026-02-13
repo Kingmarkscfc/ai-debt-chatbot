@@ -115,6 +115,9 @@ export default function Home() {
 
   const [ffOutstanding, setFfOutstanding] = useState(false);
   const [ffSkipNoticeShown, setFfSkipNoticeShown] = useState(false);
+  const [ffHeaderEnabled, setFfHeaderEnabled] = useState(false);
+  const [ffCancelledHard, setFfCancelledHard] = useState(false);
+  const [ffHardCancelNoticeShown, setFfHardCancelNoticeShown] = useState(false);
   const [ffCompleted, setFfCompleted] = useState(false);
   const [ffFullName, setFfFullName] = useState("");
   const [ffPhone, setFfPhone] = useState("");
@@ -616,6 +619,22 @@ const canSubmitFactFind = useMemo(() => {
 
   const handleSubmit = async () => {
     const text = input.trim();
+    if (ffCancelledHard) {
+      if (!ffHardCancelNoticeShown) {
+        setFfHardCancelNoticeShown(true);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: makeId(),
+            sender: "bot",
+            text:
+              "We still need your personal details in the Client details task before we can continue. Please come back when you’re ready — we’ll be here to help.",
+            at: nowTime(),
+          },
+        ]);
+      }
+      return;
+    }
     if (!text) return;
     setInput("");
     const userMsg: Message = { id: makeId(), sender: "user", text, at: nowTime() };
@@ -940,6 +959,10 @@ if (willOpenPopup) {
       setFfOutstanding(false);
 
       setShowFactFind(false);
+                          setFfCompleted(true);
+                          setFfOutstanding(false);
+                          setFfCancelledHard(false);
+
       setFfManualAddress(false);
       setFfPostcodeTried(false);
     } catch {
@@ -990,7 +1013,7 @@ if (willOpenPopup) {
             <button style={styles.btn} onClick={() => setShowIe(true)}>
               I&E
             </button>
-            {ffOutstanding || ffCompleted ? (
+            {ffHeaderEnabled && (ffOutstanding || ffCompleted) ? (
               <button
                 style={{
                   ...styles.btn,
@@ -998,7 +1021,24 @@ if (willOpenPopup) {
                   borderColor: ffOutstanding ? "#b91c1c" : "#16a34a",
                   color: "#fff",
                 }}
-                onClick={() => setShowFactFind(true)}
+                onClick={() => {
+                  setFfCancelledHard(false);
+                  setShowFactFind((v) => !v);
+                }}
+                title={ffOutstanding ? "Details outstanding" : "Details completed"}
+              >
+                {ffOutstanding ? "Client details (1)" : "Client details ✓"}
+              </button>
+            ) : null}
+            {ffHeaderEnabled && (ffOutstanding || ffCompleted) ? (
+              <button
+                style={{
+                  ...styles.btn,
+                  background: ffOutstanding ? "#b91c1c" : "#16a34a",
+                  borderColor: ffOutstanding ? "#b91c1c" : "#16a34a",
+                  color: "#fff",
+                }}
+                onClick={() => { setFfCancelledHard(false); setShowFactFind((v) => !v); }}
                 title={ffOutstanding ? "Details outstanding" : "Details completed"}
               >
                 {ffOutstanding ? "Client details (1)" : "Client details ✓"}
@@ -1293,44 +1333,45 @@ if (willOpenPopup) {
                         type="button"
                         style={styles.inlinePopupBtn as any}
                         onClick={async () => {
+                          const displayName = (chatState?.name || ffFullName || "there").toString();
+                          const sure =
+                            typeof window !== "undefined"
+                              ? window.confirm("We are so close to helping you — are you sure you still want to cancel?")
+                              : true;
+
+                          if (!sure) {
+                            setMessages((prev) => [
+                              ...prev,
+                              {
+                                id: makeId(),
+                                sender: "bot",
+                                text: `Please continue to fill in your details so that we can understand your situation better ${displayName}.`,
+                                at: nowTime(),
+                              },
+                            ]);
+                            return;
+                          }
+
                           setShowFactFind(false);
-                          setFfError(null);
+                          setFfHeaderEnabled(true);
                           setFfOutstanding(true);
+                          setFfCancelledHard(true);
+                          setFfHardCancelNoticeShown(true);
 
-                          // Let the user continue, but keep an easy way to complete details later.
-                          const clientName = (chatState?.name || "").toString().trim();
-                          const didAddNotice = !ffSkipNoticeShown;
-                          const botInfo: Message = {
-                            id: makeId(),
-                            sender: "bot",
-                            text: `Please complete the fact find${clientName ? ` ${clientName}` : ""}. You can return to this by clicking the red Client details button which now shows as an outstanding task — this will turn green once you have completed your details. In the meantime we’ll continue to get a better understanding of your situation.`,
-                            at: nowTime(),
-                          };
-                          if (didAddNotice) {
+                          if (!ffSkipNoticeShown) {
                             setFfSkipNoticeShown(true);
-                            setMessages((prev) => [...prev, botInfo]);
+                            setMessages((prev) => [
+                              ...prev,
+                              {
+                                id: makeId(),
+                                sender: "bot",
+                                text:
+                                  `Please complete the fact find ${displayName}. You can return to this by clicking the red Client details button which now shows as an outstanding task on the chat header. This button will turn green when you have completed your details. Once submitted, your details will link to your client portal and a client reference will be created for you. We need this information to help you properly — please come back when you’re ready to continue.`,
+                                at: nowTime(),
+                              },
+                            ]);
                           }
-
-
-                          try {
-                            const syntheticUser: Message = { id: makeId(), sender: "user", text: "__PROFILE_SKIP__", at: nowTime() };
-                            const histForApi = didAddNotice ? [...messages, botInfo, syntheticUser] : [...messages, syntheticUser];
-                            const data = await sendToApi("__PROFILE_SKIP__", histForApi);
-
-                            const rawReply = (data?.reply as string) || "Thanks — let’s continue.";
-                            const reply = rawReply
-                              .replace(/\s*\[(?:TRIGGER|UI|POPUP):[^\]]*\]\s*/gi, " ")
-                              .replace(/\s{2,}/g, " ")
-                              .trim();
-
-                            const botMsg: Message = { id: makeId(), sender: "bot", text: reply, at: nowTime() };
-                            setMessages((prev) => [...prev, botMsg]);
-                            if (data?.state) setChatState(data.state);
-                          } catch {
-                            // If advancing fails, the client can still resume via the header button.
-                          }
-                        }}
-                        disabled={ffSaving}
+                        }} disabled={ffSaving}
                       >
                         Cancel
                       </button>
