@@ -1823,9 +1823,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   const cancelledHard = Boolean((state as any).profileCancelledHard);
   const outstanding = Boolean((state as any).profileOutstanding);
   if ((cancelledHard || outstanding) && !userText.startsWith("__PROFILE_SUBMIT__")) {
+    const wantsToContinue = /(ready|continue|proceed|carry on|go on|start)/i.test(userText || "");
+    const lead = wantsToContinue ? "Great —" : "Yes —";
     return res.status(200).json({
       reply:
-        "Yes — I can still help. Please complete the outstanding Client details task highlighted in red in the chat header. If you’re not ready to do that right now, please come back to the chat when you are ready to proceed.",
+        `${lead} I can still help. Please complete the outstanding Client details task highlighted in red in the chat header. If you’re not ready to do that right now, please come back to the chat when you are ready to proceed.`,
       state,
     });
   }
