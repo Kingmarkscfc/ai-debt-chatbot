@@ -1818,6 +1818,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     };
     return res.status(200).json({ reply: first, state: s });
   }
+  // If the user cancelled the Fact Find (client details) and it's still outstanding,
+  // pause the script until they complete it.
+  const cancelledHard = Boolean((state as any).profileCancelledHard);
+  const outstanding = Boolean((state as any).profileOutstanding);
+  if ((cancelledHard || outstanding) && !userText.startsWith("__PROFILE_SUBMIT__")) {
+    return res.status(200).json({
+      reply:
+        "Yes — I can still help. Please complete the outstanding Client details task highlighted in red in the chat header. If you’re not ready to do that right now, please come back to the chat when you are ready to proceed.",
+      state,
+    });
+  }
+
 
 
   // If the frontend sends an out-of-date step (e.g. stuck at 0), try to resync using the latest assistant message.
