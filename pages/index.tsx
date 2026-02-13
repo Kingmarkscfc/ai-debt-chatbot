@@ -133,8 +133,13 @@ export default function Home() {
     const raw = (chatState?.name || "").toString().trim();
     if (!raw) return;
     const parts = raw.split(/\s+/).filter(Boolean);
-    if (!ffFirstName.trim()) setFfFirstName(parts[0] || "");
-    if (!validSurname && parts.length > 1) setFfSurname(parts.slice(1).join(" "));
+    if (!ffFirstName.trim()) {
+      const fn = parts[0] || "";
+      setFfFirstName(fn);
+      // First name is already known from earlier in the chat, so mark it complete.
+      setFfTouched((s) => ({ ...s, firstName: true }));
+    }
+    if (!ffSurname.trim() && parts.length > 1) setFfSurname(parts.slice(1).join(" "));
   }, [showFactFind, chatState?.name]);
   const [ffPhone, setFfPhone] = useState("");
   const [ffEmail, setFfEmail] = useState("");
@@ -142,7 +147,7 @@ export default function Home() {
 
 
   const validFirstName = ffFirstName.trim().length >= 2;
-  const validSurname = ffSurname.trim().length >= 2;
+  const validSurname = ffSurname.trim().length >= 3;
   const validPhone = ffPhone.replace(/\D/g, "").trim().length >= 6;
   const validEmail = ffEmail.trim().length >= 2 && ffEmail.includes("@");
   const validDob = Boolean(ffDob && ffDob.trim());
@@ -426,16 +431,6 @@ const canSubmitFactFind = useMemo(() => {
       flex: "1 1 260px",
       minWidth: 240,
       padding: "10px 12px",
-      borderRadius: 12,
-      border: "1px solid rgba(0,0,0,0.12)",
-      background: "#e5e7eb",
-      color: "#111827",
-      outline: "none",
-    },
-    inlinePopupYearSelect: {
-      width: 96,
-      minWidth: 96,
-      padding: "10px 10px",
       borderRadius: 12,
       border: "1px solid rgba(0,0,0,0.12)",
       background: "#e5e7eb",
@@ -1188,28 +1183,7 @@ if (willOpenPopup) {
                           onChange={(e) => setFfDob(e.target.value)}
                           onBlur={() => markTouched("dob")}
                         />
-                        {/* Faster year selector (type-to-jump) */}
-                        <select
-                          style={styles.inlinePopupYearSelect as any}
-                          value={(ffDob || "").slice(0, 4)}
-                          onChange={(e) => {
-                            const y = (e.target.value || "").trim();
-                            if (!y) return;
-                            const cur = (ffDob || "").match(/^\d{4}-\d{2}-\d{2}$/) ? ffDob : `${y}-01-01`;
-                            const parts = cur.split("-");
-                            const mm = parts[1] || "01";
-                            const dd = parts[2] || "01";
-                            setFfDob(`${y}-${mm}-${dd}`);
-                          }}
-                          onBlur={() => markTouched("dob")}
-                        >
-                          <option value="">Year</option>
-                          {Array.from({ length: 2013 - 1913 + 1 }, (_, i) => 2013 - i).map((y) => (
-                            <option key={y} value={String(y)}>
-                              {y}
-                            </option>
-                          ))}
-                        </select>
+                        
                         <div style={styles.inlinePopupTick}>{ffTouched["dob"] && validDob ? "✓" : ""}</div>
                       </div>
                     </div>
