@@ -1956,6 +1956,22 @@ ${alt}` : alt,
   // Prefer what the *prompt actually asks* for, even if the script metadata is out of sync, to avoid loops.
   const expects = inferredExpects !== "free" && inferredExpects !== stepExpects ? inferredExpects : stepExpects || inferredExpects || "free";
   if (expects === "profile") {
+    const skipMarker = "__PROFILE_SKIP__";
+    if (userText.startsWith(skipMarker)) {
+      const nextState: ChatState = { ...state };
+      nextState.step = Math.min(state.step + 1, (script.steps?.length || 9999) - 1);
+      const next = nextScriptPrompt(script, nextState);
+      const parsedNext = parseUiDirectives(next?.prompt || FALLBACK_STEP0);
+      const cleanNext = stripLeadingIntroFromPrompt(parsedNext.clean) || parsedNext.clean;
+      return res.status(200).json({
+        reply: cleanNext,
+        uiTrigger: parsedNext.uiTrigger,
+        popup: parsedNext.popup,
+        portalTab: parsedNext.portalTab,
+        openPortal: parsedNext.openPortal,
+        state: { ...nextState, lastPromptKey: promptKey(nextState.step, cleanNext), lastStepPrompted: nextState.step },
+      });
+    }
     const marker = "__PROFILE_SUBMIT__";
     if (userText.startsWith(marker)) {
       const raw = userText.slice(marker.length).trim();
