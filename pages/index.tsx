@@ -112,6 +112,9 @@ export default function Home() {
 
   // Fact Find popup (Step 5)
   const [showFactFind, setShowFactFind] = useState(false);
+
+  const [ffOutstanding, setFfOutstanding] = useState(false);
+  const [ffCompleted, setFfCompleted] = useState(false);
   const [ffFullName, setFfFullName] = useState("");
   const [ffPhone, setFfPhone] = useState("");
   const [ffEmail, setFfEmail] = useState("");
@@ -932,6 +935,9 @@ if (willOpenPopup) {
       const botMsg: Message = { id: makeId(), sender: "bot", text: reply, at: nowTime() };
       setMessages((prev) => [...prev, botMsg]);
 
+      setFfCompleted(true);
+      setFfOutstanding(false);
+
       setShowFactFind(false);
       setFfManualAddress(false);
       setFfPostcodeTried(false);
@@ -983,9 +989,20 @@ if (willOpenPopup) {
             <button style={styles.btn} onClick={() => setShowIe(true)}>
               I&E
             </button>
-            <button style={styles.btn} onClick={() => setShowAddress(true)}>
-              Address
-            </button>
+            {ffOutstanding || ffCompleted ? (
+              <button
+                style={{
+                  ...styles.btn,
+                  background: ffOutstanding ? "#b91c1c" : "#16a34a",
+                  borderColor: ffOutstanding ? "#b91c1c" : "#16a34a",
+                  color: "#fff",
+                }}
+                onClick={() => setShowFactFind(true)}
+                title={ffOutstanding ? "Details outstanding" : "Details completed"}
+              >
+                {ffOutstanding ? "Client details (1)" : "Client details ✓"}
+              </button>
+            ) : null}
             <button style={styles.btn} onClick={() => setShowPortal((p) => !p)}>
               {showPortal ? "Hide Portal" : "Portal"}
             </button>
@@ -1274,9 +1291,37 @@ if (willOpenPopup) {
                       <button
                         type="button"
                         style={styles.inlinePopupBtn as any}
-                        onClick={() => {
+                        onClick={async () => {
                           setShowFactFind(false);
                           setFfError(null);
+                          setFfOutstanding(true);
+
+                          // Let the user continue, but keep an easy way to complete details later.
+                          const botInfo: Message = {
+                            id: makeId(),
+                            sender: "bot",
+                            text: "No problem — you can complete your details later by clicking **Client details** at the top. We’ll continue for now.",
+                            at: nowTime(),
+                          };
+                          setMessages((prev) => [...prev, botInfo]);
+
+                          try {
+                            const syntheticUser: Message = { id: makeId(), sender: "user", text: "__PROFILE_SKIP__", at: nowTime() };
+                            const histForApi = [...messages, botInfo, syntheticUser];
+                            const data = await sendToApi("__PROFILE_SKIP__", histForApi);
+
+                            const rawReply = (data?.reply as string) || "Thanks — let’s continue.";
+                            const reply = rawReply
+                              .replace(/\s*\[(?:TRIGGER|UI|POPUP):[^\]]*\]\s*/gi, " ")
+                              .replace(/\s{2,}/g, " ")
+                              .trim();
+
+                            const botMsg: Message = { id: makeId(), sender: "bot", text: reply, at: nowTime() };
+                            setMessages((prev) => [...prev, botMsg]);
+                            if (data?.state) setChatState(data.state);
+                          } catch {
+                            // If advancing fails, the client can still resume via the header button.
+                          }
                         }}
                         disabled={ffSaving}
                       >
