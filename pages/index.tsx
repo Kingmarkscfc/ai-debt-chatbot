@@ -1241,7 +1241,7 @@ if (willOpenPopup) {
                       </div>
 
                       <div style={styles.inlinePopupRow}>
-                        <div style={styles.inlinePopupFieldLabel}>Residential status:</div></div>
+                        <div style={styles.inlinePopupFieldLabel}>Residential status:</div>
                         <select
                           style={styles.inlinePopupSelectFlex as any}
                           value={ffResStatus}
