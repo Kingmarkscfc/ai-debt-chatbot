@@ -1037,12 +1037,11 @@ if (willOpenPopup) {
                   setShowFactFind((v) => {
                     const next = !v;
                     if (next) {
-                      const lastBot = [...messages].reverse().find((mm) => mm.sender === "bot");
-                      const anchor = ffAnchorId || (lastBot ? lastBot.id : null);
-                      if (anchor) {
-                        setPinToTopId(null as any);
-                        setTimeout(() => setPinToTopId(anchor), 0);
-                      }
+                      // Keep the chat anchored at the bottom when opening from the header.
+                      setPinToTopId(null as any);
+                      setTimeout(() => {
+                        bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+                      }, 0);
                     }
                     return next;
                   });
