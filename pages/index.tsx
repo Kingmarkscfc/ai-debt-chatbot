@@ -119,6 +119,14 @@ export default function Home() {
   const [ffResStatus, setFfResStatus] = useState("");
   const [ffAddrYears, setFfAddrYears] = useState("");
   const [ffAddrMonths, setFfAddrMonths] = useState("");
+
+  const [ffManualAddress, setFfManualAddress] = useState(false);
+  const [ffAddr1, setFfAddr1] = useState("");
+  const [ffAddr2, setFfAddr2] = useState("");
+  const [ffCity, setFfCity] = useState("");
+  const [ffCounty, setFfCounty] = useState("");
+  const [ffPostcodeTried, setFfPostcodeTried] = useState(false);
+  const [activePostcodeContext, setActivePostcodeContext] = useState<"factfind" | "address" | null>(null);
   const [ffSaving, setFfSaving] = useState(false);
   const [ffError, setFfError] = useState<string | null>(null);
 
@@ -136,18 +144,39 @@ export default function Home() {
   const [selectedAddress, setSelectedAddress] = useState<any | null>(null);
 
 const canSubmitFactFind = useMemo(() => {
+    const hasSelected = Boolean(selectedAddress && selectedAddress.trim());
+    const hasManual =
+      Boolean(ffAddr1.trim()) &&
+      Boolean(ffCity.trim()) &&
+      Boolean(ffCounty.trim()) &&
+      Boolean(postcode.trim());
+    const hasAddress = hasSelected || (ffManualAddress && hasManual);
     return Boolean(
       ffFullName.trim() &&
         ffPhone.trim() &&
         ffEmail.trim() &&
         ffDob.trim() &&
         postcode.trim() &&
-        selectedAddress &&
+        hasAddress &&
         ffAddrYears.trim() &&
         ffAddrMonths.trim() &&
         ffResStatus.trim()
     );
-  }, [ffFullName, ffPhone, ffEmail, ffDob, postcode, selectedAddress, ffAddrYears, ffAddrMonths, ffResStatus]);
+  }, [
+    ffFullName,
+    ffPhone,
+    ffEmail,
+    ffDob,
+    postcode,
+    selectedAddress,
+    ffManualAddress,
+    ffAddr1,
+    ffCity,
+    ffCounty,
+    ffAddrYears,
+    ffAddrMonths,
+    ffResStatus,
+  ]);
 
 // Address popup
   const [showAddress, setShowAddress] = useState(false);
@@ -321,9 +350,9 @@ const canSubmitFactFind = useMemo(() => {
       minWidth: 220,
       padding: "10px 12px",
       borderRadius: 12,
-      border: "1px solid rgba(255,255,255,0.12)",
-      background: "rgba(0,0,0,0.25)",
-      color: "#fff",
+      border: "1px solid rgba(0,0,0,0.12)",
+      background: "#e5e7eb",
+      color: "#111827",
       outline: "none",
     },
 
@@ -339,14 +368,34 @@ const canSubmitFactFind = useMemo(() => {
       fontWeight: 700,
       opacity: 0.9,
     },
+    inlinePopupTick: {
+      width: 22,
+      minWidth: 22,
+      textAlign: "center" as const,
+      fontSize: 16,
+      fontWeight: 900,
+      color: "#16a34a",
+      lineHeight: "1",
+    },
+    inlinePopupTickInline: {
+      width: 22,
+      minWidth: 22,
+      textAlign: "center" as const,
+      fontSize: 16,
+      fontWeight: 900,
+      color: "#16a34a",
+      lineHeight: "1",
+      alignSelf: "center",
+    },
+
     inlinePopupInputFlex: {
       flex: "1 1 260px",
       minWidth: 240,
       padding: "10px 12px",
       borderRadius: 12,
-      border: "1px solid rgba(255,255,255,0.12)",
-      background: "rgba(0,0,0,0.28)",
-      color: "#fff",
+      border: "1px solid rgba(0,0,0,0.12)",
+      background: "#e5e7eb",
+      color: "#111827",
       outline: "none",
     },
     inlinePopupInputSmall: {
@@ -354,18 +403,18 @@ const canSubmitFactFind = useMemo(() => {
       minWidth: 120,
       padding: "10px 12px",
       borderRadius: 12,
-      border: "1px solid rgba(255,255,255,0.12)",
-      background: "rgba(0,0,0,0.28)",
-      color: "#fff",
+      border: "1px solid rgba(0,0,0,0.12)",
+      background: "#e5e7eb",
+      color: "#111827",
       outline: "none",
     },
     inlinePopupSelect: {
       width: "100%",
       padding: "10px 12px",
       borderRadius: 12,
-      border: "1px solid rgba(255,255,255,0.12)",
-      background: "rgba(0,0,0,0.28)",
-      color: "#fff",
+      border: "1px solid rgba(0,0,0,0.12)",
+      background: "#e5e7eb",
+      color: "#111827",
       outline: "none",
     },
     inlinePopupSelectFlex: {
@@ -373,9 +422,9 @@ const canSubmitFactFind = useMemo(() => {
       minWidth: 240,
       padding: "10px 12px",
       borderRadius: 12,
-      border: "1px solid rgba(255,255,255,0.12)",
-      background: "rgba(0,0,0,0.28)",
-      color: "#fff",
+      border: "1px solid rgba(0,0,0,0.12)",
+      background: "#e5e7eb",
+      color: "#111827",
       outline: "none",
     },
     inlinePopupBtn: {
@@ -728,28 +777,49 @@ if (willOpenPopup) {
     setPostcodeLoading(true);
     setPostcodeResults([]);
     setSelectedAddress(null);
+
+    // If we are searching from Fact Find, reset manual mode until we know results.
+    if (activePostcodeContext === "factfind") {
+      setFfPostcodeTried(true);
+      setFfManualAddress(false);
+    }
+
     try {
       const r = await fetch("/api/portal/lookup-postcode", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ postcode: pc }),
-});
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ postcode: pc }),
+      });
 
-let j: any = null;
-try { j = await r.json(); } catch { j = null; }
+      let j: any = null;
+      try {
+        j = await r.json();
+      } catch {
+        j = null;
+      }
 
-if (!r.ok) {
-  const msg = j?.error || `Lookup failed (${r.status}).`;
-  setPostcodeError(msg);
-  setPostcodeResults([]);
-} else if (!j?.ok) {
-  setPostcodeError(j?.error || "No results.");
-  setPostcodeResults([]);
-} else {
-  setPostcodeResults(j?.addresses || []);
-}
+      if (!r.ok) {
+        const msg = j?.error || `Lookup failed (${r.status}).`;
+        setPostcodeError(msg);
+        setPostcodeResults([]);
+        if (activePostcodeContext === "factfind") setFfManualAddress(true);
+        return;
+      }
+
+      if (!j?.ok) {
+        setPostcodeError(j?.error || "No results.");
+        setPostcodeResults([]);
+        if (activePostcodeContext === "factfind") setFfManualAddress(true);
+        return;
+      }
+
+      const addrs: string[] = j?.addresses || [];
+      setPostcodeResults(addrs);
+      if (!addrs.length && activePostcodeContext === "factfind") setFfManualAddress(true);
     } catch {
       setPostcodeError("Network error.");
+      setPostcodeResults([]);
+      if (activePostcodeContext === "factfind") setFfManualAddress(true);
     } finally {
       setPostcodeLoading(false);
     }
@@ -806,51 +876,60 @@ if (!r.ok) {
   };
   const submitFactFind = async () => {
     setFfError(null);
-    if (
-      !ffFullName.trim() ||
-      !ffPhone.trim() ||
-      !ffEmail.trim() ||
-      !ffDob.trim() ||
-      !selectedAddress.trim() ||
-      !ffAddrYears.trim() ||
-      !ffResStatus.trim()
-    ) {
+    if (!canSubmitFactFind) {
       setFfError("Please complete all required fields before continuing.");
       return;
     }
+
+    const addressString = selectedAddress?.trim()
+      ? selectedAddress.trim()
+      : [
+          ffAddr1.trim(),
+          ffAddr2.trim(),
+          ffCity.trim(),
+          ffCounty.trim(),
+          postcode.trim(),
+        ]
+          .filter(Boolean)
+          .join(", ");
 
     setFfSaving(true);
     try {
       const payload = {
         fullName: ffFullName.trim(),
-        contactNumber: ffPhone.trim(),
+        phone: ffPhone.trim(),
         email: ffEmail.trim(),
         dob: ffDob.trim(),
-        address: selectedAddress.trim(),
-        timeAtAddress: { years: ffAddrYears.trim(), months: ffAddrMonths.trim() },
+        postcode: postcode.trim(),
+        address: addressString,
+        timeAtAddressYears: ffAddrYears.trim(),
+        timeAtAddressMonths: ffAddrMonths.trim(),
         residentialStatus: ffResStatus.trim(),
       };
 
+      // Seed portal email field for convenience
+      setLoggedEmail(ffEmail.trim());
+
+      // Send a hidden marker message to the chat API so the script continues.
       const marker = `__PROFILE_SUBMIT__ ${JSON.stringify(payload)}`;
-      const data = await sendToApi(marker, messages);
+      const userMsg: Message = { id: makeId(), sender: "user", text: marker, at: nowTime(), hidden: true };
+      const nextHist = [...messages, userMsg];
+      setMessages(nextHist);
+
+      const data = await sendToApi(marker, nextHist);
       const rawReply = (data?.reply as string) || "Thanks — let’s continue.";
-      const reply = rawReply
-        .replace(/\s*\[(?:TRIGGER|UI|POPUP):[^\]]*\]\s*/gi, " ")
-        .replace(/\s{2,}/g, " ")
-        .trim();
+      const reply = rawReply.replace(/\s*\[(?:TRIGGER|UI):[^\]]*\]\s*/gi, " ").replace(/\s{2,}/g, " ").trim();
 
       if (data?.state) setChatState(data.state);
       if (data?.displayName) setDisplayName(data.displayName);
 
-      // Pre-fill portal login email (so client only needs to set a PIN)
-      setLoggedEmail(ffEmail.trim());
-
-      const botId = makeId();
-      setMessages((prev) => [...prev, { id: botId, sender: "bot", text: reply, at: nowTime() }]);
+      const botMsg: Message = { id: makeId(), sender: "bot", text: reply, at: nowTime() };
+      setMessages((prev) => [...prev, botMsg]);
 
       setShowFactFind(false);
-      setPinned(null);
-    } catch (e) {
+      setFfManualAddress(false);
+      setFfPostcodeTried(false);
+    } catch {
       setFfError("Sorry — something went wrong saving your details. Please try again.");
     } finally {
       setFfSaving(false);
@@ -955,6 +1034,7 @@ if (!r.ok) {
                           onChange={(e) => setFfFullName(e.target.value)}
                           placeholder=""
                         />
+                        <div style={styles.inlinePopupTick}>{ffFullName.trim() ? "✓" : ""}</div>
                       </div>
 
                       <div style={styles.inlinePopupRow} onClick={() => ffPhoneRef.current?.focus()}>
@@ -966,6 +1046,7 @@ if (!r.ok) {
                           onChange={(e) => setFfPhone(e.target.value)}
                           placeholder=""
                         />
+                        <div style={styles.inlinePopupTick}>{ffPhone.trim() ? "✓" : ""}</div>
                       </div>
 
                       <div style={styles.inlinePopupRow} onClick={() => ffEmailRef.current?.focus()}>
@@ -977,6 +1058,7 @@ if (!r.ok) {
                           onChange={(e) => setFfEmail(e.target.value)}
                           placeholder=""
                         />
+                        <div style={styles.inlinePopupTick}>{ffEmail.trim() ? "✓" : ""}</div>
                       </div>
 
                       <div style={styles.inlinePopupRow} onClick={() => ffDobRef.current?.focus()}>
@@ -984,10 +1066,11 @@ if (!r.ok) {
                         <input
                           ref={ffDobRef}
                           style={styles.inlinePopupInputFlex as any}
+                          type="date"
                           value={ffDob}
                           onChange={(e) => setFfDob(e.target.value)}
-                          placeholder="DD/MM/YYYY"
                         />
+                        <div style={styles.inlinePopupTick}>{ffDob.trim() ? "✓" : ""}</div>
                       </div>
                     </div>
 
@@ -1003,11 +1086,15 @@ if (!r.ok) {
                       <button
                         type="button"
                         style={styles.inlinePopupBtn as any}
-                        onClick={() => lookupPostcode()}
+                        onClick={() => {
+                          setActivePostcodeContext("factfind");
+                          lookupPostcode();
+                        }}
                         disabled={postcodeLoading || !postcode.trim()}
                       >
                         {postcodeLoading ? "Searching..." : "Search postcode"}
                       </button>
+                      <div style={styles.inlinePopupTickInline}>{postcode.trim() ? "✓" : ""}</div>
                     </div>
 
                     {postcodeError ? (
@@ -1018,13 +1105,13 @@ if (!r.ok) {
 
 {postcodeResults.length ? (
                       <div style={{ marginTop: 10 }}>
-                        <div style={styles.inlinePopupLabel}>Select your address:</div>
+                        <div style={styles.inlinePopupLabel}>Selected address:</div>
                         <select
                           style={styles.inlinePopupSelect as any}
                           value={selectedAddress || ""}
                           onChange={(e) => setSelectedAddress(e.target.value)}
                         >
-                          <option value="">Select an address...</option>
+                          <option value="">Select…</option>
                           {postcodeResults.slice(0, 50).map((a, idx) => (
                             <option key={idx} value={a}>
                               {a}
@@ -1032,36 +1119,122 @@ if (!r.ok) {
                           ))}
                         </select>
                       </div>
-                    ) : null}
-
-                    {selectedAddress ? (
+                    
+                    {ffManualAddress ? (
                       <div style={{ marginTop: 10 }}>
-                        <div style={styles.inlinePopupLabel}>Selected:</div>
-                        <div style={styles.inlinePopupSelected}>{selectedAddress}</div>
-                      </div>
-                    ) : null}
+                        <div style={styles.inlinePopupLabel}>Enter address manually:</div>
 
-                    <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
-                      <div style={styles.inlinePopupRow}>
-                        <div style={styles.inlinePopupFieldLabel}>Time at address:</div>
-                        <div style={{ display: "flex", gap: 8, flex: 1, flexWrap: "wrap" }}>
+                        <div style={styles.inlinePopupRow} onClick={() => ffAddr1Ref.current?.focus()}>
+                          <div style={styles.inlinePopupFieldLabel}>Address line 1:</div>
                           <input
-                            style={styles.inlinePopupInputSmall as any}
-                            value={ffAddrYears}
-                            onChange={(e) => setFfAddrYears(e.target.value)}
-                            placeholder="Years"
+                            ref={ffAddr1Ref}
+                            style={styles.inlinePopupInputFlex as any}
+                            value={ffAddr1}
+                            onChange={(e) => setFfAddr1(e.target.value)}
+                            placeholder=""
                           />
+                          <div style={styles.inlinePopupTick}>{ffAddr1.trim() ? "✓" : ""}</div>
+                        </div>
+
+                        <div style={styles.inlinePopupRow} onClick={() => ffAddr2Ref.current?.focus()}>
+                          <div style={styles.inlinePopupFieldLabel}>Address line 2:</div>
                           <input
-                            style={styles.inlinePopupInputSmall as any}
-                            value={ffAddrMonths}
-                            onChange={(e) => setFfAddrMonths(e.target.value)}
-                            placeholder="Months"
+                            ref={ffAddr2Ref}
+                            style={styles.inlinePopupInputFlex as any}
+                            value={ffAddr2}
+                            onChange={(e) => setFfAddr2(e.target.value)}
+                            placeholder=""
                           />
+                          <div style={styles.inlinePopupTick}>{ffAddr2.trim() ? "✓" : ""}</div>
+                        </div>
+
+                        <div style={styles.inlinePopupRow} onClick={() => ffCityRef.current?.focus()}>
+                          <div style={styles.inlinePopupFieldLabel}>City / Town:</div>
+                          <input
+                            ref={ffCityRef}
+                            style={styles.inlinePopupInputFlex as any}
+                            value={ffCity}
+                            onChange={(e) => setFfCity(e.target.value)}
+                            placeholder=""
+                            list="ff-city-suggestions"
+                          />
+                          <datalist id="ff-city-suggestions">
+                            <option value="Manchester" />
+                            <option value="Liverpool" />
+                            <option value="Birmingham" />
+                            <option value="Leeds" />
+                            <option value="Sheffield" />
+                            <option value="London" />
+                          </datalist>
+                          <div style={styles.inlinePopupTick}>{ffCity.trim() ? "✓" : ""}</div>
+                        </div>
+
+                        <div style={styles.inlinePopupRow}>
+                          <div style={styles.inlinePopupFieldLabel}>County:</div>
+                          <select
+                            style={styles.inlinePopupSelectFlex as any}
+                            value={ffCounty}
+                            onChange={(e) => setFfCounty(e.target.value)}
+                          >
+                            <option value="">Select…</option>
+                            <option value="Greater Manchester">Greater Manchester</option>
+                            <option value="Cheshire">Cheshire</option>
+                            <option value="Lancashire">Lancashire</option>
+                            <option value="Merseyside">Merseyside</option>
+                            <option value="West Midlands">West Midlands</option>
+                            <option value="Warwickshire">Warwickshire</option>
+                            <option value="West Yorkshire">West Yorkshire</option>
+                            <option value="South Yorkshire">South Yorkshire</option>
+                            <option value="Kent">Kent</option>
+                            <option value="Essex">Essex</option>
+                            <option value="Other">Other</option>
+                          </select>
+                          <div style={styles.inlinePopupTick}>{ffCounty.trim() ? "✓" : ""}</div>
                         </div>
                       </div>
+                    ) : null}
+
+<div style={{ display: "grid", gap: 10, marginTop: 10 }}>
+                      <div style={styles.inlinePopupRow} onClick={() => ffYearsRef.current?.focus()}>
+                        <div style={styles.inlinePopupFieldLabel}>Years at address:</div>
+                        <input
+                          ref={ffYearsRef}
+                          style={styles.inlinePopupInputSmall as any}
+                          type="number"
+                          inputMode="numeric"
+                          min={0}
+                          value={ffAddrYears}
+                          onChange={(e) => {
+                            const v = e.target.value.replace(/[^0-9]/g, "");
+                            setFfAddrYears(v);
+                          }}
+                          placeholder=""
+                        />
+                        <div style={styles.inlinePopupTick}>{ffAddrYears.trim() ? "✓" : ""}</div>
+                      </div>
+
+                      <div style={styles.inlinePopupRow} onClick={() => ffMonthsRef.current?.focus()}>
+                        <div style={styles.inlinePopupFieldLabel}>Months at address:</div>
+                        <input
+                          ref={ffMonthsRef}
+                          style={styles.inlinePopupInputSmall as any}
+                          type="number"
+                          inputMode="numeric"
+                          min={0}
+                          max={11}
+                          value={ffAddrMonths}
+                          onChange={(e) => {
+                            let v = e.target.value.replace(/[^0-9]/g, "");
+                            if (v !== "" && Number(v) > 11) v = "11";
+                            setFfAddrMonths(v);
+                          }}
+                          placeholder=""
+                        />
+                        <div style={styles.inlinePopupTick}>{ffAddrMonths.trim() ? "✓" : ""}</div>
+                      </div>
 
                       <div style={styles.inlinePopupRow}>
-                        <div style={styles.inlinePopupFieldLabel}>Residential status:</div>
+                        <div style={styles.inlinePopupFieldLabel}>Residential status:</div></div>
                         <select
                           style={styles.inlinePopupSelectFlex as any}
                           value={ffResStatus}
@@ -1074,6 +1247,7 @@ if (!r.ok) {
                           <option value="Housing Association">Housing Association</option>
                           <option value="Living with Family">Living with Family</option>
                         </select>
+                        <div style={styles.inlinePopupTick}>{ffResStatus.trim() ? "✓" : ""}</div>
                       </div>
                     </div>
 
@@ -1119,7 +1293,10 @@ if (!r.ok) {
                       <button
                         type="button"
                         style={styles.inlinePopupBtn as any}
-                        onClick={() => lookupPostcode() }
+                        onClick={() => {
+                          setActivePostcodeContext("address");
+                          lookupPostcode();
+                        }}
                         disabled={postcodeLoading || !postcode.trim()}
                       >
                         {postcodeLoading ? "Searching..." : "Search"}
@@ -1450,6 +1627,19 @@ if (!r.ok) {
         </div>
       ) : null}
     </div>
+
+      <style jsx global>{`
+        input:-webkit-autofill,
+        input:-webkit-autofill:hover,
+        input:-webkit-autofill:focus,
+        textarea:-webkit-autofill,
+        select:-webkit-autofill {
+          -webkit-text-fill-color: #111827 !important;
+          box-shadow: 0 0 0px 1000px #e5e7eb inset !important;
+          transition: background-color 9999s ease-in-out 0s;
+        }
+      `}</style>
+
     </>
   );
 }
