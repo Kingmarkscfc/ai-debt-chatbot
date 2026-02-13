@@ -1036,7 +1036,7 @@ if (willOpenPopup) {
                   setShowFactFind((v) => {
                     const next = !v;
                     if (next) {
-                      const lastBot = [...messages].reverse().find((mm) => mm.role === "assistant");
+                      const lastBot = [...messages].reverse().find((mm) => mm.sender === "bot");
                       const anchor = ffAnchorId || (lastBot ? lastBot.id : null);
                       if (anchor) setPinToTopId(anchor);
                     }
