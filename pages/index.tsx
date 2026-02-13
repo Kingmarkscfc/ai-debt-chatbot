@@ -119,6 +119,7 @@ export default function Home() {
   const [ffHeaderEnabled, setFfHeaderEnabled] = useState(false);
   const [ffCancelledHard, setFfCancelledHard] = useState(false);
   const [ffHardCancelNoticeShown, setFfHardCancelNoticeShown] = useState(false);
+  const [ffShowCancelConfirm, setFfShowCancelConfirm] = useState(false);
   const [ffCompleted, setFfCompleted] = useState(false);
   const [ffFullName, setFfFullName] = useState("");
   const [ffPhone, setFfPhone] = useState("");
@@ -1038,7 +1039,10 @@ if (willOpenPopup) {
                     if (next) {
                       const lastBot = [...messages].reverse().find((mm) => mm.sender === "bot");
                       const anchor = ffAnchorId || (lastBot ? lastBot.id : null);
-                      if (anchor) setPinToTopId(anchor);
+                      if (anchor) {
+                        setPinToTopId(null as any);
+                        setTimeout(() => setPinToTopId(anchor), 0);
+                      }
                     }
                     return next;
                   });
@@ -1323,7 +1327,78 @@ if (willOpenPopup) {
 
                     {ffError ? <div style={{ marginTop: 10, color: "#b91c1c", fontWeight: 700 }}>{ffError}</div> : null}
 
-                    <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    
+                    {ffShowCancelConfirm ? (
+                      <div
+                        style={{
+                          marginTop: 10,
+                          padding: 10,
+                          borderRadius: 12,
+                          border: "1px solid rgba(0,0,0,.12)",
+                          background: "#fff",
+                        }}
+                      >
+                        <div style={{ fontWeight: 800, marginBottom: 8, color: "#111827" }}>
+                          We are so close to helping you with your finances, are you sure you still want to cancel?
+                        </div>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <button
+                            style={{ ...styles.inlinePopupBtn, background: "#b91c1c", borderColor: "#b91c1c", color: "#fff" }}
+                            onClick={() => {
+                              const displayName = (chatState?.name || ffFullName || "there").toString();
+                              setFfShowCancelConfirm(false);
+                              setShowFactFind(false);
+                              setFfHeaderEnabled(true);
+                              setFfOutstanding(true);
+                              setFfCancelledHard(true);
+                              setFfHardCancelNoticeShown(true);
+
+                              if (!ffSkipNoticeShown) {
+                                setFfSkipNoticeShown(true);
+                                setMessages((prev) => [
+                                  ...prev,
+                                  {
+                                    id: makeId(),
+                                    sender: "bot",
+                                    text:
+                                      `Please complete the fact find ${displayName}. You can return to this by clicking the red Client details button which now shows as an outstanding task on the chat header. This button will turn green when you have completed your details. Once submitted, your details will link to your client portal and a client reference will be created for you.`,
+                                    at: nowTime(),
+                                  },
+                                  {
+                                    id: makeId(),
+                                    sender: "bot",
+                                    text: "Please come back to the chat when you are ready to proceed.",
+                                    at: nowTime(),
+                                  },
+                                ]);
+                              }
+                            }}
+                          >
+                            Yes, cancel
+                          </button>
+                          <button
+                            style={{ ...styles.inlinePopupBtn, background: "#111827", borderColor: "#111827", color: "#fff" }}
+                            onClick={() => {
+                              const displayName = (chatState?.name || ffFullName || "there").toString();
+                              setFfShowCancelConfirm(false);
+                              setMessages((prev) => [
+                                ...prev,
+                                {
+                                  id: makeId(),
+                                  sender: "bot",
+                                  text: `Please continue to fill in your details so that we can understand your situation better ${displayName}.`,
+                                  at: nowTime(),
+                                },
+                              ]);
+                            }}
+                          >
+                            No, continue
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+
+<div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
                       <button
                         type="button"
                         style={styles.inlinePopupBtnPrimary as any}
@@ -1339,44 +1414,9 @@ if (willOpenPopup) {
                         style={styles.inlinePopupBtn as any}
                         onClick={async () => {
                           const displayName = (chatState?.name || ffFullName || "there").toString();
-                          const sure =
-                            typeof window !== "undefined"
-                              ? window.confirm("We are so close to helping you — are you sure you still want to cancel?")
-                              : true;
-
-                          if (!sure) {
-                            setMessages((prev) => [
-                              ...prev,
-                              {
-                                id: makeId(),
-                                sender: "bot",
-                                text: `Please continue to fill in your details so that we can understand your situation better ${displayName}.`,
-                                at: nowTime(),
-                              },
-                            ]);
-                            return;
-                          }
-
-                          setShowFactFind(false);
-                          setFfHeaderEnabled(true);
-                          setFfOutstanding(true);
-                          setFfCancelledHard(true);
-                          setFfHardCancelNoticeShown(true);
-
-                          if (!ffSkipNoticeShown) {
-                            setFfSkipNoticeShown(true);
-                            setMessages((prev) => [
-                              ...prev,
-                              {
-                                id: makeId(),
-                                sender: "bot",
-                                text:
-                                  `Please complete the fact find ${displayName}. You can return to this by clicking the red Client details button which now shows as an outstanding task on the chat header. This button will turn green when you have completed your details. Once submitted, your details will link to your client portal and a client reference will be created for you. We need this information to help you properly — please come back when you’re ready to continue.`,
-                                at: nowTime(),
-                              },
-                            ]);
-                          }
-                        }} disabled={ffSaving}
+                          setFfShowCancelConfirm(true);
+                          return;
+}} disabled={ffSaving}
                       >
                         Cancel
                       </button>
