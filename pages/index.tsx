@@ -114,6 +114,7 @@ export default function Home() {
   const [showFactFind, setShowFactFind] = useState(false);
 
   const [ffOutstanding, setFfOutstanding] = useState(false);
+  const [ffSkipNoticeShown, setFfSkipNoticeShown] = useState(false);
   const [ffCompleted, setFfCompleted] = useState(false);
   const [ffFullName, setFfFullName] = useState("");
   const [ffPhone, setFfPhone] = useState("");
@@ -1297,17 +1298,23 @@ if (willOpenPopup) {
                           setFfOutstanding(true);
 
                           // Let the user continue, but keep an easy way to complete details later.
+                          const clientName = (chatState?.name || "").toString().trim();
+                          const didAddNotice = !ffSkipNoticeShown;
                           const botInfo: Message = {
                             id: makeId(),
                             sender: "bot",
-                            text: "No problem — you can complete your details later by clicking **Client details** at the top. We’ll continue for now.",
+                            text: `Please complete the fact find${clientName ? ` ${clientName}` : ""}. You can return to this by clicking the red Client details button which now shows as an outstanding task — this will turn green once you have completed your details. In the meantime we’ll continue to get a better understanding of your situation.`,
                             at: nowTime(),
                           };
-                          setMessages((prev) => [...prev, botInfo]);
+                          if (didAddNotice) {
+                            setFfSkipNoticeShown(true);
+                            setMessages((prev) => [...prev, botInfo]);
+                          }
+
 
                           try {
                             const syntheticUser: Message = { id: makeId(), sender: "user", text: "__PROFILE_SKIP__", at: nowTime() };
-                            const histForApi = [...messages, botInfo, syntheticUser];
+                            const histForApi = didAddNotice ? [...messages, botInfo, syntheticUser] : [...messages, syntheticUser];
                             const data = await sendToApi("__PROFILE_SKIP__", histForApi);
 
                             const rawReply = (data?.reply as string) || "Thanks — let’s continue.";
