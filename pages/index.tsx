@@ -70,6 +70,7 @@ export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
     const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const [pinToTopId, setPinToTopId] = useState<string | null>(null);
+  const [ffAnchorId, setFfAnchorId] = useState<string | null>(null);
 // ✅ Persist server-side controller state so script steps advance correctly
   const [chatState, setChatState] = useState<any>({ step: 0, askedNameTries: 0, name: null });
 
@@ -584,7 +585,13 @@ const canSubmitFactFind = useMemo(() => {
     const r = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionId, userMessage: text, history: hist.map((m) => m.text), language, state: chatState }),
+      body: JSON.stringify({
+        sessionId,
+        userMessage: text,
+        history: hist.map((m) => m.text),
+        language,
+        state: { ...chatState, profileOutstanding: ffOutstanding, profileCancelledHard: ffCancelledHard },
+      }),
     });
     return r.json();
   };
@@ -706,7 +713,10 @@ if (willOpenPopup) {
       if (willOpenPopup) {
         // Defer opening UI until after the bot message has rendered, so the sentence appears first.
         setTimeout(() => {
-          if (wantsFactFindPopup) setShowFactFind(true);
+          if (wantsFactFindPopup) {
+            setShowFactFind(true);
+            setFfAnchorId(botId);
+          }
           if (wantsIncome) setShowIe(true);
           if (wantsAddress) setShowAddress(true);
           setPinToTopId(botId);
@@ -1023,27 +1033,22 @@ if (willOpenPopup) {
                 }}
                 onClick={() => {
                   setFfCancelledHard(false);
-                  setShowFactFind((v) => !v);
+                  setShowFactFind((v) => {
+                    const next = !v;
+                    if (next) {
+                      const lastBot = [...messages].reverse().find((mm) => mm.role === "assistant");
+                      const anchor = ffAnchorId || (lastBot ? lastBot.id : null);
+                      if (anchor) setPinToTopId(anchor);
+                    }
+                    return next;
+                  });
                 }}
                 title={ffOutstanding ? "Details outstanding" : "Details completed"}
               >
                 {ffOutstanding ? "Client details (1)" : "Client details ✓"}
               </button>
             ) : null}
-            {ffHeaderEnabled && (ffOutstanding || ffCompleted) ? (
-              <button
-                style={{
-                  ...styles.btn,
-                  background: ffOutstanding ? "#b91c1c" : "#16a34a",
-                  borderColor: ffOutstanding ? "#b91c1c" : "#16a34a",
-                  color: "#fff",
-                }}
-                onClick={() => { setFfCancelledHard(false); setShowFactFind((v) => !v); }}
-                title={ffOutstanding ? "Details outstanding" : "Details completed"}
-              >
-                {ffOutstanding ? "Client details (1)" : "Client details ✓"}
-              </button>
-            ) : null}
+            
             <button style={styles.btn} onClick={() => setShowPortal((p) => !p)}>
               {showPortal ? "Hide Portal" : "Portal"}
             </button>
