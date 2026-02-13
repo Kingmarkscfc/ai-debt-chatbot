@@ -121,13 +121,23 @@ export default function Home() {
   const [ffHardCancelNoticeShown, setFfHardCancelNoticeShown] = useState(false);
   const [ffShowCancelConfirm, setFfShowCancelConfirm] = useState(false);
   const [ffCompleted, setFfCompleted] = useState(false);
-  const [ffFullName, setFfFullName] = useState("");
+  const [ffFirstName, setFfFirstName] = useState("");
+  const [ffSurname, setFfSurname] = useState("");
+
+  // Pre-fill first name from earlier chat (e.g., "Please can you let me know who I’m speaking with?")
+  useEffect(() => {
+    if (!showFactFind) return;
+    const raw = (chatState?.name || "").toString().trim();
+    if (!raw) return;
+    const parts = raw.split(/\s+/).filter(Boolean);
+    if (!ffFirstName.trim()) setFfFirstName(parts[0] || "");
+    if (!ffSurname.trim() && parts.length > 1) setFfSurname(parts.slice(1).join(" "));
+  }, [showFactFind, chatState?.name]);
   const [ffPhone, setFfPhone] = useState("");
   const [ffEmail, setFfEmail] = useState("");
   const [ffDob, setFfDob] = useState("");
   const [ffResStatus, setFfResStatus] = useState("");
   const [ffAddrYears, setFfAddrYears] = useState("");
-  const [ffAddrMonths, setFfAddrMonths] = useState("");
 
   const [ffManualAddress, setFfManualAddress] = useState(false);
   const [ffAddr1, setFfAddr1] = useState("");
@@ -139,7 +149,8 @@ export default function Home() {
   const [ffSaving, setFfSaving] = useState(false);
   const [ffError, setFfError] = useState<string | null>(null);
 
-  const ffFullNameRef = useRef<HTMLInputElement | null>(null);
+  const ffFirstNameRef = useRef<HTMLInputElement | null>(null);
+  const ffSurnameRef = useRef<HTMLInputElement | null>(null);
   const ffPhoneRef = useRef<HTMLInputElement | null>(null);
   const ffEmailRef = useRef<HTMLInputElement | null>(null);
   const ffDobRef = useRef<HTMLInputElement | null>(null);
@@ -148,8 +159,6 @@ export default function Home() {
   const ffAddr1Ref = useRef<HTMLInputElement | null>(null);
   const ffAddr2Ref = useRef<HTMLInputElement | null>(null);
   const ffCityRef = useRef<HTMLInputElement | null>(null);
-  const ffYearsRef = useRef<HTMLInputElement | null>(null);
-  const ffMonthsRef = useRef<HTMLInputElement | null>(null);
 
   
   const [postcode, setPostcode] = useState("");
@@ -167,18 +176,19 @@ const canSubmitFactFind = useMemo(() => {
       Boolean(postcode.trim());
     const hasAddress = hasSelected || (ffManualAddress && hasManual);
     return Boolean(
-      ffFullName.trim() &&
+      ffFirstName.trim() &&
+        ffSurname.trim() &&
         ffPhone.trim() &&
         ffEmail.trim() &&
         ffDob.trim() &&
         postcode.trim() &&
         hasAddress &&
         ffAddrYears.trim() &&
-        ffAddrMonths.trim() &&
         ffResStatus.trim()
     );
   }, [
-    ffFullName,
+    ffFirstName,
+    ffSurname,
     ffPhone,
     ffEmail,
     ffDob,
@@ -189,7 +199,6 @@ const canSubmitFactFind = useMemo(() => {
     ffCity,
     ffCounty,
     ffAddrYears,
-    ffAddrMonths,
     ffResStatus,
   ]);
 
@@ -936,14 +945,13 @@ if (willOpenPopup) {
     setFfSaving(true);
     try {
       const payload = {
-        fullName: ffFullName.trim(),
+        fullName: `${ffFirstName} ${ffSurname}`.trim(),
         phone: ffPhone.trim(),
         email: ffEmail.trim(),
         dob: ffDob.trim(),
         postcode: postcode.trim(),
         address: addressString,
         timeAtAddressYears: ffAddrYears.trim(),
-        timeAtAddressMonths: ffAddrMonths.trim(),
         residentialStatus: ffResStatus.trim(),
       };
 
@@ -996,7 +1004,7 @@ if (willOpenPopup) {
                 <span style={styles.onlineDot}>● Online</span>
               </div>
               <div style={{ fontSize: 12, opacity: 0.8 }}>
-                {displayName ? `Chatting with ${displayName}` : "Private session"} • {sessionId.slice(0, 8)}
+                {displayName ? `Chatting with ${displayName}` : "Private session"}
               </div>
             </div>
           </div>
@@ -1097,19 +1105,30 @@ if (willOpenPopup) {
                     </div>
 
                     <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
-                      <div style={styles.inlinePopupRow} onClick={() => ffFullNameRef.current?.focus()}>
-                        <div style={styles.inlinePopupFieldLabel}>Full name:</div>
+                      <div style={styles.inlinePopupRow} onClick={() => ffFirstNameRef.current?.focus()}>
+                        <div style={styles.inlinePopupFieldLabel}>First name:</div>
                         <input
-                          ref={ffFullNameRef}
+                          ref={ffFirstNameRef}
                           style={styles.inlinePopupInputFlex as any}
-                          value={ffFullName}
-                          onChange={(e) => setFfFullName(e.target.value)}
+                          value={ffFirstName}
+                          onChange={(e) => setFfFirstName(e.target.value)}
                           placeholder=""
                         />
-                        <div style={styles.inlinePopupTick}>{ffFullName.trim() ? "✓" : ""}</div>
+                        <div style={styles.inlinePopupTick}>{ffFirstName.trim() ? "✓" : ""}</div>
                       </div>
 
-                      <div style={styles.inlinePopupRow} onClick={() => ffPhoneRef.current?.focus()}>
+                      <div style={styles.inlinePopupRow} onClick={() => ffSurnameRef.current?.focus()}>
+                        <div style={styles.inlinePopupFieldLabel}>Surname:</div>
+                        <input
+                          ref={ffSurnameRef}
+                          style={styles.inlinePopupInputFlex as any}
+                          value={ffSurname}
+                          onChange={(e) => setFfSurname(e.target.value)}
+                          placeholder=""
+                        />
+                        <div style={styles.inlinePopupTick}>{ffSurname.trim() ? "✓" : ""}</div>
+                      </div>
+<div style={styles.inlinePopupRow} onClick={() => ffPhoneRef.current?.focus()}>
                         <div style={styles.inlinePopupFieldLabel}>Contact number:</div>
                         <input
                           ref={ffPhoneRef}
@@ -1139,6 +1158,8 @@ if (willOpenPopup) {
                           ref={ffDobRef}
                           style={styles.inlinePopupInputFlex as any}
                           type="date"
+                          min="1913-01-01"
+                          max="2013-12-31"
                           value={ffDob}
                           onChange={(e) => setFfDob(e.target.value)}
                         />
@@ -1268,44 +1289,24 @@ if (willOpenPopup) {
                     ) : null}
 
 <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
-                      <div style={styles.inlinePopupRow} onClick={() => ffYearsRef.current?.focus()}>
+                      <div style={styles.inlinePopupRow}>
                         <div style={styles.inlinePopupFieldLabel}>Years at address:</div>
-                        <input
-                          ref={ffYearsRef}
-                          style={styles.inlinePopupInputSmall as any}
-                          type="number"
-                          inputMode="numeric"
-                          min={0}
+                        <select
+                          style={styles.inlinePopupSelectFlex as any}
                           value={ffAddrYears}
-                          onChange={(e) => {
-                            const v = e.target.value.replace(/[^0-9]/g, "");
-                            setFfAddrYears(v);
-                          }}
-                          placeholder=""
-                        />
+                          onChange={(e) => setFfAddrYears(e.target.value)}
+                        >
+                          <option value="">Select…</option>
+                          <option value="0-1">0–1</option>
+                          <option value="1">1</option>
+                          <option value="2">2</option>
+                          <option value="3">3</option>
+                          <option value="4">4</option>
+                          <option value="5">5</option>
+                          <option value="6+">6+</option>
+                        </select>
                         <div style={styles.inlinePopupTick}>{ffAddrYears.trim() ? "✓" : ""}</div>
                       </div>
-
-                      <div style={styles.inlinePopupRow} onClick={() => ffMonthsRef.current?.focus()}>
-                        <div style={styles.inlinePopupFieldLabel}>Months at address:</div>
-                        <input
-                          ref={ffMonthsRef}
-                          style={styles.inlinePopupInputSmall as any}
-                          type="number"
-                          inputMode="numeric"
-                          min={0}
-                          max={11}
-                          value={ffAddrMonths}
-                          onChange={(e) => {
-                            let v = e.target.value.replace(/[^0-9]/g, "");
-                            if (v !== "" && Number(v) > 11) v = "11";
-                            setFfAddrMonths(v);
-                          }}
-                          placeholder=""
-                        />
-                        <div style={styles.inlinePopupTick}>{ffAddrMonths.trim() ? "✓" : ""}</div>
-                      </div>
-
                       <div style={styles.inlinePopupRow}>
                         <div style={styles.inlinePopupFieldLabel}>Residential status:</div>
                         <select
@@ -1344,7 +1345,7 @@ if (willOpenPopup) {
                           <button
                             style={{ ...styles.inlinePopupBtn, background: "#b91c1c", borderColor: "#b91c1c", color: "#fff" }}
                             onClick={() => {
-                              const displayName = (chatState?.name || ffFullName || "there").toString();
+                              const displayName = (chatState?.name || ffFirstName || "there").toString();
                               setFfShowCancelConfirm(false);
                               setShowFactFind(false);
                               setFfHeaderEnabled(true);
@@ -1378,7 +1379,7 @@ if (willOpenPopup) {
                           <button
                             style={{ ...styles.inlinePopupBtn, background: "#111827", borderColor: "#111827", color: "#fff" }}
                             onClick={() => {
-                              const displayName = (chatState?.name || ffFullName || "there").toString();
+                              const displayName = (chatState?.name || ffFirstName || "there").toString();
                               setFfShowCancelConfirm(false);
                               setMessages((prev) => [
                                 ...prev,
@@ -1412,8 +1413,9 @@ if (willOpenPopup) {
                         type="button"
                         style={styles.inlinePopupBtn as any}
                         onClick={async () => {
-                          const displayName = (chatState?.name || ffFullName || "there").toString();
+                          const displayName = (chatState?.name || ffFirstName || "there").toString();
                           setFfShowCancelConfirm(true);
+                          setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }), 0);
                           return;
 }} disabled={ffSaving}
                       >
