@@ -127,13 +127,6 @@ export default function Home() {
   // Track completion ticks only after the user leaves a field (blur)
   const [ffTouched, setFfTouched] = useState<Record<string, boolean>>({});
   const markTouched = (k: string) => setFfTouched((s) => ({ ...s, [k]: true }));
-
-  const validFirstName = ffFirstName.trim().length >= 2;
-  const validSurname = ffSurname.trim().length >= 2;
-  const validPhone = ffPhone.replace(/\D/g, "").trim().length >= 6;
-  const validEmail = ffEmail.trim().length >= 2 && ffEmail.includes("@");
-  const validDob = Boolean(ffDob && ffDob.trim());
-
   // Pre-fill first name from earlier chat (e.g., "Please can you let me know who I’m speaking with?")
   useEffect(() => {
     if (!showFactFind) return;
@@ -146,6 +139,13 @@ export default function Home() {
   const [ffPhone, setFfPhone] = useState("");
   const [ffEmail, setFfEmail] = useState("");
   const [ffDob, setFfDob] = useState("");
+
+
+  const validFirstName = ffFirstName.trim().length >= 2;
+  const validSurname = ffSurname.trim().length >= 2;
+  const validPhone = ffPhone.replace(/\D/g, "").trim().length >= 6;
+  const validEmail = ffEmail.trim().length >= 2 && ffEmail.includes("@");
+  const validDob = Boolean(ffDob && ffDob.trim());
   const [ffResStatus, setFfResStatus] = useState("");
   const [ffAddrYears, setFfAddrYears] = useState("");
 
