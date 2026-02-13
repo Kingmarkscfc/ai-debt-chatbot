@@ -136,6 +136,12 @@ export default function Home() {
   const ffDobRef = useRef<HTMLInputElement | null>(null);
   const ffPostcodeRef = useRef<HTMLInputElement | null>(null);
 
+  const ffAddr1Ref = useRef<HTMLInputElement | null>(null);
+  const ffAddr2Ref = useRef<HTMLInputElement | null>(null);
+  const ffCityRef = useRef<HTMLInputElement | null>(null);
+  const ffYearsRef = useRef<HTMLInputElement | null>(null);
+  const ffMonthsRef = useRef<HTMLInputElement | null>(null);
+
   
   const [postcode, setPostcode] = useState("");
   const [postcodeLoading, setPostcodeLoading] = useState(false);
