@@ -1775,22 +1775,16 @@ function joinAckAndPrompt(ack: string, prompt: string) {
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ApiResp>) {
 
-  res.setHeader("Allow", "POST, OPTIONS, GET");
+  res.setHeader("Allow", "POST, OPTIONS, GET, HEAD");
 
-  if (req.method === "OPTIONS") {
-    // CORS preflight / safety ping
-    return res.status(200).json({ reply: "OK", state: { step: 0 } });
-  }
-
-  if (req.method === "GET") {
-    return res.status(200).json({ reply: "Use POST to interact with this endpoint.", state: { step: 0 } });
-  }
-
+  // Accept non-POST requests gracefully to avoid 405s surfacing in the UI.
+  // The client should use POST for normal chat interaction.
   if (req.method !== "POST") {
-    return res.status(405).json({
-      reply: "Method not allowed.",
-      state: { step: 0, askedNameTries: 0, name: null },
-    });
+    if (req.method === "OPTIONS") {
+      // CORS preflight / safety ping
+      return res.status(200).json({ reply: "OK", state: { step: 0 } });
+    }
+    return res.status(200).json({ reply: "Use POST to interact with this endpoint.", state: { step: 0 } });
   }
 
   const body = (req.body || {}) as ApiReqBody;
