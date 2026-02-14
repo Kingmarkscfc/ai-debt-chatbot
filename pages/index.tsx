@@ -1957,7 +1957,7 @@ if (willOpenPopup) {
           </div>
 
           <div style={{ padding: 16 }}>
-            {!loggedEmail ? (
+            {!loggedEmail && (
               <div>
 
                 {(portalPreviewProfile || clientRef) ? (
@@ -2030,7 +2030,8 @@ if (willOpenPopup) {
                   </button>
                 </div>
               </div>
-            ) : (
+            )}
+            {loggedEmail && (
               <div>
 
                 <div style={{ marginBottom: 14, padding: 12, borderRadius: 14, border: "1px solid #e5e7eb", background: "#f9fafb" }}>
