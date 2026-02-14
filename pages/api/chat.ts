@@ -1779,11 +1779,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
   if (req.method === "OPTIONS") {
     // CORS preflight / safety ping
-    return res.status(200).end();
+    return res.status(200).json({ reply: "OK", state: { step: 0 } });
   }
 
   if (req.method === "GET") {
-    return res.status(200).json({ ok: true, message: "Use POST to interact with this endpoint." });
+    return res.status(200).json({ reply: "Use POST to interact with this endpoint.", state: { step: 0 } });
   }
 
   if (req.method !== "POST") {
