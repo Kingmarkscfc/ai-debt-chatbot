@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { supabaseAdmin } from "../../../utils/supabaseAdmin";
+import { supabaseAdmin } from "../../utils/supabaseAdmin";
 
 type ClientRow = {
   session_id: string | null;

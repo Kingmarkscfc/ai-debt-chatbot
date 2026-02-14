@@ -1486,13 +1486,29 @@ if (willOpenPopup) {
 <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
                       <button
                         type="button"
-                        style={styles.inlinePopupBtnPrimary as any}
-                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); submitFactFind(); }}
+                        style={{
+                          ...(styles.inlinePopupBtnPrimary as any),
+                          background: canSubmitFactFind ? "#16a34a" : "#dc2626",
+                          borderColor: canSubmitFactFind ? "#16a34a" : "#dc2626",
+                          cursor: ffSaving || !canSubmitFactFind ? "not-allowed" : "pointer",
+                          opacity: ffSaving ? 0.85 : 1,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 10,
+                        }}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          submitFactFind();
+                        }}
                         disabled={ffSaving || !canSubmitFactFind}
                         aria-disabled={ffSaving || !canSubmitFactFind}
-                        title={!canSubmitFactFind ? "Complete all fields to continue" : ""}
+                        title={!canSubmitFactFind ? "Complete all fields to unlock submit" : ""}
                       >
-                        {ffSaving ? "Saving..." : canSubmitFactFind ? "Submit & continue" : "🔒 Submit & continue"}
+                        <span style={{ fontSize: 18, lineHeight: 1 }}>
+                          {canSubmitFactFind ? "🔓" : "🔒"}
+                        </span>
+                        <span>{ffSaving ? "Saving..." : "Submit & continue"}</span>
                       </button>
                       <button
                         type="button"
