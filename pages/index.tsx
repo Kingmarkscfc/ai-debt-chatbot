@@ -685,9 +685,15 @@ const canSubmitFactFind = useMemo(() => {
   }, [messages, voiceOn]);
 
   const sendToApi = async (text: string, hist: Message[]) => {
+  // Hard timeout so the UI doesn't hang forever if the function crashes or the network stalls
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 25000);
+
+  try {
     const r = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
       body: JSON.stringify({
         sessionId,
         userMessage: text,
@@ -696,8 +702,23 @@ const canSubmitFactFind = useMemo(() => {
         state: { ...chatState, profileOutstanding: ffOutstanding, profileCancelledHard: ffCancelledHard },
       }),
     });
-    return r.json();
-  };
+
+    // If the API errors, surface a short message to the user and keep full details in console for debugging
+    if (!r.ok) {
+      const t = await r.text().catch(() => "");
+      const short = (t || "").replace(/\s+/g, " ").trim().slice(0, 220);
+      throw new Error(`API ${r.status}${short ? `: ${short}` : ""}`);
+    }
+
+    // JSON parse safety
+    const data = await r.json().catch(() => null);
+    if (!data) throw new Error("API 200: Invalid JSON response");
+    return data;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+};
+
 
   // chat upload (paperclip)
   const onChatUpload = async (file: File) => {
@@ -833,8 +854,21 @@ if (willOpenPopup) {
       }
 
       if (data?.openPortal) setShowAuth(true);
-    } catch {
-      setMessages((prev) => [...prev, { id: makeId(), sender: "bot", text: "⚠️ I couldn’t reach the server just now.", at: nowTime() }]);
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : String(err);
+      const short = raw.replace(/\s+/g, " ").trim().slice(0, 240);
+      // keep full error in console for fast debugging (Vercel function errors, missing env vars, etc.)
+      // eslint-disable-next-line no-console
+      console.error("[chat] request failed:", err);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: makeId(),
+          sender: "bot",
+          text: `⚠️ I couldn’t reach the server just now. ${short ? `(${short})` : ""}`,
+          at: nowTime(),
+        },
+      ]);
     }
   };
 
