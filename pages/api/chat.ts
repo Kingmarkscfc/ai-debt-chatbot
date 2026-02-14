@@ -1774,6 +1774,18 @@ function joinAckAndPrompt(ack: string, prompt: string) {
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ApiResp>) {
+
+  res.setHeader("Allow", "POST, OPTIONS, GET");
+
+  if (req.method === "OPTIONS") {
+    // CORS preflight / safety ping
+    return res.status(200).end();
+  }
+
+  if (req.method === "GET") {
+    return res.status(200).json({ ok: true, message: "Use POST to interact with this endpoint." });
+  }
+
   if (req.method !== "POST") {
     return res.status(405).json({
       reply: "Method not allowed.",
