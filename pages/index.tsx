@@ -1487,7 +1487,7 @@ if (willOpenPopup) {
                       <button
                         type="button"
                         style={styles.inlinePopupBtnPrimary as any}
-                        onClick={submitFactFind}
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); submitFactFind(); }}
                         disabled={ffSaving || !canSubmitFactFind}
                         aria-disabled={ffSaving || !canSubmitFactFind}
                         title={!canSubmitFactFind ? "Complete all fields to continue" : ""}
