@@ -1871,6 +1871,43 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   }
 
 
+
+  // Fact Find submit marker from the UI: "__PROFILE_SUBMIT__ {json}"
+  // We treat this as a state update (not a user chat message) and advance the script.
+  if (userText && userText.startsWith("__PROFILE_SUBMIT__")) {
+    try {
+      const raw = userText.replace(/^__PROFILE_SUBMIT__\s*/i, "").trim();
+      const payload = raw ? JSON.parse(raw) : {};
+      (state as any).profile = payload;
+
+      // Best-effort: set display name for nicer UX
+      const fullName = String(payload?.fullName || "").trim();
+      const first = fullName.split(/\s+/).filter(Boolean)[0] || null;
+      if (first) state.name = first;
+
+      // Clear "outstanding" guards so the script can continue
+      (state as any).profileOutstanding = false;
+      (state as any).profileCancelledHard = false;
+
+      // Move to the next step now that details are captured
+      state.step = Math.min((state.step || 0) + 1, Math.max(0, (script.steps?.length || 1) - 1));
+
+      const nextDef = nextScriptPrompt(script, state);
+      const nextPromptFull = nextDef?.prompt || FALLBACK_STEP0;
+      const nextParsed = parseUiDirectives(nextPromptFull);
+      const nextClean = step0Variant(stripLeadingIntroFromPrompt(nextParsed.clean));
+
+      return res.status(200).json({
+        reply: nextClean,
+        state,
+        uiTrigger: "OPEN_CLIENT_PORTAL",
+        displayName: state.name || undefined,
+      });
+    } catch {
+      // If parsing fails, continue with normal flow.
+    }
+  }
+
   const currentStepDef = nextScriptPrompt(script, state);
   const currentPromptFull = currentStepDef?.prompt || FALLBACK_STEP0;
 

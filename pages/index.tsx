@@ -85,6 +85,14 @@ export default function Home() {
   const [displayName, setDisplayName] = useState<string | undefined>(undefined);
   const [loggedEmail, setLoggedEmail] = useState<string | undefined>(undefined);
 
+  // Profile / reference (Fact Find → Client Portal)
+  const [portalProfile, setPortalProfile] = useState<any | null>(null);
+  const [portalProfileLoading, setPortalProfileLoading] = useState(false);
+  const [portalProfileError, setPortalProfileError] = useState<string | null>(null);
+  const [clientRef, setClientRef] = useState<string | undefined>(undefined);
+  const [portalPreviewProfile, setPortalPreviewProfile] = useState<any | null>(null);
+
+
   // Let portal auto-refresh docs when chat upload succeeds
   const [uploadBump, setUploadBump] = useState(0);
 
@@ -243,6 +251,31 @@ const canSubmitFactFind = useMemo(() => {
       setDocsLoading(false);
     }
   }, [sessionId]);
+
+  const loadProfile = useCallback(
+    async (email?: string) => {
+      const e = (email || loggedEmail || portalEmail || "").trim().toLowerCase();
+      if (!e || !e.includes("@")) return;
+      try {
+        setPortalProfileError(null);
+        setPortalProfileLoading(true);
+        const r = await fetch(`/api/portal/profile?email=${encodeURIComponent(e)}`);
+        const j = await r.json();
+        if (j?.ok) {
+          setPortalProfile(j?.profile || null);
+          if (j?.clientRef) setClientRef(String(j.clientRef));
+        } else {
+          setPortalProfileError(j?.error || "Couldn’t load profile.");
+        }
+      } catch {
+        setPortalProfileError("Couldn’t load profile (network).");
+      } finally {
+        setPortalProfileLoading(false);
+      }
+    },
+    [loggedEmail, portalEmail]
+  );
+
 
   // ✅ FIX: style function must NOT live inside styles object (which is CSSProperties-only)
   const tabStyle = useCallback(
@@ -797,6 +830,10 @@ if (willOpenPopup) {
           setShowPortal(true);
           setNotice("Logged in.");
           loadDocs();
+          loadProfile(email);
+
+          loadProfile(email);
+
         }
       } else if (portalMode === "register") {
         const r = await fetch("/api/portal/register", {
@@ -920,6 +957,7 @@ if (willOpenPopup) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           sessionId,
+          email: (loggedEmail || portalEmail || "").trim(),
           profile: {
             postcode,
             selectedAddress,
@@ -969,6 +1007,32 @@ if (willOpenPopup) {
         timeAtAddressYears: ffAddrYears.trim(),
         residentialStatus: ffResStatus.trim(),
       };
+
+      // Save to Client Portal + generate client reference
+      try {
+        const r = await fetch("/api/portal/profile", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: payload.email,
+            sessionId,
+            profile: {
+              ...payload,
+              email: payload.email,
+            },
+          }),
+        });
+        const j = await r.json();
+        if (j?.ok) {
+          if (j?.profile) setPortalPreviewProfile(j.profile);
+          if (j?.clientRef) setClientRef(String(j.clientRef));
+          setShowPortal(true);
+        } else {
+          setNotice(j?.error || "Couldn’t save your details to the portal.");
+        }
+      } catch {
+        setNotice("Couldn’t save your details to the portal (network).");
+      }
 
       // Seed portal email field for convenience
       setLoggedEmail(ffEmail.trim());
@@ -1548,6 +1612,18 @@ if (willOpenPopup) {
           <div style={{ padding: 16 }}>
             {!loggedEmail ? (
               <div>
+
+                {(portalPreviewProfile || clientRef) ? (
+                  <div style={{ marginBottom: 14, padding: 12, borderRadius: 14, border: "1px solid #e5e7eb", background: "#f9fafb" }}>
+                    <div style={{ fontWeight: 800, marginBottom: 6 }}>Your Client Reference</div>
+                    <div style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace", fontSize: 16, fontWeight: 900 }}>
+                      {clientRef || "Pending"}
+                    </div>
+                    <div style={{ marginTop: 8, fontSize: 12, opacity: 0.85 }}>
+                      Your details have been captured. Create an account to access documents and continue your application from any device.
+                    </div>
+                  </div>
+                ) : null}
                 <div style={styles.tabs}>
                   <button style={tabStyle(portalMode === "login")} onClick={() => setPortalMode("login")}>
                     Login
@@ -1609,6 +1685,36 @@ if (willOpenPopup) {
               </div>
             ) : (
               <div>
+
+                <div style={{ marginBottom: 14, padding: 12, borderRadius: 14, border: "1px solid #e5e7eb", background: "#f9fafb" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                    <div>
+                      <div style={{ fontWeight: 900 }}>Client Reference</div>
+                      <div style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace", fontSize: 16, fontWeight: 900 }}>
+                        {clientRef || portalProfile?.client_ref || portalProfile?.clientRef || "Pending"}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button style={styles.btn} onClick={() => loadProfile(loggedEmail)} disabled={portalProfileLoading}>
+                        {portalProfileLoading ? "Loading..." : "Refresh Profile"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {portalProfileError ? <div style={{ marginTop: 8, fontSize: 12, color: "#ef4444" }}>{portalProfileError}</div> : null}
+
+                  <div style={{ marginTop: 10, display: "grid", gap: 6, fontSize: 13 }}>
+                    <div><b>Name:</b> {portalProfile?.fullName || portalProfile?.full_name || portalPreviewProfile?.fullName || "—"}</div>
+                    <div><b>Email:</b> {loggedEmail}</div>
+                    <div><b>Phone:</b> {portalProfile?.phone || portalPreviewProfile?.phone || "—"}</div>
+                    <div><b>DOB:</b> {portalProfile?.dob || portalPreviewProfile?.dob || "—"}</div>
+                    <div><b>Address:</b> {portalProfile?.address || portalPreviewProfile?.address || "—"}</div>
+                    <div><b>Postcode:</b> {portalProfile?.postcode || portalPreviewProfile?.postcode || "—"}</div>
+                    <div><b>Time at address:</b> {portalProfile?.timeAtAddressYears || portalProfile?.time_at_address_years || portalPreviewProfile?.timeAtAddressYears || "—"}</div>
+                    <div><b>Residential status:</b> {portalProfile?.residentialStatus || portalProfile?.residential_status || portalPreviewProfile?.residentialStatus || "—"}</div>
+                  </div>
+                </div>
+
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <button style={styles.btn} onClick={loadDocs} disabled={docsLoading}>
                     {docsLoading ? "Loading..." : "Refresh Docs"}
