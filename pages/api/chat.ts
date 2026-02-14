@@ -1,7 +1,21 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import fs from "fs";
 import path from "path";
-import { supabaseAdmin } from "../../utils/supabaseAdmin";
+
+// Lazy-load Supabase admin client at runtime to avoid hard-crashing the function
+// if env vars are missing in some environments (e.g. preview/test).
+let _supabaseAdmin: any = null;
+async function getSupabaseAdmin() {
+  if (_supabaseAdmin) return _supabaseAdmin;
+  try {
+    const mod: any = await import("../../utils/supabaseAdmin");
+    _supabaseAdmin = mod.supabaseAdmin;
+    return _supabaseAdmin;
+  } catch {
+    return null;
+  }
+}
+
 
 type Role = "user" | "assistant";
 
@@ -1951,9 +1965,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       // Best-effort persist to Supabase 'clients' table (if present)
       try {
         if (sessionId) {
-          await supabaseAdmin
-            .from("clients")
-            .upsert({ session_id: sessionId, total_debt: totalDebt }, { onConflict: "session_id" });
+          const sb = await getSupabaseAdmin();
+          if (sb) {
+            await sb
+              .from("clients")
+              .upsert({ session_id: sessionId, total_debt: totalDebt }, { onConflict: "session_id" });
+          }
         }
       } catch {
         // ignore
