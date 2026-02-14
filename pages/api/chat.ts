@@ -1805,6 +1805,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     ...body.state,
   };
 
+  // Normalise the session id (used for DB persistence / telemetry)
+  const sessionId = (
+    (body.sessionId as any) ?? (state as any).sessionId ?? (state as any).session_id ?? ""
+  )
+    .toString()
+    .trim();
+
+
   if (normalise(userText) === "reset") {
     const first = script.steps?.[0]?.prompt || FALLBACK_STEP0;
     const s: ChatState = {
