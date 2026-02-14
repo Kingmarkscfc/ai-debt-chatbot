@@ -690,7 +690,7 @@ const canSubmitFactFind = useMemo(() => {
   const timeout = window.setTimeout(() => controller.abort(), 25000);
 
   try {
-    const r = await fetch("/api/chat2", {
+    const r = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal: controller.signal,
