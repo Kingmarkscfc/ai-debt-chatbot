@@ -1302,9 +1302,6 @@ if (willOpenPopup) {
             setIsNearBottom(dist < 60);
           }}>
 
-                        </div>
-            </div>
-          )}
 
           {messages.filter((m) => !(m as any).hidden).map((m) => (
             <div key={m.id} style={styles.row} ref={(el) => { messageRefs.current[m.id] = el; }}>
