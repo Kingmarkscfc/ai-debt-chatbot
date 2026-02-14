@@ -212,7 +212,6 @@ export default function Home() {
   const [postcodeResults, setPostcodeResults] = useState<any[]>([]);
   const [selectedAddress, setSelectedAddress] = useState<any | null>(null);
 
-  const 
   const ENFORCE_ADDRESS = process.env.NEXT_PUBLIC_ENFORCE_ADDRESS === "true";
 
   const addressComplete = useMemo(() => {
@@ -1086,11 +1085,9 @@ if (willOpenPopup) {
 
       setFfCompleted(true);
       setFfOutstanding(false);
+      setFfCancelledHard(false);
 
       setShowFactFind(false);
-                          setFfCompleted(true);
-                          setFfOutstanding(false);
-                          setFfCancelledHard(false);
 
       setFfManualAddress(false);
       setFfPostcodeTried(false);
