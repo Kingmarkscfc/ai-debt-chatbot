@@ -98,6 +98,7 @@ export default function Home() {
 
   const sessionId = useMemo(() => ensureSessionId(), []);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const portalBuildRef = useRef<HTMLDivElement | null>(null);
   const chosenVoice = useRef<SpeechSynthesisVoice | null>(null);
 
   const [portalEmail, setPortalEmail] = useState("");
@@ -659,6 +660,15 @@ const canSubmitFactFind = useMemo(() => {
     if (!isNearBottom) return;
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, pinToTopId, showFactFind, showIe, showAddress, showDebtPopup, showMonthlyPayPopup, isNearBottom]);
+
+
+useEffect(() => {
+  // Keep the "send-away / portal build" animation visible at the bottom while it's running.
+  if (portalBuildStage === "none") return;
+  if (showFactFind || showIe || showAddress || showDebtPopup || showMonthlyPayPopup) return;
+  if (!isNearBottom) return;
+  portalBuildRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+}, [portalBuildStage, portalBuildProgress, showFactFind, showIe, showAddress, showDebtPopup, showMonthlyPayPopup, isNearBottom]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
@@ -1289,46 +1299,10 @@ if (willOpenPopup) {
             const el = messagesContainerRef.current;
             if (!el) return;
             const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
-            setIsNearBottom(dist < 140);
+            setIsNearBottom(dist < 60);
           }}>
 
-          {portalBuildStage !== "none" && (
-            <div style={{ ...styles.row, justifyContent: "center" }}>
-              <div style={{ ...styles.bubbleBot, maxWidth: 520, width: "100%" }}>
-                {portalBuildStage === "sending" ? (
-                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <span style={{ fontSize: 20 }}>📨</span>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 700 }}>Securing your details…</div>
-                      <div style={{ fontSize: 12, opacity: 0.85 }}>
-                        Encrypting and sending your Fact Find to your client file
-                        ...
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <span style={{ fontSize: 20 }}>🛠️</span>
-                        <div style={{ fontWeight: 700 }}>Building your personal client portal</div>
-                      </div>
-                      <div style={{ fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{portalBuildProgress}%</div>
-                    </div>
-                    <div style={{ marginTop: 10, background: "rgba(255,255,255,0.12)", borderRadius: 999, height: 10, overflow: "hidden" }}>
-                      <div style={{
-                        height: "100%",
-                        width: `${portalBuildProgress}%`,
-                        background: portalBuildProgress >= 100 ? "linear-gradient(90deg,#22c55e,#16a34a)" : "linear-gradient(90deg,#60a5fa,#22c55e)",
-                        transition: "width 180ms linear"
-                      }} />
-                    </div>
-                    <div style={{ marginTop: 8, fontSize: 12, opacity: 0.85 }}>
-                      This usually takes a few seconds — you’re nearly in.
-                    </div>
-                  </div>
-                )}
-              </div>
+                        </div>
             </div>
           )}
 
@@ -1919,6 +1893,44 @@ if (willOpenPopup) {
               </div>
             </div>
           ) : null}
+
+          {portalBuildStage !== "none" && (
+            <div ref={portalBuildRef} style={{ ...styles.row, justifyContent: "center" }}>
+              <div style={{ ...styles.bubbleBot, maxWidth: 520, width: "100%" }}>
+                {portalBuildStage === "sending" ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <span style={{ fontSize: 20 }}>📨</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 700 }}>Securing your details…</div>
+                      <div style={{ fontSize: 12, opacity: 0.85 }}>
+                        Encrypting and sending your Fact Find to your client file
+                        ...
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{ fontSize: 20 }}>🛠️</span>
+                        <div style={{ fontWeight: 700 }}>Building your personal client portal</div>
+                      </div>
+                      <div style={{ fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{portalBuildProgress}%</div>
+                    </div>
+                    <div style={{ marginTop: 10, background: "rgba(255,255,255,0.12)", borderRadius: 999, height: 10, overflow: "hidden" }}>
+                      <div style={{
+                        height: "100%",
+                        width: `${portalBuildProgress}%`,
+                        background: portalBuildProgress >= 100 ? "linear-gradient(90deg,#22c55e,#16a34a)" : "linear-gradient(90deg,#60a5fa,#22c55e)",
+                        transition: "width 180ms linear"
+                      }} />
+                    </div>
+                    <div style={{ marginTop: 8, fontSize: 12, opacity: 0.85 }}>
+                      This usually takes a few seconds — you’re nearly in.
+                    </div>
+                  </div>
+                )}
+
 
           <div ref={bottomRef} />
         </div>
