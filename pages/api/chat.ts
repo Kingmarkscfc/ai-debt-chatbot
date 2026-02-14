@@ -1888,9 +1888,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       // Clear "outstanding" guards so the script can continue
       (state as any).profileOutstanding = false;
       (state as any).profileCancelledHard = false;
+      (state as any).factFindCompleted = true;
 
       // Move to the next step now that details are captured
       state.step = Math.min((state.step || 0) + 1, Math.max(0, (script.steps?.length || 1) - 1));
+
+      // If the script still wants the Fact Find after submit (usually due to gating),
+      // nudge forward once more to avoid looping.
+      for (let i = 0; i < 2; i++) {
+        const probe = nextScriptPrompt(script, state);
+        const probePrompt = String(probe?.prompt || "").toLowerCase();
+        if (probePrompt.includes("fact find") && probePrompt.includes("please complete")) {
+          state.step = Math.min((state.step || 0) + 1, Math.max(0, (script.steps?.length || 1) - 1));
+          continue;
+        }
+        break;
+      }
 
       const nextDef = nextScriptPrompt(script, state);
       const nextPromptFull = nextDef?.prompt || FALLBACK_STEP0;

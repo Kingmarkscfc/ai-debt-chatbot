@@ -212,9 +212,20 @@ export default function Home() {
   const [postcodeResults, setPostcodeResults] = useState<any[]>([]);
   const [selectedAddress, setSelectedAddress] = useState<any | null>(null);
 
-  const addressComplete = useMemo(() => Boolean(postcode.trim()), [postcode]);
+  const 
+  const ENFORCE_ADDRESS = process.env.NEXT_PUBLIC_ENFORCE_ADDRESS === "true";
 
+  const addressComplete = useMemo(() => {
+    // Testing mode (default): don't force paid postcode/address lookup.
+    if (!ENFORCE_ADDRESS) return Boolean(postcode.trim());
 
+    // Live mode: require a real address (either chosen from lookup or manually entered)
+    if (ffManualAddress) {
+      return Boolean(ffAddr1.trim() && ffCity.trim() && postcode.trim());
+    }
+
+    return Boolean((selectedAddress || "").trim());
+  }, [ENFORCE_ADDRESS, postcode, ffManualAddress, ffAddr1, ffCity, selectedAddress]);
 const canSubmitFactFind = useMemo(() => {
     const hasAddress = addressComplete;
     return Boolean(
@@ -1166,7 +1177,7 @@ if (willOpenPopup) {
         </div>
 
         <div style={styles.chat}>
-          {messages.map((m) => (
+          {messages.filter((m) => !(m as any).hidden).map((m) => (
             <div key={m.id} style={styles.row} ref={(el) => { messageRefs.current[m.id] = el; }}>
               {m.sender === "bot" ? (
                 <>
