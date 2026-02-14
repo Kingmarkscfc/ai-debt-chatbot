@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import fs from "fs";
 import path from "path";
+import { supabaseAdmin } from "../../utils/supabaseAdmin";
 
 type Role = "user" | "assistant";
 
