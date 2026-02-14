@@ -1822,7 +1822,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   // pause the script until they complete it.
   const cancelledHard = Boolean((state as any).profileCancelledHard);
   const outstanding = Boolean((state as any).profileOutstanding);
-  if ((cancelledHard || outstanding) && !userText.startsWith("__PROFILE_SUBMIT__")) {
+  if ((cancelledHard || outstanding) && !userText.startsWith("__PROFILE_SUBMIT__") && !userText.startsWith("__DEBT_TOTAL__") && !userText.startsWith("__MONTHLY_PAY__")) {
     const wantsToContinue = /(ready|continue|proceed|carry on|go on|start)/i.test(userText || "");
     const lead = wantsToContinue ? "Great —" : "Yes —";
     return res.status(200).json({
@@ -1915,6 +1915,83 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         state,
         uiTrigger: "OPEN_CLIENT_PORTAL",
         displayName: state.name || undefined,
+      });
+    } catch {
+      // If parsing fails, continue with normal flow.
+    }
+  }
+
+
+  // Step 6 slider marker from the UI: "__DEBT_TOTAL__ {json}"
+  if (userText && userText.startsWith("__DEBT_TOTAL__")) {
+    try {
+      const raw = userText.replace(/^__DEBT_TOTAL__\s*/i, "").trim();
+      const payload = raw ? JSON.parse(raw) : {};
+      const totalDebt = Number(payload?.totalDebt ?? 0);
+
+      (state as any).totalDebt = totalDebt;
+      if (!(state as any).profile) (state as any).profile = {};
+      (state as any).profile.totalDebt = totalDebt;
+
+      // Best-effort persist to Supabase 'clients' table (if present)
+      try {
+        if (sessionId) {
+          await supabaseAdmin
+            .from("clients")
+            .upsert({ session_id: sessionId, total_debt: totalDebt }, { onConflict: "session_id" });
+        }
+      } catch {
+        // ignore
+      }
+
+      let bandText = "";
+      if (totalDebt <= 3000) {
+        bandText =
+          "Thanks luckily, it’s not too much debt to deal with — we can definitely point you in the right direction and get you the help that’s needed to get this all sorted.";
+      } else if (totalDebt <= 10000) {
+        bandText =
+          "You have quite a lot of unsecured debt outstanding. It’s clear that it must be very difficult to deal with, but don’t worry — we can help you to get this all sorted today.";
+      } else {
+        bandText =
+          "That is a large amount of debt, it must be very difficult for you to deal with all this. I will ensure that we do everything we can today to alleviate the pressure and get this debt consolidated for you.";
+      }
+
+      const nextQ = "Roughly how much are you paying per month to your creditors?";
+      return res.status(200).json({
+        reply: `${bandText}\n\n${nextQ}`,
+        state,
+      });
+    } catch {
+      // If parsing fails, continue with normal flow.
+    }
+  }
+
+  // Step 7 slider marker from the UI: "__MONTHLY_PAY__ {json}"
+  if (userText && userText.startsWith("__MONTHLY_PAY__")) {
+    try {
+      const raw = userText.replace(/^__MONTHLY_PAY__\s*/i, "").trim();
+      const payload = raw ? JSON.parse(raw) : {};
+      const monthlyPay = Number(payload?.monthlyPay ?? 0);
+
+      (state as any).monthlyPay = monthlyPay;
+      if (!(state as any).profile) (state as any).profile = {};
+      (state as any).profile.monthlyPay = monthlyPay;
+
+      let bandText = "";
+      if (monthlyPay <= 200) {
+        bandText = "It looks like we can help you with this — let’s try and help you save some money today.";
+      } else if (monthlyPay <= 500) {
+        bandText = "You are paying a lot to your creditors every month — let’s see how much money we can save you today.";
+      } else {
+        bandText = "You are paying a huge sum of money out to your creditors each month — let’s see how much money we can save you today.";
+      }
+
+      // Next step 8 question (kept text-accurate to script style)
+      const nextQ =
+        "If we could get all your debts consolidated today into one payment, how much money do you feel that you can afford to offer your creditors on a monthly basis?";
+      return res.status(200).json({
+        reply: `${bandText}\n\n${nextQ}`,
+        state,
       });
     } catch {
       // If parsing fails, continue with normal flow.

@@ -194,6 +194,20 @@ export default function Home() {
   const [ffSaving, setFfSaving] = useState(false);
   const [ffError, setFfError] = useState<string | null>(null);
 
+  // Step 6 (Debt amount) popup
+  const [showDebtPopup, setShowDebtPopup] = useState(false);
+  const [debtValue, setDebtValue] = useState<number>(0);
+  const [showMonthlyPayPopup, setShowMonthlyPayPopup] = useState(false);
+  const [monthlyPayValue, setMonthlyPayValue] = useState<number>(0);
+
+  // "Next level" transition after Fact Find submit
+  const [portalBuildStage, setPortalBuildStage] = useState<"none" | "sending" | "building">("none");
+  const [portalBuildProgress, setPortalBuildProgress] = useState<number>(0);
+
+  // Smarter autoscroll: only scroll if the user is already near the bottom
+  const messagesContainerRef = useRef<HTMLDivElement | null>(null);
+  const [isNearBottom, setIsNearBottom] = useState(true);
+
   const ffFirstNameRef = useRef<HTMLInputElement | null>(null);
   const ffSurnameRef = useRef<HTMLInputElement | null>(null);
   const ffPhoneRef = useRef<HTMLInputElement | null>(null);
@@ -641,9 +655,10 @@ const canSubmitFactFind = useMemo(() => {
       messageRefs.current[pinToTopId]?.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     }
-    if (showFactFind || showIe || showAddress) return;
+    if (showFactFind || showIe || showAddress || showDebtPopup || showMonthlyPayPopup) return;
+    if (!isNearBottom) return;
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, pinToTopId, showFactFind, showIe, showAddress]);
+  }, [messages, pinToTopId, showFactFind, showIe, showAddress, showDebtPopup, showMonthlyPayPopup, isNearBottom]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
@@ -780,7 +795,11 @@ const canSubmitFactFind = useMemo(() => {
         uiAll.includes("OPEN_ADDRESS") ||
         uiAll.toUpperCase().includes("ADDRESS");
 
-      const willOpenPopup = wantsFactFindPopup || wantsIncome || wantsAddress;
+      const rLower = reply.toLowerCase();
+      const wantsDebtPopup = rLower.includes("how much debt") && rLower.includes("outstanding");
+      const wantsMonthlyPopup = rLower.includes("paying per month") && rLower.includes("creditors");
+
+      const willOpenPopup = wantsFactFindPopup || wantsIncome || wantsAddress || wantsDebtPopup || wantsMonthlyPopup;
       const ui = uiAll;
 
 
@@ -807,6 +826,8 @@ if (willOpenPopup) {
           }
           if (wantsIncome) setShowIe(true);
           if (wantsAddress) setShowAddress(true);
+          if (wantsDebtPopup) { setDebtValue(0); setShowDebtPopup(true); }
+          if (wantsMonthlyPopup) { setMonthlyPayValue(0); setShowMonthlyPayPopup(true); }
           setPinToTopId(botId);
         }, 0);
       }
@@ -1006,6 +1027,34 @@ if (willOpenPopup) {
       setNotice("Network error.");
     }
   };
+
+  const runPortalBuildAnimation = () =>
+    new Promise<void>((resolve) => {
+      // Stage 1: send-away (short + calm)
+      setPortalBuildStage("sending");
+      setPortalBuildProgress(0);
+
+      const t1 = setTimeout(() => {
+        // Stage 2: build portal progress
+        setPortalBuildStage("building");
+        let p = 0;
+        const iv = setInterval(() => {
+          // Smooth-ish increments without being flashy
+          p = Math.min(100, p + Math.max(2, Math.round(Math.random() * 8)));
+          setPortalBuildProgress(p);
+          if (p >= 100) {
+            clearInterval(iv);
+            setTimeout(() => {
+              setPortalBuildStage("none");
+              resolve();
+            }, 350);
+          }
+        }, 140);
+      }, 650);
+
+      // (no cleanup needed here; this runs once per submit)
+    });
+
   const submitFactFind = async () => {
     setFfError(null);
     if (!canSubmitFactFind) {
@@ -1073,15 +1122,44 @@ if (willOpenPopup) {
       const nextHist = [...messages, userMsg];
       setMessages(nextHist);
 
-      const data = await sendToApi(marker, nextHist);
+      // Close the Fact Find popup and run the "send away → build portal" transition (calm + non-flashy)
+      setShowFactFind(false);
+      setPinned(null);
+      setPinToTopId(null);
+
+      const apiPromise = sendToApi(marker, nextHist);
+      const animPromise = runPortalBuildAnimation();
+      const [data] = await Promise.all([apiPromise, animPromise]);
+
       const rawReply = (data?.reply as string) || "Thanks — let’s continue.";
       const reply = rawReply.replace(/\s*\[(?:TRIGGER|UI):[^\]]*\]\s*/gi, " ").replace(/\s{2,}/g, " ").trim();
 
       if (data?.state) setChatState(data.state);
       if (data?.displayName) setDisplayName(data.displayName);
 
-      const botMsg: Message = { id: makeId(), sender: "bot", text: reply, at: nowTime() };
+      const botId = makeId();
+      const botMsg: Message = { id: botId, sender: "bot", text: reply, at: nowTime() };
       setMessages((prev) => [...prev, botMsg]);
+
+      // If the next step is a slider popup, open it after the message renders
+      const rLower = reply.toLowerCase();
+      const wantsDebt = rLower.includes("how much debt") && rLower.includes("outstanding");
+      const wantsMonthly = rLower.includes("paying per month") && rLower.includes("creditors");
+      if (wantsDebt || wantsMonthly) {
+        setPinned({ id: botId, text: reply });
+        setTimeout(() => {
+          if (wantsDebt) {
+            setDebtValue(0);
+            setShowDebtPopup(true);
+          }
+          if (wantsMonthly) {
+            setMonthlyPayValue(0);
+            setShowMonthlyPayPopup(true);
+          }
+          setPinToTopId(botId);
+        }, 0);
+      }
+
 
       setFfCompleted(true);
       setFfOutstanding(false);
@@ -1173,7 +1251,53 @@ if (willOpenPopup) {
           </div>
         </div>
 
-        <div style={styles.chat}>
+        <div style={styles.chat} ref={messagesContainerRef} onScroll={() => {
+            const el = messagesContainerRef.current;
+            if (!el) return;
+            const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+            setIsNearBottom(dist < 140);
+          }}>
+
+          {portalBuildStage !== "none" && (
+            <div style={{ ...styles.row, justifyContent: "center" }}>
+              <div style={{ ...styles.bubbleBot, maxWidth: 520, width: "100%" }}>
+                {portalBuildStage === "sending" ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <span style={{ fontSize: 20 }}>📨</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 700 }}>Securing your details…</div>
+                      <div style={{ fontSize: 12, opacity: 0.85 }}>
+                        Encrypting and sending your Fact Find to your client file
+                        ...
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{ fontSize: 20 }}>🛠️</span>
+                        <div style={{ fontWeight: 700 }}>Building your personal client portal</div>
+                      </div>
+                      <div style={{ fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{portalBuildProgress}%</div>
+                    </div>
+                    <div style={{ marginTop: 10, background: "rgba(255,255,255,0.12)", borderRadius: 999, height: 10, overflow: "hidden" }}>
+                      <div style={{
+                        height: "100%",
+                        width: `${portalBuildProgress}%`,
+                        background: portalBuildProgress >= 100 ? "linear-gradient(90deg,#22c55e,#16a34a)" : "linear-gradient(90deg,#60a5fa,#22c55e)",
+                        transition: "width 180ms linear"
+                      }} />
+                    </div>
+                    <div style={{ marginTop: 8, fontSize: 12, opacity: 0.85 }}>
+                      This usually takes a few seconds — you’re nearly in.
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {messages.filter((m) => !(m as any).hidden).map((m) => (
             <div key={m.id} style={styles.row} ref={(el) => { messageRefs.current[m.id] = el; }}>
               {m.sender === "bot" ? (
@@ -1201,7 +1325,7 @@ if (willOpenPopup) {
             </div>
           ))}
 
-          {(showFactFind || showIe || showAddress) ? (
+          {(showFactFind || showIe || showAddress || showDebtPopup || showMonthlyPayPopup) ? (
             <div style={{ marginTop: 12 }}>
               <div style={styles.inlinePopupCard}>
                 {showFactFind ? (
@@ -1620,6 +1744,142 @@ if (willOpenPopup) {
                     ) : null}
                   </div>
                 ) : null}
+
+
+                {showDebtPopup ? (
+                  <div>
+                    <div style={styles.inlinePopupTitle}>Step 6 — Total debt outstanding</div>
+                    <div style={styles.inlinePopupText}>
+                      Roughly how much unsecured debt do you have outstanding?
+                    </div>
+
+                    <div style={{ marginTop: 14 }}>
+                      <div style={{ fontSize: 34, fontWeight: 800, letterSpacing: -0.5 }}>
+                        {debtValue >= 100000 ? "£100,000+" : `£${debtValue.toLocaleString()}`}
+                      </div>
+                      <div style={{ marginTop: 10 }}>
+                        <input
+                          type="range"
+                          min={0}
+                          max={100000}
+                          step={500}
+                          value={Math.min(100000, Math.max(0, debtValue))}
+                          onChange={(e) => setDebtValue(Number(e.target.value))}
+                          style={{ width: "100%" }}
+                        />
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, opacity: 0.85, marginTop: 6 }}>
+                          <span>£0</span>
+                          <span>£100,000+</span>
+                        </div>
+                      </div>
+
+                      <div style={{ marginTop: 14, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                        <button
+                          type="button"
+                          style={{
+                            ...(styles.inlinePopupBtnPrimary as any),
+                            background: "#16a34a",
+                            borderColor: "#15803d",
+                          }}
+                          onClick={async () => {
+                            const marker = `__DEBT_TOTAL__ ${JSON.stringify({ totalDebt: debtValue })}`;
+                            const userMsg: Message = { id: makeId(), sender: "user", text: marker, at: nowTime(), hidden: true };
+                            const nextHist = [...messages, userMsg];
+                            setMessages(nextHist);
+                            setShowDebtPopup(false);
+                            const data = await sendToApi(marker, nextHist);
+                            const rawReply = (data?.reply as string) || "Thanks — let’s continue.";
+                            const reply = rawReply.replace(/\s*\[(?:TRIGGER|UI):[^\]]*\]\s*/gi, " ").replace(/\s{2,}/g, " ").trim();
+                            if (data?.state) setChatState(data.state);
+                            const botMsg: Message = { id: makeId(), sender: "bot", text: reply, at: nowTime() };
+                            setMessages((prev) => [...prev, botMsg]);
+                          }}
+                        >
+                          Submit
+                        </button>
+
+                        <button
+                          type="button"
+                          style={styles.inlinePopupBtn as any}
+                          onClick={() => {
+                            setShowDebtPopup(false);
+                            setPinned(null);
+                          }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+
+                {showMonthlyPayPopup ? (
+                  <div>
+                    <div style={styles.inlinePopupTitle}>Step 7 — Monthly repayments</div>
+                    <div style={styles.inlinePopupText}>
+                      Roughly how much are you paying per month to your creditors?
+                    </div>
+
+                    <div style={{ marginTop: 14 }}>
+                      <div style={{ fontSize: 34, fontWeight: 800, letterSpacing: -0.5 }}>
+                        {monthlyPayValue >= 2000 ? "£2,000+" : `£${monthlyPayValue.toLocaleString()}`}
+                      </div>
+                      <div style={{ marginTop: 10 }}>
+                        <input
+                          type="range"
+                          min={0}
+                          max={2000}
+                          step={50}
+                          value={Math.min(2000, Math.max(0, monthlyPayValue))}
+                          onChange={(e) => setMonthlyPayValue(Number(e.target.value))}
+                          style={{ width: "100%" }}
+                        />
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, opacity: 0.85, marginTop: 6 }}>
+                          <span>£0</span>
+                          <span>£2,000+</span>
+                        </div>
+                      </div>
+
+                      <div style={{ marginTop: 14, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                        <button
+                          type="button"
+                          style={{
+                            ...(styles.inlinePopupBtnPrimary as any),
+                            background: "#16a34a",
+                            borderColor: "#15803d",
+                          }}
+                          onClick={async () => {
+                            const marker = `__MONTHLY_PAY__ ${JSON.stringify({ monthlyPay: monthlyPayValue })}`;
+                            const userMsg: Message = { id: makeId(), sender: "user", text: marker, at: nowTime(), hidden: true };
+                            const nextHist = [...messages, userMsg];
+                            setMessages(nextHist);
+                            setShowMonthlyPayPopup(false);
+                            const data = await sendToApi(marker, nextHist);
+                            const rawReply = (data?.reply as string) || "Thanks — let’s continue.";
+                            const reply = rawReply.replace(/\s*\[(?:TRIGGER|UI):[^\]]*\]\s*/gi, " ").replace(/\s{2,}/g, " ").trim();
+                            if (data?.state) setChatState(data.state);
+                            const botMsg: Message = { id: makeId(), sender: "bot", text: reply, at: nowTime() };
+                            setMessages((prev) => [...prev, botMsg]);
+                          }}
+                        >
+                          Submit
+                        </button>
+
+                        <button
+                          type="button"
+                          style={styles.inlinePopupBtn as any}
+                          onClick={() => {
+                            setShowMonthlyPayPopup(false);
+                            setPinned(null);
+                          }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+
 
                 {/* Income & Expenditure can still use the existing UI below (or legacy modal if enabled) */}
               </div>
