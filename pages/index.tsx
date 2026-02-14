@@ -158,7 +158,29 @@ export default function Home() {
   const validSurname = ffSurname.trim().length >= 3;
   const validPhone = ffPhone.replace(/\D/g, "").trim().length >= 6;
   const validEmail = ffEmail.trim().length >= 2 && ffEmail.includes("@");
-  const validDob = Boolean(ffDob && ffDob.trim());
+
+  // Date of birth: must be within the last 100 years (and not in the future)
+  const { dobMinIso, dobMaxIso } = useMemo(() => {
+    const now = new Date();
+    const max = new Date(now.getFullYear(), now.getMonth(), now.getDate()); // today (local)
+    const min = new Date(max);
+    min.setFullYear(min.getFullYear() - 100);
+    const toIso = (d: Date) => d.toISOString().slice(0, 10);
+    return { dobMinIso: toIso(min), dobMaxIso: toIso(max) };
+  }, []);
+
+  const validDob = useMemo(() => {
+    const s = (ffDob || "").trim();
+    if (!s) return false;
+    // Expect YYYY-MM-DD from <input type="date">
+    const mm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+    if (!mm) return false;
+    const y = Number(mm[1]);
+    if (!Number.isFinite(y) || y < 1900) return false; // blocks 0000 etc.
+    if (s < dobMinIso || s > dobMaxIso) return false;
+    const d = new Date(s + "T00:00:00");
+    return !Number.isNaN(d.getTime());
+  }, [ffDob, dobMinIso, dobMaxIso]);
   const [ffResStatus, setFfResStatus] = useState("");
   const [ffAddrYears, setFfAddrYears] = useState("");
 
@@ -190,14 +212,11 @@ export default function Home() {
   const [postcodeResults, setPostcodeResults] = useState<any[]>([]);
   const [selectedAddress, setSelectedAddress] = useState<any | null>(null);
 
+  const addressComplete = useMemo(() => Boolean(postcode.trim()), [postcode]);
+
+
 const canSubmitFactFind = useMemo(() => {
-    const hasSelected = Boolean(selectedAddress && selectedAddress.trim());
-    const hasManual =
-      Boolean(ffAddr1.trim()) &&
-      Boolean(ffCity.trim()) &&
-      Boolean(ffCounty.trim()) &&
-      Boolean(postcode.trim());
-    const hasAddress = hasSelected || (ffManualAddress && hasManual);
+    const hasAddress = addressComplete;
     return Boolean(
       validFirstName &&
         validSurname &&
@@ -210,6 +229,7 @@ const canSubmitFactFind = useMemo(() => {
         ffResStatus.trim()
     );
   }, [
+    addressComplete,
     ffFirstName,
     ffSurname,
     ffPhone,
@@ -1241,8 +1261,8 @@ if (willOpenPopup) {
                           ref={ffDobRef}
                           style={styles.inlinePopupInputFlex as any}
                           type="date"
-                          min="1913-01-01"
-                          max="2013-12-31"
+                          min={dobMinIso}
+                          max={dobMaxIso}
                           value={ffDob}
                           onChange={(e) => setFfDob(e.target.value)}
                           onBlur={() => markTouched("dob")}
@@ -1272,7 +1292,7 @@ if (willOpenPopup) {
                       >
                         {postcodeLoading ? "Searching..." : "Search postcode"}
                       </button>
-                      <div style={styles.inlinePopupTickInline}>{postcode.trim() ? "✓" : ""}</div>
+                      <div style={styles.inlinePopupTickInline}>{postcode.trim() && addressComplete ? "✓" : ""}</div>
                     </div>
 
                     {postcodeError ? (
@@ -1505,7 +1525,7 @@ if (willOpenPopup) {
                         aria-disabled={ffSaving || !canSubmitFactFind}
                         title={!canSubmitFactFind ? "Complete all fields to unlock submit" : ""}
                       >
-                        <span style={{ fontSize: 18, lineHeight: 1 }}>
+                        <span style={{ fontSize: 22, lineHeight: 1 }}>
                           {canSubmitFactFind ? "🔓" : "🔒"}
                         </span>
                         <span>{ffSaving ? "Saving..." : "Submit & continue"}</span>
