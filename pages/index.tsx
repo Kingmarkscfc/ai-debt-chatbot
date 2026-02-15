@@ -1949,7 +1949,7 @@ if (willOpenPopup) {
       </div>
 
       {/* ======= Portal ======= */}
-      {showPortal ? (
+      {showPortal && (
         <div style={{ width: 760, margin: "12px auto 0", ...styles.card }}>
           <div style={styles.modalHeader}>
             <div style={{ fontWeight: 800 }}>Client Portal</div>
@@ -2094,7 +2094,7 @@ if (willOpenPopup) {
             )}
           </div>
         </div>
-      ) : null}
+      )}
 
       {/* ======= Auth Modal ======= */}
       {showAuth ? (
