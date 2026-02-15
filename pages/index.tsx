@@ -1304,7 +1304,7 @@ if (willOpenPopup) {
 
           {messages.filter((m) => !(m as any).hidden).map((m) => (
             <div key={m.id} style={styles.row} ref={(el) => { messageRefs.current[m.id] = el; }}>
-              {m.sender === "bot" ? (
+              {m.sender === "bot" && (
                 <>
                   <Image src={avatarPhoto} alt="Advisor" width={28} height={28} style={{ borderRadius: 999, marginTop: 2 }} />
                   <div style={styles.bubbleBot}>
@@ -1321,7 +1321,7 @@ if (willOpenPopup) {
                   </div>
                 </>
               )}
-            {loggedEmail && (
+            {m.sender !== "bot" && (
                 <div style={styles.bubbleUser}>
                   {m.text}
                   {m.at ? <div style={{ marginTop: 6, fontSize: 11, opacity: 0.7 }}>{m.at}</div> : null}
