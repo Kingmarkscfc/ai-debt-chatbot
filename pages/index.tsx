@@ -1287,7 +1287,7 @@ if (willOpenPopup) {
               >
                 {ffOutstanding ? "Client details (1)" : "Client details ✓"}
               </button>
-            )}
+            ) : null}
             <button style={styles.btn} onClick={() => setShowPortal((p) => !p)}>
               {showPortal ? "Hide Portal" : "Portal"}
             </button>
