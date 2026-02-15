@@ -1287,8 +1287,7 @@ if (willOpenPopup) {
               >
                 {ffOutstanding ? "Client details (1)" : "Client details ✓"}
               </button>
-            ) : null}
-            
+            )}
             <button style={styles.btn} onClick={() => setShowPortal((p) => !p)}>
               {showPortal ? "Hide Portal" : "Portal"}
             </button>
@@ -1321,7 +1320,8 @@ if (willOpenPopup) {
                     {m.at ? <div style={{ marginTop: 6, fontSize: 11, opacity: 0.6 }}>{m.at}</div> : null}
                   </div>
                 </>
-              ) : (
+              )}
+            {loggedEmail && (
                 <div style={styles.bubbleUser}>
                   {m.text}
                   {m.at ? <div style={{ marginTop: 6, fontSize: 11, opacity: 0.7 }}>{m.at}</div> : null}
